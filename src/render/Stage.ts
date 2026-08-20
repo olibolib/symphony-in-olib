@@ -21,6 +21,15 @@ export class Stage {
   scrollSpeed = 0;
   private scrollOffset = 0;
 
+  /**
+   * Extra scale applied to the whole stage, 0 for none.
+   *
+   * Lives here rather than in the effect because scroll also writes `transform`. Two
+   * separate writers would silently overwrite each other — the second one to run each frame
+   * would win, and which that was would depend on effect ordering.
+   */
+  pulse = 0;
+
   constructor(el: HTMLElement, container: HTMLElement) {
     this.el = el;
     this.container = container;
@@ -56,17 +65,27 @@ export class Stage {
    * reset or hitting a boundary mid-phrase.
    */
   updateScroll(dt: number): void {
-    if (this.scrollSpeed === 0) {
-      if (this.scrollOffset !== 0) {
-        this.scrollOffset = 0;
-        this.container.style.removeProperty('transform');
-      }
+    if (this.scrollSpeed !== 0) {
+      // The offset wraps rather than stopping at the end: text that scrolls off the top
+      // comes back from the bottom, so a slow drift can run for an entire set.
+      const span = Math.max(this.container.scrollHeight, this.height);
+      this.scrollOffset = (this.scrollOffset + this.scrollSpeed * this.height * dt) % span;
+    } else if (this.scrollOffset !== 0) {
+      this.scrollOffset = 0;
+    }
+
+    this.applyTransform();
+  }
+
+  /** Single writer for `transform`, composing scroll and pulse. */
+  private applyTransform(): void {
+    if (this.scrollOffset === 0 && this.pulse === 0) {
+      this.container.style.removeProperty('transform');
       return;
     }
 
-    const span = Math.max(this.container.scrollHeight, this.height);
-    this.scrollOffset = (this.scrollOffset + this.scrollSpeed * this.height * dt) % span;
-    this.container.style.transform = `translateY(${-this.scrollOffset}px)`;
+    const scale = 1 + this.pulse;
+    this.container.style.transform = `translateY(${-this.scrollOffset}px) scale(${scale})`;
   }
 
   /** Sets the base font size all preset sizing is relative to. Mirrors Acid's `--fs`. */

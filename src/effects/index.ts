@@ -215,24 +215,72 @@ export const stopScroll = (): EffectRef => {
 };
 
 /**
- * Re-render the text.
+ * Re-render the text, holding it for a variable number of phrases.
  *
- * `every` skips invocations, so bound to `phrase` with `every: 2` the text changes every
- * other phrase. That matters when the output is being warped by a visualiser: changing the
- * source every 16 beats means the warp never has time to develop before the thing it is
- * warping disappears.
+ * `hold: [1, 2]` means the text stays for one phrase or two, chosen fresh each time. A fixed
+ * hold is legible but predictable — you start anticipating the change, which is exactly what
+ * a generative visual should not let you do.
  *
- * The counter lives in the closure — effects are built once and called many times, so a
- * builder is a perfectly good place to keep state that belongs to one binding.
+ * When the text is being warped by a visualiser, a longer hold also gives the warp time to
+ * develop before the thing it is warping disappears.
  */
-export const retext = (params: { every?: number } = {}): EffectRef => {
-  const every = Math.max(1, params.every ?? 1);
-  let count = 0;
+export const retext = (params: { hold?: readonly [number, number] } = {}): EffectRef => {
+  const [min, max] = params.hold ?? [1, 1];
+  let target = randomRange(min, max);
 
   return (ctx: EffectContext) => {
-    count++;
-    if (count % every !== 0) return;
+    if (ctx.textAge < target) return;
+    target = randomRange(min, max);
     ctx.retext();
+  };
+};
+
+/**
+ * Run the given effects only when the text is *not* being replaced this phrase.
+ *
+ * Static text for two phrases needs more happening to it, or the second phrase feels like a
+ * stall. This is how a preset compensates: extra glitching, a scroll, whatever suits.
+ *
+ * **Ordering matters.** This must come *after* `retext` in the lane, because it detects a
+ * hold by seeing that `textAge` was not reset. Put it first and it will fire on the phrase
+ * where the text changes, which is precisely backwards.
+ */
+export const whenHolding = (effects: readonly EffectRef[]): EffectRef => {
+  return (ctx: EffectContext) => {
+    if (ctx.textAge < 1) return;
+    for (const effect of effects) effect(ctx);
+  };
+};
+
+/**
+ * Pulse the whole stage with the beat.
+ *
+ * Driven by the predicted grid rather than by detected onsets, so it stays smooth and in
+ * time even through a passage with no transients — and lands *on* the beat rather than
+ * just after it.
+ *
+ * `decay` hits hard and falls away, which reads as a kick. `sine` breathes evenly, which
+ * suits slower presets. Amounts want to be small: 0.02 is already clearly visible at 720p,
+ * and anything past about 0.05 starts to look like a fault rather than a pulse.
+ */
+export const pulse = (params: {
+  amount: number;
+  shape?: 'decay' | 'sine';
+}): EffectRef => {
+  return (ctx: EffectContext) => {
+    const phase = ctx.beatPhase;
+    const curve =
+      params.shape === 'sine'
+        ? (1 - Math.cos(phase * Math.PI * 2)) / 2
+        : (1 - phase) * (1 - phase);
+
+    ctx.stage.pulse = curve * params.amount;
+  };
+};
+
+export const stopPulse = (): EffectRef => {
+  return (ctx: EffectContext) => {
+    ctx.stage.pulse = 0;
   };
 };
 

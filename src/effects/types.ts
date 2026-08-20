@@ -21,6 +21,12 @@ export interface EffectContext {
   /** Layout numbers `newLayout` may choose from. */
   readonly layouts: readonly number[];
 
+  /** Position within the current beat, 0–1. Continuous, for anything that pulses. */
+  readonly beatPhase: number;
+
+  /** Phrases the current text has been on screen. 0 means it was just replaced. */
+  readonly textAge: number;
+
   /** Re-render the current text preset. Some effects change what is on screen. */
   retext(): void;
 }

@@ -36,6 +36,9 @@ const conductor = new Conductor();
 const glitches = new GlitchState();
 const bank = new PresetBank(PRESETS);
 
+/** Phrases the current text has been on screen. Drives `retext` holds and `whenHolding`. */
+let textAge = 0;
+
 let analyser: Analyser | null = null;
 let captureLabel = '';
 let lastStatusAt = 0;
@@ -137,6 +140,7 @@ function typesetNext(): void {
 
   // The tracked elements no longer exist after a re-render.
   glitches.forget();
+  textAge = 0;
 
   hud.setClipped(typesetter.clipped);
 }
@@ -156,6 +160,13 @@ function applyPreset(): void {
   });
 
   stage.setFontScale(preset.fontScale);
+
+  // Continuous stage state persists until something sets it, so a preset that does not use
+  // pulse or scroll would otherwise inherit whatever the previous one left running — and a
+  // pulse with nothing driving it freezes at its last value rather than stopping.
+  stage.pulse = 0;
+  stage.scrollSpeed = 0;
+
   typesetNext();
   hud.setPreset(preset.name, preset.energy);
 }
@@ -172,6 +183,8 @@ function effectContext(): EffectContext {
     bass: analyser?.bass ?? 0,
     palette: PALETTES[paletteName],
     layouts: LAYOUT_SETS[layoutSetName],
+    beatPhase: clock.phase(performance.now()),
+    textAge,
     retext: typesetNext,
   };
 }
@@ -249,6 +262,12 @@ function frame(now: number): void {
   const dt = Math.min((now - lastFrameAt) / 1000, 0.1);
   lastFrameAt = now;
 
+  // Advance the grid before building the context. Anything derived from musical position —
+  // beat phase, text age — has to be current when effects read it, and the phrase handler
+  // below mutates text age.
+  const beat = clock.update(now);
+  if (beat?.isPhraseStart === true) textAge++;
+
   const ctx = effectContext();
 
   if (analyser) {
@@ -292,7 +311,6 @@ function frame(now: number): void {
 
   // Grid lanes. Predicted rather than detected (§9.3), so they land on the beat instead of
   // just after it.
-  const beat = clock.update(now);
   if (beat) {
     hud.flashBeat(beat.isDownbeat);
     conductor.fire('beat', ctx);

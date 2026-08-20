@@ -9,11 +9,13 @@ import {
   invertBlock,
   newLayout,
   removeGlitches,
+  pulse,
   retext,
   scroll,
   stopScroll,
   swell,
   unswell,
+  whenHolding,
 } from '../effects';
 import type { EffectRef } from '../effects/types';
 import type { TextMode } from '../text/Typesetter';
@@ -80,7 +82,13 @@ export const PRESETS: readonly VisualPreset[] = [
     bindings: {
       kick: [invertBlock({ count: 1 })],
       bar: [glitchWord({})],
-      phrase: [retext({ every: 2 }), newLayout(), stopScroll()],
+      phrase: [
+        retext({ hold: [1, 2] }),
+        newLayout(),
+        stopScroll(),
+        // Held text in a sparse preset only needs a little: one word turning over.
+        whenHolding([glitchWord({}), glitchWord({})]),
+      ],
     },
     ambient: [removeGlitches({ amount: 0.03 }), clearInversions({ amount: 0.04 })],
     minPhrases: 4,
@@ -97,9 +105,15 @@ export const PRESETS: readonly VisualPreset[] = [
       kick: [glitchWords({ amount: 0.05 }), invertBlock({ count: 2 })],
       snare: [glitchChars({}), decor({ count: 2 })],
       bar: [newLayout()],
-      phrase: [retext({ every: 2 }), colourShift({ accents: 2 })],
+      phrase: [
+        retext({ hold: [1, 2] }),
+        colourShift({ accents: 2 }),
+        // Compensate for static text with more corruption, so the second phrase does not
+        // feel like a stall.
+        whenHolding([glitchWords({ amount: 0.2 }), glitchChars({}), decor({ count: 4 })]),
+      ],
     },
-    ambient: standardDecay,
+    ambient: [...standardDecay, pulse({ amount: 0.012 })],
   },
 
   /**
@@ -116,12 +130,22 @@ export const PRESETS: readonly VisualPreset[] = [
       kick: [glitchWords({ amount: 0.12 }), swell({ count: 3, amount: 1.6 })],
       snare: [glitchChars({}), glitchParagraphs({ amount: 0.15 })],
       bar: [newLayout(), invertBlock({ count: 4 })],
-      phrase: [retext({ every: 2 }), colourShift({ accents: 3 })],
+      phrase: [
+        retext({ hold: [1, 2] }),
+        colourShift({ accents: 3 }),
+        whenHolding([
+          glitchParagraphs({ amount: 0.4 }),
+          glitchChars({}),
+          invertBlock({ count: 8 }),
+        ]),
+      ],
     },
     ambient: [
       removeGlitches({ amount: 0.1 }),
       clearInversions({ amount: 0.05 }),
       unswell({ amount: 0.06 }),
+      // Hard on the beat, falling away fast. Reads as the kick.
+      pulse({ amount: 0.022 }),
     ],
     minPhrases: 2,
   },
@@ -136,9 +160,15 @@ export const PRESETS: readonly VisualPreset[] = [
       kick: [glitchWords({ amount: 0.03 })],
       snare: [decor({ count: 2 })],
       bar: [glitchWord({})],
-      phrase: [retext({ every: 2 }), newLayout(), scroll({ power: 0.06 })],
+      phrase: [
+        retext({ hold: [1, 2] }),
+        newLayout(),
+        // Held text drifts instead of sitting still.
+        whenHolding([scroll({ power: 0.14 }), glitchWords({ amount: 0.08 })]),
+      ],
     },
-    ambient: standardDecay,
+    // Slow even breathing rather than a hit, to match the pace.
+    ambient: [...standardDecay, pulse({ amount: 0.016, shape: 'sine' })],
     minPhrases: 4,
   },
 ];

@@ -85,6 +85,19 @@ export class Clock {
   }
 
   /**
+   * Position within the current beat, 0 at the beat and approaching 1 just before the next.
+   *
+   * Continuous rather than event-based, so anything driven by it moves smoothly between
+   * beats instead of stepping. Predicted from the grid like everything else (§9.3), so it
+   * stays smooth through a passage with no transients at all.
+   */
+  phase(now: number): number {
+    if (!this.started) return 0;
+    const p = ((now - this.originMs) / this.periodMs) % 1;
+    return p < 0 ? p + 1 : p;
+  }
+
+  /**
    * Fold in a new measurement.
    *
    * The first one locks hard. After that, corrections are deliberately gentle — the grid
