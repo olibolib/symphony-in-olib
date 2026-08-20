@@ -481,6 +481,13 @@ Two mechanisms, layered.
 never feels metronomic. Changes land on a **phrase boundary**, never mid-phrase — arriving on
 the 1 of a new 16 is what makes a switch feel intentional rather than random.
 
+**Text holds for one phrase or two**, chosen fresh each time rather than on a fixed
+schedule. A fixed hold is legible but predictable: you begin anticipating the change, which
+is exactly what a generative visual should not allow. A longer hold also gives a downstream
+visualiser (§13.4) time to develop its warp before the thing it is warping disappears.
+
+When the text does hold, the preset compensates — see `whenHolding` in §12.2.1.
+
 **Structure events** override the timer. A detected drop forces a change immediately and
 resets the counter; a breakdown switches to a sparse preset. This is Increment 4 — the timer
 alone carries the MVP — but the preset model accounts for it now so it isn't a retrofit.
@@ -531,6 +538,28 @@ engine does is decide *which elements* get *which slot*, and when.
 Dropped from Acid: `addLink`, which turned words into Google search links. Unclickable on a
 projector.
 
+### 12.2.1 Conditional and continuous effects
+
+Two effects that are not simple gestures.
+
+**`whenHolding([...])`** runs its children only on a phrase where the text is *not* being
+replaced. Static text for two phrases needs more happening to it or the second phrase reads
+as a stall, and each preset compensates in its own character: `scatter` corrupts more,
+`drift` starts scrolling, `swarm` glitches whole paragraphs, `still` turns over two words.
+
+> **Ordering dependency.** `whenHolding` must come *after* `retext` in a lane. It detects a
+> hold by observing that `textAge` was not reset. Placed first it fires on the phrase where
+> the text changes, which is precisely backwards. This is invisible from reading either
+> effect alone.
+
+**`pulse({ amount, shape })`** scales the whole stage with the beat. Driven by the predicted
+grid rather than detected onsets (§9.3), so it lands *on* the beat and keeps breathing
+through a passage with no transients at all. `decay` hits hard and falls away, reading as the
+kick; `sine` breathes evenly and suits slower presets.
+
+Amounts want to be small. 0.02 is clearly visible at 720p; past about 0.05 it stops looking
+like a pulse and starts looking like a fault.
+
 ### 12.3 Text selection modes
 
 Cheap, and responsible for most of the variety.
@@ -576,12 +605,18 @@ character-level effects are even possible, and has real performance consequences
 Up to **two** independent text regions at once, each with its own selection, so they show
 different text rather than repeating.
 
+**`count` is a total across blocks, not per block.** Passing the full count to each was a
+bug: two blocks asking for four sentences produced eight, crammed into cells a third of the
+stage wide, where the surplus was silently clipped and simply looked like missing text.
+
 Blocks are assigned **distinct cells of a 3x3 grid**, which makes non-overlap true by
 construction. Positioning them freely and checking for collisions would fail exactly when
 the text is longest, which is when it matters.
 
 **The centre cell is never used.** Composited output usually has its subject there — a logo,
 a visualiser's focal point — and text landing on it is the fastest way to spoil the frame.
+The middle row and column are also the *smallest*: the centre only needs to stay clear,
+whereas the edge cells need room for text.
 
 In non-grid layouts the grid placement is simply ignored and blocks stack, so the feature
 costs nothing where it does not apply.
@@ -761,8 +796,20 @@ Two hours unattended, sharing a machine with DJ software and OBS. Reliability is
   nodes. Presets declare a ceiling; the typesetter enforces it.
 - **Degrade, don't fail.** Under frame-rate pressure, reduce element counts and effect
   density rather than dropping frames.
-- **Never clip silently.** The HUD scrolls rather than hiding controls past the window edge.
-  A control that renders off-screen is indistinguishable from one that was never built.
+- **Never clip silently.** Text blocks must clip, or they would spill into the protected
+  centre — so the HUD reports how many are clipped, and the count turns red above zero. Lost
+  text is otherwise indistinguishable from text that mysteriously failed to appear, which is
+  exactly how it presented the first time it happened.
+- **One writer per shared property.** `Stage` owns `transform`, composing scroll and pulse.
+  Two effects writing it independently would silently overwrite each other, with the winner
+  depending on effect order within a lane.
+- **Continuous state resets on preset change.** `pulse` and `scrollSpeed` persist until
+  something sets them, so a preset that does not use them would inherit whatever the last one
+  left running — and a pulse with nothing driving it freezes at its last value rather than
+  stopping.
+- **Derive state before building the effect context, not during dispatch.** The context is a
+  snapshot; mutating something it captured, part-way through a frame, means effects read a
+  stale value. This was a real bug with `textAge`.
 
 ### Unbreakable
 
@@ -929,6 +976,9 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Three simultaneous text blocks | **Dropped** | Too much on screen once the size floor was raised. Two |
 | Equal weighting across edge layouts | **Dropped** | Single bands are the least interesting and were appearing nearly half the time |
 | Presets setting palette and layout set | **Dropped** | Those are user choices about compositing; a preset cannot know why they were made (§11.1) |
+| Fixed text hold of two phrases | **Dropped** | Predictable — you start anticipating the change. One or two, chosen each time (§11.2) |
+| Effects writing `transform` directly | **Dropped** | Scroll and pulse would overwrite each other. Stage is the single writer (§14) |
+| `count` applied per block | **Dropped** | Multiplied the text and clipped the surplus silently (§12.4.1) |
 
 ---
 
@@ -945,6 +995,7 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Q10 | Tempo reads a few percent low and the cause is not yet found. Deferred as good enough for visuals — revisit with a correlation-curve plot before changing the algorithm again | §9.2.3 |
 | Q11 | Block count is currently random 1–2 per re-typeset. Should it correlate with something — energy, or the layout in use — rather than being arbitrary? | §12.4.1 |
 | Q12 | Are `longSentences` (up to 27 words) too dense at the new size floor, especially two blocks at once? | §12.4.2 |
+| Q13 | Pulse amounts are guesses (0.012–0.022). Worth tuning against a projector rather than a monitor — apparent scale changes with viewing distance | §12.2.1 |
 
 **Answered:** stage defaults to 1280×720 (Q5). Black on white (Q6). Preset cycling is a
 randomised 16–32 bars on phrase boundaries, with structure overrides deferred to Increment 4
