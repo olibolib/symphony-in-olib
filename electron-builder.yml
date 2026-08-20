@@ -1,0 +1,34 @@
+# Packaging config. `npm run dist` produces both an installer and a portable exe in
+# release/.
+appId: com.olibolib.symphony-in-olib
+productName: Symphony in Olib
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the built bundles ship. Source, the design doc and node_modules stay out — the
+# renderer is already bundled by Vite, so shipping src/ would just be dead weight.
+files:
+  - out/**/*
+  - package.json
+
+win:
+  target:
+    # Installer: creates a Start Menu entry and an uninstaller.
+    - target: nsis
+      arch: [x64]
+    # Portable: a single exe that runs from anywhere, no install. Slower to start, since
+    # it unpacks to a temp directory each run.
+    - target: portable
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  createDesktopShortcut: true
+  shortcutName: Symphony in Olib
+
+portable:
+  artifactName: SymphonyInOlib-portable-${version}.exe

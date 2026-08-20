@@ -8,12 +8,15 @@
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "preview": "electron-vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dist": "npm run build && electron-builder --win",
+    "dist:dir": "npm run build && electron-builder --win --dir"
   },
   "license": "UNLICENSED",
   "devDependencies": {
     "@types/node": "^26.2.0",
     "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^7.0.2",
     "vite": "^7.3.6"
@@ -21,6 +24,9 @@
   "allowScripts": {
     "electron@43.4.1": true,
     "esbuild@0.25.12": true,
-    "esbuild@0.28.2": true
-  }
+    "esbuild@0.28.2": true,
+    "electron-winstaller@5.4.0": true
+  },
+  "productName": "Symphony in Olib",
+  "author": "olibolib"
 }

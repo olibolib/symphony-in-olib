@@ -45,6 +45,33 @@ npm approve-scripts electron esbuild
 Changes to `src/`, `style/` and `index.html` hot-reload. Changes to `electron/` need a
 restart — that process owns the window.
 
+### Building an executable
+
+```bash
+npm run dist
+```
+
+Produces, in `release/`:
+
+| File | Notes |
+|---|---|
+| `Symphony in Olib Setup <version>.exe` | Installer. Start Menu entry, desktop shortcut, uninstaller |
+| `SymphonyInOlib-portable-<version>.exe` | Single file, no install. Slightly slower to start — it unpacks to temp each run |
+| `win-unpacked/` | Unpacked, runs directly. What you want while iterating |
+
+`npm run dist:dir` skips the installers and builds only the unpacked folder, which is much
+faster.
+
+**The build is unsigned**, so Windows SmartScreen shows "Windows protected your PC" on first
+run — More info, then Run anyway. Nothing is wrong; a signing certificate costs a few hundred
+a year and is not worth it for a personal tool.
+
+Binaries are not committed. `release/` is gitignored and anyone can build their own from
+source.
+
+To use a custom icon, put a square PNG of at least 256x256 at `build/icon.png`;
+electron-builder generates the `.ico` from it.
+
 ---
 
 ## Using it
