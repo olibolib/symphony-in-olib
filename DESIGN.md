@@ -1,0 +1,954 @@
+# Symphony in Olib — Design Document
+
+**Status:** draft · **Last updated:** 2026-08-20
+
+---
+
+## 1. What this is
+
+A **live VJ tool for DJs**. It listens to whatever audio is playing on the machine,
+detects the beat, and generates a reactive typographic visual in the style of
+[Symphony in Acid](../SymphonyInAcid) — which you capture in OBS and put on your stream.
+
+It is not a composed piece. Acid was one artwork welded to one track, with every visual
+event hand-transcribed from a MIDI file. This is a machine that does something similar to
+*any* audio, driven by presets rather than a timeline.
+
+**Primary user:** a DJ streaming a set, running DJ software full-screen on a single
+monitor, who wants a visual that runs itself for two hours without being touched.
+
+### The shape of a session
+
+1. Launch the app. Pick an audio source from a dropdown.
+2. Pick a text preset and a starting visual preset.
+3. Alt-tab to rekordbox / Traktor / whatever. Never touch it again.
+4. OBS window-captures it, cropped to the stage.
+
+Everything in this document follows from that. The tool has to be **autonomous** —
+the user cannot be relied upon to be looking at it, focusing it, or fixing it.
+
+---
+
+## 2. Goals
+
+1. **DJ-software agnostic.** rekordbox, Traktor, Serato, Ableton, a CDJ with no laptop, or
+   Spotify. If it makes sound, it works.
+2. **Autonomous.** Set it up, walk away. It must never need attention mid-set.
+3. **Unbreakable.** No white screens, no freezes, no crashes. Degrading gracefully beats
+   being correct.
+4. **Preset-driven.** Text and visuals are both prepared in advance and selected, never
+   authored live.
+5. **Clean capture.** The output is a fixed-size, fixed-aspect rectangle with no UI in it.
+6. **Acid's visual language.** The look is the point; the generality is the mechanism.
+
+## 3. Non-goals
+
+- Hosting. This is not a website. It ships as an installed app.
+- Cross-browser or cross-platform support. Windows, one Chromium, no compatibility matrix.
+- Live text entry. Text is prepared in files, selected at runtime.
+- Authored timelines. Nothing is pinned to a bar number, because we don't know the track.
+- Musical structure understanding beyond energy and pulse. No key detection, no genre
+  classification, no automatic verse/chorus segmentation.
+
+---
+
+## 4. Vocabulary
+
+| Term | Meaning |
+|---|---|
+| **Stage** | The fixed-resolution rectangle the visual renders into. What OBS captures. |
+| **HUD** | Status readout and settings, outside the stage. Never captured. |
+| **Clock** | Tempo and beat phase. Where "the beat is now" comes from. |
+| **Band** | A frequency range of the spectrum, e.g. 60–120 Hz. |
+| **Lane** | A named event channel — `kick`, `snare`, `hat`, `beat`, `bar`, `phrase`. |
+| **Visual preset** | A bundle: layout, effect bindings, palette, intensity. |
+| **Text preset** | A prepared body of text plus how it gets selected and displayed. |
+| **Effect** | A named visual operation — `glitchWords`, `newLayout`, `invertBlock`. |
+| **Slot** | An abstract attribute value (`glitch="3"`) whose *appearance* the preset's CSS defines. |
+
+---
+
+## 5. Platform and distribution
+
+**Electron app, Windows, Chromium.** Not a hosted web page.
+
+This was a late decision and it removed a lot of accidental complexity. What it bought:
+
+| Problem | Browser answer | Electron answer |
+|---|---|---|
+| Background throttling while covered by DJ software | Chrome launch flags in a `.bat` | `backgroundThrottling: false` |
+| Window with no tabs or address bar | `--app=` launcher trick | it's just a window |
+| System audio without a virtual cable | impossible — needs Stereo Mix / VB-Cable | native desktop loopback capture |
+| Permission prompts mid-set | unavoidable | granted programmatically |
+| Transparent output for OBS compositing | impossible | `transparent: true` |
+| Browser compatibility | a matrix to support | one known Chromium |
+
+It also puts Node in reach, which keeps **Ableton Link** viable later (see §9.5) — that was
+a dead end in the browser.
+
+### 5.1 Chromium switches in use
+
+| Switch | Why |
+|---|---|
+| `disable-renderer-backgrounding` | Keep rendering while covered by DJ software |
+| `disable-background-timer-throttling` | As above, for timers |
+| `disable-backgrounding-occluded-windows` | As above, for the occluded case specifically — the normal state for this app |
+| `autoplay-policy: no-user-gesture-required` | Come up already capturing. There is nobody there to click |
+| `disable-features: AllowWgcScreenCapturer` | Insurance: Windows Graphics Capture fails `E_ACCESSDENIED` on some machines (§8.1) |
+
+`backgroundThrottling: false` is also set per-window. Redundant with the switches, and kept
+because the failure mode — a frozen visual on a live stream — is worth the belt and braces.
+
+The cost is a ~150 MB build and a packaging step. For a VJ tool that is normal; everything
+else in the category is an installed app.
+
+**The codebase stays a plain web app.** No Electron-specific APIs in the engine, only at
+the edges (capture, window, file access). If we ever want it in a browser again, that
+should be a packaging change and not a rewrite.
+
+---
+
+## 6. Background: what we take from Acid
+
+Acid works, and the parts worth keeping are real. The problem is only that the music and
+the piece are welded into the code.
+
+### Kept
+
+| Idea | Why |
+|---|---|
+| **DOM as the canvas** | Real text nodes get browser layout, reflow, `columns`, flexbox. It's what makes it feel like a document coming apart rather than a graphics demo. |
+| **Attribute slots** | `[glitch="3"]`, `[layout="21"]`, `[decor="6"]` — one attribute flip restyles thousands of elements in CSS with no per-element JS. Fast, and the *meaning* lives in the preset's CSS. |
+| **Word/char tokenization** | Splitting to glyph level is what enables per-character effects. |
+| **Pixel sampling for colour** | Sampling a video frame at each element's screen position to colour it. The most interesting technique in the project, and it generalises (§13). |
+| **Palette reseating** | Narrowing to ~3 active colours per scene keeps it coherent instead of confetti. |
+
+### Replaced
+
+| File | Size | Problem |
+|---|---|---|
+| `stems.js` | 2,496 lines | Hand-transcribed MIDI map keyed to frame numbers at a hardcoded 30fps. Belongs to one mp3. |
+| `react.js` | 968 lines | One function, an if/else chain over `SCENE == 1..25`. Adding a scene means editing the chain. |
+| `story.css` | 640 lines | Selectors like `#container[scene="17"]` — the look is bound to a scene *index*. |
+| p5.js + jQuery | ~1 MB | Loaded for about a dozen helpers. Replaceable in a few dozen lines. |
+
+### Two bugs not to inherit
+
+- **Forced synchronous reflow.** `colorRGBFromMedia` calls `getBoundingClientRect()` and then
+  immediately writes a style, inside a loop over every element on screen. Classic layout
+  thrash, and the main frame-rate ceiling in the original. See §14.
+- **Silent failure.** Effects that hit an empty element list just do nothing, with no signal.
+  Fine for a fixed piece that was tested end to end; bad for a generative tool.
+
+---
+
+## 7. Architecture
+
+```
+  audio device / system loopback
+              │
+              ▼
+      ┌───────────────┐
+      │  AudioInput   │  device list, capture, AudioContext graph
+      └───────┬───────┘
+              ▼
+      ┌───────────────┐
+      │   Analyser    │  FFT → band energy + spectral flux
+      └───────┬───────┘
+              ▼
+      ┌───────────────┐
+      │  BeatTracker  │  tempo + phase + confidence
+      └───────┬───────┘
+              ▼
+      ┌───────────────┐
+      │     Clock     │  beat · bar · phrase, tap override
+      └───────┬───────┘
+              ▼
+      ┌───────────────┐
+      │   Conductor   │  lanes → effects · preset cycling
+      └───────┬───────┘
+              │  Event stream
+              ▼
+      ┌───────────────┐
+      │   Renderer    │  Stage · Typesetter · DOM
+      └───────────────┘
+```
+
+**One-way flow.** Each stage consumes the one above and knows nothing below it. The
+Conductor emits an **event stream** — `beat`, `bar`, `phrase`, lane hits, preset changes,
+level updates — and the Renderer consumes it.
+
+That seam is deliberate. It costs nothing now, and it is what makes two later things cheap:
+a separate output window, and feeding an OBS browser source over a socket (§13.3). If the
+Renderer ever reaches back into the Conductor, both become refactors.
+
+### Class model
+
+```
+App
+├── AudioInput      device enumeration, capture, AudioContext
+├── Analyser        bands, levels, onsets
+├── BeatTracker     tempo/phase estimation, confidence, re-lock
+├── Clock           beat/bar/phrase position; tap override
+├── Conductor       lane dispatch, preset scheduling
+│   ├── PresetBank  visual presets
+│   └── TextBank    text presets
+├── Renderer
+│   ├── Stage       fixed-resolution root; attribute slots live here
+│   └── Typesetter  text → paragraphs → words → chars → DOM
+├── EffectRegistry  named, parameterized visual operations
+└── Hud             readouts, settings, tap, crop values
+```
+
+---
+
+## 8. Audio input
+
+A dropdown listing, from `enumerateDevices()`:
+
+- every real input device (interfaces, mics, loopback devices, Stereo Mix if present)
+- **plus "System output"**, via Electron's desktop loopback capture
+
+That second entry is the important one — it means capturing your master out needs no
+virtual cable, no Stereo Mix, and no screen-share bar. In a plain browser it would have
+been impossible.
+
+Selection persists between launches. Device changes are watched (`devicechange`), and if
+the active device disappears mid-set the app holds its last state rather than throwing.
+
+> **Q1.** Should it try to auto-reconnect to a device that reappears, or stay stopped until
+> you pick again? Auto-reconnect is friendlier but could grab the wrong source silently.
+
+### 8.1 Platform notes
+
+Loopback capture on Windows has three traps in it. All three were hit during Increment 1;
+all three are silent or misleading when you hit them.
+
+| Trap | Symptom | Rule |
+|---|---|---|
+| Legacy `chromeMediaSource: 'desktop'` constraint used for audio with `video: false` | Renderer terminated by the browser process (`bad_message` 263). Black window, no JS error — the renderer never runs any code to report | Never use the legacy constraint. Use `getDisplayMedia` with a main-process handler |
+| Requesting a video track alongside loopback audio | Windows Graphics Capture tries to open the monitor and fails `E_ACCESSDENIED` (`0x80070005`), taking the audio with it | Answer the request with `{ audio: 'loopback' }` and no video source |
+| Stopping the video track to save CPU, if one exists | Audio silently stops — Chromium ties the capture session to the video track | Shrink it (2×2 @ 1fps), never stop it |
+
+Two consequences beyond the fixes themselves, both now implemented:
+
+- **A renderer can die outright**, and the result is a permanently black window. `render-process-gone`
+  reloads it. Mid-set, that is the difference between a two-second glitch and a dead stream.
+- **A source that kills the renderer would be retried on every launch**, and with automatic
+  reload that is an infinite loop. The source being opened is flagged in `localStorage` and
+  cleared on success; a flag surviving a restart means the last attempt didn't, so it is not
+  retried automatically.
+
+**Routing caveat:** Windows loopback taps the *default output device*. A DJ setup sending its
+master over ASIO straight to an interface bypasses that entirely, and there will be nothing to
+capture. In that case the answer is a device-level loopback input, not code.
+
+---
+
+## 9. Tempo and beat detection
+
+The hardest part of the project, and the only source of timing. There is no MIDI clock, no
+Link, no manual timeline — it is audio or nothing.
+
+### 9.1 Why this is tractable
+
+DJ mixes are close to the best case for beat detection: a strong 4/4 kick, near-constant
+tempo within a track, and electronic material with sharp transients. It would be much
+harder on jazz, orchestral, or anything rubato.
+
+### 9.2 Method
+
+1. **FFT** at `fftSize: 2048` — roughly 21.5 Hz per bin at 44.1 kHz. The AnalyserNode's own
+   smoothing is switched off; it averages across frames, which is exactly what flux needs
+   *not* to happen. Levels are smoothed separately, downstream.
+2. **Spectral flux** per band: the sum of positive magnitude changes since the previous
+   frame. Rising energy only, since that is what a transient is.
+3. **Onset detection** — four gates, described in §9.2.1.
+4. **Tempo** by autocorrelating the onset envelope over roughly a 6-second window, searching
+   lags in the 60–180 BPM range.
+5. **Octave correction.** Autocorrelation happily reports half or double tempo. Compare the
+   candidate against its half and double, prefer the one whose pulse train aligns better
+   with observed onsets, and break remaining ties toward the 120–140 range that most dance
+   music sits in.
+6. **Phase** by correlating the onset envelope against a pulse train at the chosen tempo and
+   taking the best offset.
+7. **Confidence** from the sharpness of the autocorrelation peak and its margin over the
+   runner-up. Published to the HUD.
+
+### 9.2.1 Onset gates
+
+*Built in Increment 1. Every gate here exists because the version without it failed on real
+records.*
+
+A transient must clear all four:
+
+| Gate | Test | Why |
+|---|---|---|
+| **Shape** | Flux is a local peak | A kick is a spike; a pad swelling or a sub rising is a ramp. Both can be large, only one is an onset. Costs one frame of latency to confirm the value turned over |
+| **Statistics** | Above `mean + k × stddev` over ~3s | Catches "unusual for this track right now" |
+| **Magnitude** | At least ~28% of the band's recent peak flux | Catches "actually a hit, not merely unusual" |
+| **Timing** | Past the refractory period, and re-armed since the last onset | Stops sustained energy re-triggering forever |
+
+Three findings worth keeping, all of them things that were wrong first:
+
+**The statistics window must span bars, not beats.** At 0.7s — about a beat and a half at
+128 BPM — the statistics are made almost entirely of the kicks themselves, so when the kick
+drops out mean and deviation collapse within a second and the detector becomes *most*
+sensitive exactly when there is nothing to detect. Three seconds spans several bars and
+survives a breakdown.
+
+**Threshold on deviation, not on the mean.** `mean × k` is cleared constantly by
+steady-state signal, because music always has *some* energy in every band. What marks a
+transient is flux jumping outside its own recent spread.
+
+**Statistics alone cannot tell you a value is big.** A sub swell in a breakdown is
+statistically remarkable and musically nothing. The magnitude gate is measured against the
+band's own recent peak, so it self-calibrates across loud and quiet records with no tuning.
+
+**Sensitivity (`k`) is a live control**, adjustable per band from the HUD and persisted.
+Defaults are empirical: kick 4.0, snare 2.0, hat 2.2.
+
+### 9.2.2 The kick/bass problem
+
+**Accepted, not solved.** In 40–120 Hz a kick and a synth bass note are not meaningfully
+different — a bass note has a real attack transient in exactly the band the kick occupies.
+The detector is not being fooled; both *are* onsets. Any threshold that reliably rejects the
+synth will eventually reject a soft kick too.
+
+Two reasons this does not block the project:
+
+- **Beat tracking does not need a clean stream.** Autocorrelation looks for periodicity, and
+  extra onsets between the kicks are noise it can reject as long as the real kicks are there.
+  A twitchy indicator looks worse than it tracks.
+- **Visually, a bass stab firing an effect is not wrong** for a VJ tool. It is still a
+  musical event.
+
+If it ever needs to be better, the discriminator to reach for is simultaneous energy higher
+up: a bass note usually carries harmonics into 150–400 Hz at the moment of attack, where a
+kick is concentrated much lower. Real, but more machinery, and it misfires on clicky kicks.
+
+### 9.2.3 Known issue: tempo accuracy
+
+**Open, deferred.** Tempo lands within a few percent but is not exact — a 126 BPM house
+track reads a stable 120, and DnB at 174 reads 171. The octave is correct and the reading is
+stable, which is what matters most; the residual error is a systematic slight underestimate.
+
+Accepted for now because the Clock re-anchors phase four times a second, so beats land close
+with small periodic corrections rather than sliding away. Good enough to drive visuals.
+
+Things already tried, none of which fixed it:
+
+| Change | Effect |
+|---|---|
+| One-octave search window | Fixed half-time errors. Not this |
+| Correlation-curve smoothing across estimates | Fixed the wandering. Not this |
+| Parabolic sub-sample interpolation | Removed lag quantisation. Not this |
+| Detrending (1s moving average) + half-wave rectification | Expected to fix it. Did not |
+| Log compression of flux on input | No observable change |
+| Raising the Clock's track-change threshold 0.04 → 0.12 | Real bug — the clock was refusing corrections — but not the whole story |
+
+**Next step is instrumentation, not another hypothesis.** Two rounds were spent reasoning
+about a signal neither of us can see. Before touching the algorithm again, plot the
+correlation curve (score against BPM) in the HUD. If the true peak is visible but losing, the
+fault is in peak selection; if the curve peaks in the wrong place, the fault is in the
+envelope. That distinction is currently unobservable, which is why this stalled.
+
+### 9.3 Prediction, not reaction
+
+Once locked, **beats are generated from the grid, not from onsets.** Detection only
+corrects phase drift, and slowly.
+
+This matters more than it sounds. Reacting to a detected transient is always late by the
+length of the analysis window, and on a projector that reads as sloppy. Predicting from a
+locked grid lets us land exactly on the beat, or deliberately a little ahead of it. It is
+the difference between "roughly moving with the music" and "locked".
+
+It also means the visual keeps running smoothly through a passage with no clear transients,
+instead of stalling.
+
+### 9.4 Failure and recovery
+
+- **Low confidence** → keep the previous grid, keep running, show it in the HUD. Never stop.
+- **Track change** — detected by a sustained tempo shift or a large spectral discontinuity —
+  → re-lock.
+- **Silence** → hold the last grid and keep animating. A gap between tracks must not reset
+  the visual.
+- **Tap tempo (space)** → manual override. The first tap sets the downbeat, the intervals set
+  the tempo. Manual wins until a track change is detected, then auto resumes.
+
+Bars assume 4/4. Phrases are 4 and 16 bars. The downbeat is a guess until corrected by
+energy patterns or a tap — and for a visualizer, landing on the *beat* matters much more
+than knowing which bar you are in.
+
+> **Q2.** How aggressive should auto-resume after a tap be? If someone taps because
+> detection is consistently wrong on a track, having it silently take back control at the
+> next mix could be annoying. An explicit "hold manual" toggle in the HUD might be worth it.
+
+### 9.5 Later: Ableton Link
+
+Electron puts Node in reach, so a native Link binding becomes possible. That would give
+exact tempo *and* downbeat from rekordbox and Serato — the thing MIDI clock never could.
+Long-term, behind the same `Clock` interface, so nothing downstream changes.
+
+---
+
+## 10. Lanes
+
+Lanes are named event channels. Effects bind to lanes; lanes are fed by analysis or by the
+grid.
+
+| Lane | Source |
+|---|---|
+| `kick` | Low-band onset (~40–120 Hz) |
+| `snare` | Mid-band onset (~150–600 Hz) |
+| `hat` | High-band onset (~4–12 kHz) |
+| `beat` | Predicted grid |
+| `bar` | Predicted grid, every 4 beats |
+| `phrase` | Predicted grid, every 16 bars |
+| `energy` | Continuous 0–1 overall level, not an event |
+| `bass` | Continuous 0–1 low-band level |
+
+Continuous lanes drive intensity — how many elements an effect touches, how fast decay
+runs. Event lanes drive discrete hits.
+
+### 10.1 Structure detection
+
+*Increment 4. Recorded here because the preset model (§11.1) depends on it.*
+
+The obvious approach — watch overall volume for drops and breakdowns — **does not work on DJ
+material.** Masters are limited to within an inch of 0 dBFS, so a breakdown and a drop have
+near-identical RMS. Loudness is the one thing mastering removes.
+
+What changes is *where* the energy sits. A breakdown strips out the kick and bass; a drop
+slams them back. So the signal is **low-band energy**, tracked against its own rolling
+average, not overall level.
+
+| State | Signal |
+|---|---|
+| **Breakdown** | Bass falls below ~40% of its rolling average and stays there past ~2 bars |
+| **Drop** | Bass returns after a breakdown, snapped to the nearest phrase boundary |
+| **Build** | High-band energy and onset density climbing while bass is still absent — risers, snare rolls |
+
+Breakdown and drop are cheap and reliable: an envelope with hysteresis over band data we
+already compute. Build is the flaky one and should be treated as a hint, never a trigger.
+
+---
+
+## 11. Presets
+
+### 11.1 The split
+
+**Text presets hold content. Visual presets hold everything else** — including *how* text
+is selected and displayed.
+
+This keeps the two independent: swap the text without touching the look, swap the look
+without touching the text. Acid tied the two together per scene, which is why its scenes
+could not be reordered.
+
+**Presets do not own the palette or the layout set.** Those are user settings in the HUD
+(§13.3.1), chosen according to what the output is being composited over. A preset overriding
+them would silently undo a decision made for a reason that the preset cannot know about.
+
+```ts
+interface TextPreset {
+  name: string;
+  source: string;          // path to a .txt file
+}
+
+interface VisualPreset {
+  name: string;
+  layout: string;          // → [layout="grid"] on the stage
+  columns?: number | 'auto';
+  fontScale: number;
+  splitChars: boolean;     // one element per glyph, or per word
+  textMode: TextMode;      // how much text, selected how (§12.3)
+  palette: string;
+  decay: number;           // how fast glitches fall back to normal
+
+  bindings: Partial<Record<Lane, EffectRef[]>>;   // discrete hits
+  ambient?: EffectRef[];                          // every frame, intensity-scaled
+
+  energy: 'sparse' | 'mid' | 'peak' | 'any';   // which section it suits (§10.1)
+  minBars?: number;        // don't cycle away from this one too early
+}
+```
+
+### 11.2 Cycling
+
+Two mechanisms, layered.
+
+**The timer** is the floor: cycle after a randomised 16–32 bars so it never goes static, and
+never feels metronomic. Changes land on a **phrase boundary**, never mid-phrase — arriving on
+the 1 of a new 16 is what makes a switch feel intentional rather than random.
+
+**Structure events** override the timer. A detected drop forces a change immediately and
+resets the counter; a breakdown switches to a sparse preset. This is Increment 4 — the timer
+alone carries the MVP — but the preset model accounts for it now so it isn't a retrofit.
+
+The `energy` tag is what makes the override work. Without it a breakdown could cycle into the
+densest preset in the bank, which is exactly backwards. The selector picks from presets whose
+tag suits the current section.
+
+A preset is not repeated until the bank has been exhausted or a minimum gap has passed.
+Manual override, when it exists (Increment 5), always wins.
+
+### 11.3 Where presets live
+
+Visual presets are code — they reference effects and CSS, so they are part of the build.
+Text presets are plain `.txt` files loaded at runtime.
+
+> **Q4.** Should text presets be a fixed bundled set, or a folder the user drops files into
+> and the app scans? The second is barely more work and much more useful, but it means
+> deciding where that folder lives.
+
+---
+
+## 12. Effect vocabulary
+
+Taken from Acid, which is the agreed basis for the MVP.
+
+### 12.1 The slot mechanism
+
+The single best idea in Acid's CSS. `glitch` and `decor` are **abstract numbered slots** set
+on elements by JavaScript. The number means nothing on its own — each preset's CSS decides
+that `glitch="3"` is blue and underlined, or yellow on blue, or a dingbat substitution.
+
+So wildly different presets need no new JavaScript at all. They redefine the slots. All the
+engine does is decide *which elements* get *which slot*, and when.
+
+### 12.2 Element effects
+
+| Effect | Behaviour |
+|---|---|
+| `glitchChars` | Picks a character — every "e" — and slots every instance at once. Reads as systematic corruption rather than noise. |
+| `glitchWords` | Slots a proportion of words. |
+| `glitchParagraphs` | Slots whole paragraphs together. |
+| `removeGlitches` | Decays slots back to 0 over time. Runs continuously; rate is a preset parameter. |
+| `decor` | Second slot, for underlines and accents, independent of `glitch`. |
+| `invertBlock` | The `.selected` inversion — black block, white text. |
+| `swell` | Animates `min-width` / `min-height` with a CSS transition so elements grow and shove the layout around. |
+
+Dropped from Acid: `addLink`, which turned words into Google search links. Unclickable on a
+projector.
+
+### 12.3 Text selection modes
+
+Cheap, and responsible for most of the variety.
+
+**The unit of selection is the sentence**, never the word or the line. Modes:
+
+`whole` · `sentence` · `sentences` (N consecutive) · `shortSentences` · `longSentences` ·
+`word`
+
+Selecting by word or line count produced fragments that end mid-thought — *"and at her
+heels, leashed in like"* — which reads as a bug rather than as an effect. Acid could get
+away with it because Wittgenstein's propositions are short and self-contained; verse is not.
+
+Sentences are found by scanning for a terminating `.`, `!` or `?`, so they can span several
+lines. The prologue's 53 lines become 34 sentences of 3 to 27 words.
+
+**The element budget is checked between sentences, never inside one.** A sentence renders
+whole or not at all. The first always renders even if it alone exceeds the budget, because a
+blank stage is a worse failure than a busy one.
+
+`word` survives as the one deliberate fragment: a single isolated word reads as emphasis
+rather than truncation, because nothing is obviously missing.
+
+Plus `splitChars`, deciding whether each glyph is its own element — which governs whether
+character-level effects are even possible, and has real performance consequences (§14).
+
+### 12.4 Layout effects
+
+| Effect | Behaviour |
+|---|---|
+| `newLayout` | Changes the `layout` slot on the stage — the main look switch |
+| `columns` | CSS multi-column, 1–6 |
+| `cellGrid` | Grid of bordered cells |
+| `flexWrap` | Wrapped paragraphs with animated widths |
+| `fontScale` | 25% to 800% |
+| `borders` | `borders` slot, 0–4 |
+| `scroll` | Auto-scroll at variable speed |
+| `background` | Stage background colour change |
+| `colourWave` | Rotates the colour-slot variables so colour moves through the text (§12.5) |
+
+### 12.4.1 Text blocks
+
+Up to **two** independent text regions at once, each with its own selection, so they show
+different text rather than repeating.
+
+Blocks are assigned **distinct cells of a 3x3 grid**, which makes non-overlap true by
+construction. Positioning them freely and checking for collisions would fail exactly when
+the text is longest, which is when it matters.
+
+**The centre cell is never used.** Composited output usually has its subject there — a logo,
+a visualiser's focal point — and text landing on it is the fastest way to spoil the frame.
+
+In non-grid layouts the grid placement is simply ignored and blocks stack, so the feature
+costs nothing where it does not apply.
+
+### 12.4.2 Size floor
+
+Nothing renders below about 76% of the base size, and the base is 28px.
+
+Small type fails twice over: it is unreadable on a projector at the back of a room, and a
+visualiser warping the output (§13.4) smears fine detail into mush within a frame or two.
+Fewer, larger words survive both. Selection counts were cut accordingly — passages are two
+or three sentences, not ninety words.
+
+### 12.5 Colour
+
+A palette with a **reseat** that narrows to about three active colours at a time. This is
+what keeps Acid coherent rather than confetti, and it is worth preserving exactly.
+
+**Colour slots** give per-glyph colour variation cheaply, without the shader. Each element is
+assigned a slot class (`c0`–`c7`) at typeset time from its position, and the preset's CSS maps
+those slots to palette colours through CSS variables. Animating the whole text then means
+changing eight variables rather than writing inline styles to five thousand elements — so
+moving waves of colour through the type cost essentially nothing.
+
+This matters because the naive version is the §14 layout-thrash bug wearing a hat. It also
+fits the slot mechanism in §12.1 rather than being a special case.
+
+Full per-glyph sampling from a live frame — the best trick in the original — is deliberately
+held back to the three.js increment, where a shader replaces the video.
+
+### 12.6 Fonts
+
+Acid bundles `wingdings.woff` for its corruption effect. Wingdings is Microsoft's and
+bundling it in a distributed app is a licensing question we do not need. The *effect* is
+what matters, not that specific face, so an open dingbat font substitutes cleanly.
+
+---
+
+## 13. Output and OBS
+
+### 13.1 The stage
+
+A **fixed-resolution rectangle rendered 1:1, anchored top-left in the window.** Default
+1280×720.
+
+Not letterboxed and scaled, as first planned: scaling resamples text and costs crispness,
+and anchoring at the origin makes the OBS crop exactly `0,0 1280×720` rather than something
+you have to measure. The HUD sits below it and is cropped away.
+
+Fixed rather than fluid for two reasons: OBS gets a stable crop target, and the type layout
+becomes deterministic. A preset looks the same every time instead of reflowing with window
+size — which matters a lot when font sizes are viewport-relative.
+
+**Default 1280×720**, chosen over 1080p because rendering is lighter and the app is sharing a
+machine with DJ software and OBS. The stage size is configurable.
+
+### 13.2 Capture
+
+Window capture in OBS, cropped to the stage. The HUD sits outside the stage and is cropped
+away.
+
+To make that painless, **the HUD displays the exact crop values** — position and size — so
+they can be typed into OBS rather than dragged by eye.
+
+### 13.3 Transparency
+
+Electron windows can be genuinely transparent, which would let the visual composite over
+other layers in a stream rather than sitting in an opaque box.
+
+Two things to note. Chroma or colour keying is *not* an acceptable substitute here:
+antialiased glyph edges blend into the key colour, producing halos and eating thin strokes.
+And the blend-mode trick — render on black, use Screen in OBS — only works for light-on-dark
+visuals. Acid is black on white, so it would not apply.
+
+> **Needs verification:** whether OBS's window capture preserves the alpha channel from a
+> transparent window. Recent versions have a transparency option for Windows Graphics
+> Capture, but this is unconfirmed. If it does not, the fallback is an OBS browser source
+> fed by the app over a local socket — which the event-stream seam in §7 already allows for.
+
+**Default look is black text on white**, as in Acid. Noted here because it rules out the
+blend-mode shortcut above.
+
+### 13.3.1 Compositing controls
+
+Added during Increment 1, once transparency made overlaying real. All persist between
+launches.
+
+| Control | Why |
+|---|---|
+| **Background** — white / black / transparent | Transparent composites over other layers; the foreground flips to white with it, since black type over arbitrary video is unreadable |
+| **Palette** — acid / mono / warm / cool / none | Saturated accents clash badly with whatever is underneath. `mono` and `none` keep the whole typographic vocabulary and drop the colour |
+| **Layouts** — centre / edges / all | Other visuals usually put their subject in the middle of frame. The `edges` set keeps the centre clear and works around it |
+
+Two effects had to learn about these rather than assuming: `colourShift` bases its slots on
+the stage foreground instead of hardcoded black, which would blank the stage on a dark
+background; and the `background` flip does not run unless the mode is white, because an
+explicit choice about output should not be overruled by an effect.
+
+The layout set applies immediately on change rather than at the next bar — if text is
+sitting on your visuals, four beats is too long to wait.
+
+### 13.4 Spout output
+
+**Working.** Verified 2026-08-21: the stage reaches NestDrop over Spout and the visualiser
+warps the typography.
+
+This is a second, independent output path, not a replacement. Two things are wanted:
+
+| Path | Result |
+|---|---|
+| **Overlay** — Olib into OBS, over other layers | Text stays clean and readable on top of the visuals |
+| **Warp** — Olib into MilkDrop, then into OBS | Typography becomes raw material for the visualiser |
+
+Both must keep working. They pull in opposite directions — the transparent background and
+the `edges` layout set exist to *avoid* the visuals, which is meaningless once the text is
+being consumed by them — so neither should assume the other is off.
+
+In practice `edges` turned out to matter for *both*: the brand mark sits centre frame in the
+warped output too, which is why blocks never use the centre cell (§12.4.1).
+
+#### How it is done
+
+**An OBS per-source Spout filter.** No code, no native module.
+
+Right-click the Olib source in OBS, Filters, add **Spout Filter**. That publishes only that
+source. NestDrop receives it; NestDrop's own output goes back into OBS as a separate source.
+
+```
+Olib window ──► OBS source ──[Spout Filter]──► NestDrop ──► OBS source ──► program
+```
+
+**Publishing OBS's program feed instead would loop** — NestDrop is itself an OBS source, so
+it would feed itself, blow out to white, and add a frame of latency per round. The per-source
+filter carries only Olib, so there is no cycle. This distinction is the entire reason the
+simple route works.
+
+With the HUD hidden the window *is* the stage, so the capture needs no crop.
+
+#### A native sender, if it is ever needed
+
+Not needed now. Recorded because it was investigated in detail and the conclusion should not
+have to be rediscovered.
+
+`electron-spout` exists and uses `offscreenUseSharedTexture` for zero-copy GPU sharing. It
+would remove OBS from the path entirely — lower latency, no plugin dependency.
+
+Three real costs:
+
+- **A C++ toolchain.** Visual Studio with MSVC, cmake-js, vcpkg. Not currently installed.
+- **Rebuilds against Electron's ABI** on every Electron update, turning a clean
+  `npm install` into a support burden. It would be the project's only dependency of this
+  kind and should stay that way.
+- **An architecture change.** Shared textures require offscreen rendering, and an offscreen
+  window is not displayed — forcing the control/output window split (§7). That split is
+  independently desirable, but it also means OBS could no longer window-capture the stage
+  and would need a Spout *receiver* source instead.
+
+The judgement: none of that is worth paying until the plugin route proves insufficient. It
+has not.
+
+**Alpha survives Spout**, so a transparent background carries through to the receiver.
+
+---
+
+## 14. Performance and reliability
+
+Two hours unattended, sharing a machine with DJ software and OBS. Reliability is a feature.
+
+### Rules
+
+- **Never read layout then write style in a loop.** Batch all `getBoundingClientRect()`
+  reads, then all writes. This is the bug that caps Acid's frame rate.
+- **Cache element rects** per text render; invalidate on resize or re-typeset, not per frame.
+- **Prefer attribute flips to inline styles.** One attribute on the stage restyles thousands
+  of elements in CSS; a loop setting inline styles does not.
+- **Budget elements.** `splitChars` on a large text run can produce tens of thousands of
+  nodes. Presets declare a ceiling; the typesetter enforces it.
+- **Degrade, don't fail.** Under frame-rate pressure, reduce element counts and effect
+  density rather than dropping frames.
+- **Never clip silently.** The HUD scrolls rather than hiding controls past the window edge.
+  A control that renders off-screen is indistinguishable from one that was never built.
+
+### Unbreakable
+
+- Every effect handles an empty element list without throwing, and **says so** rather than
+  failing silently — Acid's quiet no-ops were fine for a fixed piece and are not fine here.
+- Audio device loss, silence, and detection failure all degrade to "keep running on the last
+  known grid".
+- An uncaught error in one effect must not take down the frame loop.
+- Target 60 fps; fall back to 30 cleanly if the machine is loaded.
+
+---
+
+## 15. Stack and layout
+
+**TypeScript (strict), Vite, Electron.** No p5, no jQuery.
+
+Built on Electron 43, Vite 7, TypeScript 7, via `electron-vite`. Two notes on that:
+
+- **TypeScript 7** (the Go-based compiler) is what npm resolved as latest, not a considered
+  choice. It typechecks the project fine. Pin back to 5.x if it becomes a problem.
+- **`npm` 11 blocks install scripts by default.** `electron` and `esbuild` both download a
+  platform binary in `postinstall`, so nothing works until they are approved. The approval
+  is recorded in `package.json` under `allowScripts`.
+- **Typed arrays now carry a buffer type parameter.** A bare `Float32Array` widens to
+  `ArrayBufferLike` and no longer satisfies Web Audio signatures; it must be written
+  `Float32Array<ArrayBuffer>`. Expect this any time you touch audio buffers.
+
+TypeScript earns its place twice: in the engine, where `Lane`, `EffectRef` and preset shapes
+are naturally typed, and in preset definitions, where a mistyped lane name or effect
+parameter should be a red squiggle rather than a visual that silently never happens.
+
+```
+SymphonyInOlib/
+├─ DESIGN.md
+├─ package.json · tsconfig.json · vite.config.ts
+├─ electron/
+│  ├─ main.ts           window, permissions, desktop loopback capture
+│  └─ preload.ts        bridge
+├─ presets/
+│  ├─ visual/           visual preset definitions (code)
+│  └─ text/             .txt files
+├─ style/
+│  ├─ base.css
+│  ├─ slots.css         [glitch] [decor] [borders] — slot appearances
+│  ├─ layouts.css       [layout="..."] definitions
+│  └─ hud.css
+└─ src/
+   ├─ main.ts · types.ts
+   ├─ audio/            AudioInput · Analyser · BeatTracker
+   ├─ time/             Clock
+   ├─ show/             Conductor · PresetBank · TextBank
+   ├─ render/           Stage · Typesetter · Renderer
+   ├─ effects/          registry + effect modules
+   ├─ hud/              Hud
+   └─ util/             math · color · dom
+```
+
+---
+
+## 16. Roadmap
+
+### Increment 1 — MVP: "runs my set unattended" — **done**
+
+*Demo: launch, pick a source, alt-tab to the DJ software, OBS captures a clean visual locked
+to the music for the rest of the night.*
+
+- ~~Electron shell — window, permissions, no throttling~~ **done**
+- ~~Audio device dropdown including system loopback~~ **done**
+- ~~Band energy and onset analysis~~ **done** (§9.2.1)
+- ~~Audio beat detection — tempo, phase, confidence, re-lock~~ **done** (tempo accuracy open, §9.2.3)
+- ~~Predictive beat grid; bars and phrases~~ **done**
+- ~~Tap tempo, HUD readouts, beat indicator~~ **done**
+- ~~DOM typography engine — paragraphs, words, chars~~ **done**
+- ~~Text presets from files~~ **done** (bundled; Q4 still open)
+- ~~Effect vocabulary and lane bindings~~ **done** (§12)
+- ~~Sentence-based text selection, multi-block placement, weighted layouts~~ **done**
+- ~~Preset bank with cycling on phrase boundaries~~ **done**
+
+**Increment 1 is complete.** Outstanding within it: tempo accuracy (§9.2.3), which is
+deferred rather than solved.
+- **Audio beat detection** — tempo, phase, confidence, re-lock
+- Predictive beat grid; bars and phrases
+- Tap tempo on space; Tab toggles options
+- HUD: BPM, source, confidence, beat indicator, OBS crop values
+- DOM typography engine — paragraphs, words, chars
+- Text presets from files
+- Colour slots + palette, with a moving colour wave
+- Three visual presets, auto-cycling on phrase boundaries (timer only)
+- Fixed-resolution stage at 1280×720
+
+Detection goes in straight away rather than being stubbed. If it works poorly it still
+works, and Increment 2 is where it gets good.
+
+### Increment 2 — detection hardening
+
+Confidence scoring, octave correction, faster re-lock on track change, downbeat and phrase
+heuristics, behaviour through breakdowns and silence.
+
+### Increment 3 — palettes
+
+Palette presets with roles (text, background, accent), selectable, optionally shifting with
+energy.
+
+### Increment 4 — energy and structure
+
+Breakdown, drop and build detection from low-band energy (§10.1), driving preset changes and
+intensity so the visual responds to arrangement rather than just pulse. Activates the `energy`
+tags already present on presets.
+
+### Increment 5 — MIDI pads
+
+Web MIDI for preset switching from a controller — the only control surface that works while
+the window is unfocused.
+
+### Increment 6 — Spout output — **done**
+
+Achieved with an OBS per-source Spout filter rather than a native sender (§13.4). No code
+was needed. The native route is documented with its costs in case the plugin path ever
+proves insufficient; it has not.
+
+### Increment 7 — three.js layer
+
+WebGL background plus the per-glyph sampler: a live shader colouring text, generalising
+Acid's video-sampling trick.
+
+### Increment 8+ — ongoing
+
+Text preset manager, effect library expansion, transparent output, perf work, and possibly
+Ableton Link via a native module for exact sync on rekordbox and Serato.
+
+---
+
+## 17. Decision log
+
+Recording what was rejected, and why, so it doesn't get relitigated.
+
+| Decision | Outcome | Reason |
+|---|---|---|
+| p5.js + jQuery | **Dropped** | ~1 MB for a dozen helpers |
+| Composed piece with an authored timeline | **Dropped** | It's a live tool; the track is unknown |
+| MIDI clock as the timing source | **Dropped** | rekordbox and Serato don't send it; agnostic was the goal |
+| Tap tempo as the primary clock | **Dropped** | Can't re-tap a window you can't reach |
+| Metronome-first development | **Dropped** | Detection is the risk; face it early |
+| Seeded RNG for reproducible looks | **Dropped** | Made sense for a fixed piece; live, you *want* variation |
+| Second monitor for the output window | **Dropped** | User has one screen; must work regardless |
+| Keyboard as the live control surface | **Dropped** | Unfocused windows get no key events |
+| Chroma/colour key for transparency | **Dropped** | Wrecks antialiased type |
+| Screen/Add blend as a transparency shortcut | **Dropped** | Only works light-on-dark; Acid is black-on-white |
+| Hosted web app | **Dropped** | Never going to be hosted; Electron solves five problems at once |
+| `addLink` effect | **Dropped** | Unclickable on a projector |
+| Text and visual presets coupled | **Dropped** | Coupling is why Acid's scenes can't be reordered |
+| Overall volume as the structure signal | **Dropped** | DJ masters are limited; breakdown and drop have near-identical RMS. Use low-band energy |
+| Per-glyph colour via inline styles | **Dropped** | It's the §14 layout-thrash bug. Colour slots + CSS variables instead |
+| Legacy `chromeMediaSource: 'desktop'` capture | **Dropped** | Audio-only form is a malformed IPC; terminates the renderer (§8.1) |
+| Requesting a video track for loopback audio | **Dropped** | WGC fails `E_ACCESSDENIED` and takes the audio with it (§8.1) |
+| Letterboxed, scaled stage | **Dropped** | Resamples text; 1:1 top-left also makes the OBS crop trivial (§13.1) |
+| Onset threshold as `mean × k` | **Dropped** | Cleared constantly by steady-state signal. Use `mean + k × stddev` (§9.2.1) |
+| 0.7s flux history window | **Dropped** | Spans a beat, not a bar; collapses in breakdowns (§9.2.1) |
+| Separating kick from bass synths | **Not attempted** | They are genuinely the same event in that band. Tracking tolerates it (§9.2.2) |
+| Spout via OBS program feed | **Dropped** | MilkDrop is already an OBS source, so it feeds itself. Direct sender instead (§13.4) |
+| Whole HUD as the window drag region | **Dropped** | A drag region swallows pointer events — the panel could not be scrolled. Only the status strip drags |
+| Native Spout sender | **Deferred** | An OBS per-source filter does the job with no code, no toolchain and no architecture change (§13.4) |
+| Selecting text by word or line count | **Dropped** | Produces fragments ending mid-thought. Sentences are the unit (§12.3) |
+| Three simultaneous text blocks | **Dropped** | Too much on screen once the size floor was raised. Two |
+| Equal weighting across edge layouts | **Dropped** | Single bands are the least interesting and were appearing nearly half the time |
+| Presets setting palette and layout set | **Dropped** | Those are user choices about compositing; a preset cannot know why they were made (§11.1) |
+
+---
+
+## 18. Open questions
+
+| # | Question | Section |
+|---|---|---|
+| Q1 | Auto-reconnect to a returning audio device, or wait for the user? | §8 |
+| Q2 | How aggressively should auto-detect resume after a tap? Worth a "hold manual" toggle? | §9.4 |
+| Q4 | Text presets: bundled fixed set, or a user folder the app scans? | §11.3 |
+| Q7 | What is the app actually called? "Symphony in Olib" is a placeholder. | — |
+| ~~Q8~~ | ~~Three visual presets in the MVP?~~ **Answered: four.** `still` (sparse, one large sentence, almost motionless), `scatter` (mid, two blocks, the workhorse), `swarm` (peak, dense and character-level), `drift` (mid, long sentences, scrolling) | §11 |
+| Q9 | Are the snare (2.0) and hat (2.2) sensitivity defaults as eager as kick was? If they also want ~4, that is a systematic scaling error, not three numbers | §9.2.1 |
+| Q10 | Tempo reads a few percent low and the cause is not yet found. Deferred as good enough for visuals — revisit with a correlation-curve plot before changing the algorithm again | §9.2.3 |
+| Q11 | Block count is currently random 1–2 per re-typeset. Should it correlate with something — energy, or the layout in use — rather than being arbitrary? | §12.4.1 |
+| Q12 | Are `longSentences` (up to 27 words) too dense at the new size floor, especially two blocks at once? | §12.4.2 |
+
+**Answered:** stage defaults to 1280×720 (Q5). Black on white (Q6). Preset cycling is a
+randomised 16–32 bars on phrase boundaries, with structure overrides deferred to Increment 4
+(Q3).
+
+**Needs verification:** whether OBS window capture preserves the alpha channel from a
+transparent Electron window (§13.3).

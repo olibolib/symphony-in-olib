@@ -1,0 +1,66 @@
+:root {
+  /* Stage dimensions live in CSS as well as TS so the layout is correct before any script
+     runs. Keep these in sync with STAGE in electron/main.ts. */
+  --stage-w: 1280px;
+  --stage-h: 720px;
+
+  /* Keep in sync with HUD_HEIGHT in electron/main.ts, which sizes the window. */
+  --hud-h: 268px;
+
+  /* DESIGN.md §13.3 — black on white is the default look, as in Acid. */
+  --stage-bg: #ffffff;
+  --stage-fg: #000000;
+}
+
+/* Background modes. Transparent is for compositing the text over other layers in OBS;
+   the foreground flips to white because black text over arbitrary video is unreadable. */
+:root[data-bg='black'] {
+  --stage-bg: #000000;
+  --stage-fg: #ffffff;
+}
+
+:root[data-bg='transparent'] {
+  --stage-bg: transparent;
+  --stage-fg: #ffffff;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  /* Transparent, so the window's transparency actually reaches the compositor. Anything
+     opaque here would defeat it regardless of what the stage does. */
+  background: transparent;
+  /* Nothing in this app is selectable or draggable; it is a display surface. */
+  user-select: none;
+  -webkit-user-drag: none;
+  cursor: default;
+}
+
+/* The stage sits top-left at exactly 1280x720 with no scaling, so type stays pixel-crisp
+   and the OBS crop is simply 0,0,1280,720. */
+#stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--stage-w);
+  height: var(--stage-h);
+  overflow: hidden;
+  background: var(--stage-bg);
+  color: var(--stage-fg);
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: var(--fs, 24px);
+  line-height: 1.05;
+}
+
+#container {
+  width: 100%;
+  height: 100%;
+}

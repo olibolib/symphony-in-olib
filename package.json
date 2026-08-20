@@ -1,0 +1,26 @@
+{
+  "name": "symphony-in-olib",
+  "version": "0.1.0",
+  "description": "Live music-reactive typographic visuals for DJs",
+  "main": "./out/main/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "npm run typecheck && electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "electron": "^43.4.1",
+    "electron-vite": "^5.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6"
+  },
+  "allowScripts": {
+    "electron@43.4.1": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true
+  }
+}

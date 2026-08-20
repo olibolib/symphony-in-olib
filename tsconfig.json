@@ -1,0 +1,28 @@
+{
+  // One config for the whole project. The electron-vite templates normally split this into
+  // separate node/web configs; a single file is easier to follow and the trade-off (main
+  // process code can "see" DOM types it will never use) costs us nothing in practice.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+
+    // Strict, as agreed in DESIGN.md §15.
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+
+    // We never emit with tsc — Vite does the building. This is type-checking only.
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*.ts", "electron/**/*.ts", "*.config.ts"]
+}

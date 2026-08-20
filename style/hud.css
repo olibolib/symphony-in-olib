@@ -1,0 +1,336 @@
+/* The HUD is deliberately plain and dark — it sits below the stage, is never captured,
+   and exists to be read at a glance from across a room. */
+
+/* Only the small move handle at top left is a drag region — see .move-handle at the end of
+   this file. Making a large area draggable swallows pointer events over everything it
+   covers, which is what broke the panel when the whole HUD was a drag region. */
+#hud {
+  position: absolute;
+  top: var(--stage-h);
+  left: 0;
+  width: var(--stage-w);
+  height: var(--hud-h);
+  padding: 12px 16px;
+  /* Sized to fit its contents outright — no scrollbar. If something is added that does not
+     fit, raise --hud-h and HUD_HEIGHT together rather than letting it scroll. */
+  overflow: hidden;
+  background: #0b0b0b;
+  color: #cfcfcf;
+  font: 12px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.readouts {
+  display: flex;
+  gap: 28px;
+  align-items: flex-end;
+}
+
+.readout {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.readout .label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6d6d6d;
+}
+
+/* Raw tracker output, shown beneath the locked tempo. These two disagreeing is a
+   meaningful signal: it means the clock is refusing a correction, which looks identical to
+   a bad estimate if you only publish one number. */
+.readout .sub {
+  font-size: 10px;
+  color: #6d6d6d;
+}
+
+.readout .sub code {
+  color: #9a9a9a;
+}
+
+.readout .value {
+  font-size: 26px;
+  white-space: nowrap;
+  line-height: 1;
+  color: #f2f2f2;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The beat indicator. DESIGN.md §13.2: this is how you tell at a glance whether the
+   tracker is actually locked, without staring at the visual and guessing. */
+.readout.beat .dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid #3a3a3a;
+  background: #1a1a1a;
+  transition: background 90ms ease-out;
+}
+
+.readout.beat .dot[data-on='true'] {
+  background: #f2f2f2;
+  transition: none;
+}
+
+/* A downbeat reads differently from the other three, so you can see phase, not just pulse. */
+.readout.beat .dot[data-downbeat='true'] {
+  border-color: #f2f2f2;
+}
+
+.strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  color: #7d7d7d;
+}
+
+.strip code {
+  color: #cfcfcf;
+}
+
+kbd {
+  padding: 1px 5px;
+  border: 1px solid #3a3a3a;
+  border-radius: 3px;
+  color: #cfcfcf;
+}
+
+#options {
+  border-top: 1px solid #242424;
+  padding-top: 10px;
+  color: #9a9a9a;
+}
+
+#options[hidden] {
+  display: none;
+}
+
+.placeholder {
+  color: #6d6d6d;
+  font-style: italic;
+}
+
+/* --- band meters ------------------------------------------------------------------- */
+
+.meters {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.meter .name {
+  width: 38px;
+  font-size: 10px;
+  color: #6d6d6d;
+  text-align: right;
+}
+
+.meter .bar {
+  display: block;
+  width: 150px;
+  height: 8px;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  overflow: hidden;
+}
+
+.meter .bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #cfcfcf;
+  /* No transition — the bar should show the signal, not a prettified version of it. */
+}
+
+/* Onset indicator. Lit on the frame a transient is detected, decays by CSS. */
+.meter .led {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #1f1f1f;
+  border: 1px solid #333;
+  transition: background 140ms ease-out;
+}
+
+.meter .led[data-on='true'] {
+  background: #ff4a2b;
+  transition: none;
+}
+
+/* --- options --------------------------------------------------------------------- */
+
+#hud[hidden] {
+  display: none;
+}
+
+#hud button,
+#hud select,
+#hud input {
+  -webkit-app-region: no-drag;
+}
+
+#options {
+  display: flex;
+  align-items: center;
+  gap: 16px 20px;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field > span {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6d6d6d;
+}
+
+.field select {
+  background: #161616;
+  color: #e6e6e6;
+  border: 1px solid #333;
+  padding: 4px 6px;
+  font: inherit;
+  min-width: 132px;
+}
+
+/* Device names are long and worth reading in full. */
+#opt-device {
+  min-width: 280px;
+}
+
+.status {
+  color: #6d6d6d;
+}
+
+.status[data-error='true'] {
+  color: #ff6a4a;
+}
+
+/* --- sensitivity sliders ------------------------------------------------------------ */
+
+#options {
+  flex-wrap: wrap;
+}
+
+.sens {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.sens-title {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6d6d6d;
+}
+
+.sens label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sens label > span {
+  color: #9a9a9a;
+  width: 34px;
+  text-align: right;
+}
+
+.sens input[type='range'] {
+  width: 90px;
+  accent-color: #ff4a2b;
+}
+
+.sens code {
+  width: 24px;
+  color: #cfcfcf;
+}
+
+/* Close button — the frameless window has no system one. Top right of the HUD. */
+#opt-close {
+  flex: none;
+  background: transparent;
+  border: 1px solid #3a3a3a;
+  color: #9a9a9a;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+}
+
+#opt-close:hover {
+  border-color: #ff4a2b;
+  color: #ff4a2b;
+}
+
+
+/* --- header bar ---------------------------------------------------------------------- */
+
+.hud-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hud-title {
+  flex: 1;
+  text-align: center;
+  color: #5a5a5a;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+
+
+/*
+ * Move handle. Press and drag it to move the frameless window.
+ *
+ * `-webkit-app-region: drag` is the right tool at this size. The earlier mistake was
+ * applying it to the *whole* HUD: a drag region intercepts every pointer event over it, so
+ * everything it covered stopped being clickable. A dedicated icon has nothing to intercept
+ * but itself.
+ */
+.move-handle {
+  -webkit-app-region: drag;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: #9a9a9a;
+  cursor: move;
+}
+
+.move-handle:hover {
+  color: #e6e6e6;
+}
+
+/* Clipped-block warning. Text being lost should look like a problem, not a statistic. */
+.clip code[data-warn='true'] {
+  color: #ff4a2b;
+}
