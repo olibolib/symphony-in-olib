@@ -510,6 +510,164 @@ Text presets are plain `.txt` files loaded at runtime.
 
 ---
 
+### 11.4 Editable presets
+
+**Planned, not built.** Recorded now because it changes what an effect *is*, and the longer
+that goes unwritten the more code assumes the current shape.
+
+The goal: take one of the built-in presets, open it, see the effects bound to each lane, tune
+each one with a slider, add or remove effects, and save the result. Presets become editable
+objects rather than compiled-in constants.
+
+#### The problem with today's effects
+
+Effects are closures (§12.2). That is a good fit for how they are used *now* — authored in
+TypeScript, checked by the compiler, composed with `whenHolding`. But a closure is **opaque**:
+you cannot ask it its name, and you cannot ask it what parameters it has.
+
+Two consequences, and both block this feature outright:
+
+- **No UI can be generated for them.** A slider for `glitchWords.amount` requires knowing that
+  the parameter exists, its range, and its current value. None of that survives into a closure.
+- **They do not serialise.** A preset's `bindings` field contains functions, so a preset cannot
+  be written to a file. Text presets are editable precisely because they are just strings.
+
+It is also the one place the codebase is inconsistent with itself: everything that owns state
+is a class, and effects are functions.
+
+#### The shape
+
+An effect becomes a class plus a **definition** describing its tunable surface. The definition
+is what the UI reads; the class is what runs.
+
+```ts
+/** One tunable parameter, described well enough for a control to be built from it. */
+interface ParamSpec {
+  readonly key: string;
+  readonly label: string;
+  readonly kind: 'number' | 'integer' | 'boolean' | 'choice';
+  readonly min?: number;
+  readonly max?: number;
+  readonly step?: number;
+  readonly choices?: readonly string[];
+  readonly fallback: number | boolean | string;
+}
+
+/** Registered once per effect type. The registry maps id to this. */
+interface EffectDefinition {
+  readonly id: string;            // 'glitchWords'
+  readonly label: string;         // 'Glitch words'
+  readonly params: readonly ParamSpec[];
+  /** Container effects (whenHolding) accept children; leaf effects do not. */
+  readonly acceptsChildren?: boolean;
+  create(values: ParamValues, children?: readonly Effect[]): Effect;
+}
+
+abstract class Effect {
+  constructor(protected values: ParamValues) {}
+  abstract apply(ctx: EffectContext): void;
+  /** Live tuning — the instance is mutated in place. */
+  set(key: string, value: unknown): void;
+  toJSON(): EffectData;
+}
+```
+
+`Conductor` changes by one line: `effect.apply(ctx)` instead of `effect(ctx)`. Nothing else in
+the dispatch path is affected.
+
+#### Presets as data
+
+```ts
+interface PresetData {
+  name: string;
+  energy: EnergyTag;
+  text: { mode: TextMode; count: number; splitChars: boolean; blocks: 1 | 2 };
+  fontScale: number;
+  lanes: Record<Lane, EffectData[]>;
+  ambient: EffectData[];
+}
+
+interface EffectData {
+  id: string;
+  values: Record<string, number | boolean | string>;
+  children?: EffectData[];   // whenHolding and anything else that wraps
+}
+```
+
+Which makes a preset a JSON file, stored the same way texts are (§11.3) — a writable app-data
+folder, seeded with the built-ins on first run. `PresetBank` grows the shape `TextBank`
+already has: list, load, edit, apply, revert, save.
+
+**Container effects need the `children` field.** `whenHolding([...])` wraps other effects, and
+a flat list of ids and values cannot express that. Easy to overlook until it is the one thing
+that will not round-trip.
+
+#### Two speeds of change
+
+A rule worth fixing now, because it is not obvious:
+
+| Change | When it takes effect |
+|---|---|
+| Moving a parameter slider | **Immediately.** The instance is mutated; the next `fire` uses the new value |
+| Adding, removing or reordering effects; switching preset | **Next phrase** (§11.2) |
+
+A parameter is a continuous adjustment, like the onset sensitivity sliders — waiting for a
+phrase would make it feel broken. A structural change is a decision, and those land on the 1.
+
+#### Sketch of the UI
+
+Inside the Effects tab, per preset:
+
+```
+scatter                                    [live]  [→]
+  kick
+    glitchWords    amount  ──●─────  0.05          [x]
+    invertBlock    count   ─────●──  2             [x]
+  snare
+    glitchChars                                    [x]
+  ambient
+    removeGlitches amount  ──●─────  0.06          [x]
+  + add effect
+```
+
+#### Open risks
+
+- **Ranges must be enforced by the `ParamSpec`, not by taste.** `glitchWords` at `amount: 1`
+  glitches every word on screen — a white-out mid-set. The spec's `max` is a safety rail.
+- **A preset with nothing bound to a firing lane is a silent no-op.** Same class of failure as
+  §14 warns about: the Effects tab should show whether a binding is actually firing, not just
+  that it exists.
+- **Saved presets can reference an effect id that no longer exists** after a rename. Loading
+  must drop the unknown effect and say so, rather than throwing or silently omitting it.
+#### Decided
+
+**Built-in presets are editable directly.** No automatic fork, no "Save as" step — the
+built-ins are ordinary presets that happen to ship with the app.
+
+The safety net is re-seeding rather than forking: because the built-ins are seeded into the
+folder on first run from a compiled-in copy, **"Restore defaults" can always put them back**.
+That gives the same guarantee a fork would, without a second copy of everything appearing in
+the list the first time you move a slider.
+
+**Everything becomes data, including the built-ins.** They are JSON in the presets folder like
+any other, not a special compiled case. Consistency was the deciding argument: two mechanisms
+for the same concept means two code paths, two failure modes, and a rule to remember about
+which kind of preset you are looking at.
+
+**The cost, stated plainly.** Today a mistyped effect parameter is a compile error — that is
+what caught six stale text-mode names in an afternoon during Increment 1. Moving values to
+`Record<string, unknown>` gives that up unless something replaces it. Two things do:
+
+- **Derive the value types from the definitions.** Declaring `params` with `as const` lets
+  TypeScript map a `ParamSpec[]` to the value object it describes, so authoring an effect in
+  TypeScript stays checked even though its data form is untyped.
+- **Validate on load, and report.** Every preset read from disk is checked against its
+  effects' `ParamSpec`s: unknown keys, wrong kinds and out-of-range numbers are corrected to
+  the `fallback` and *named in the HUD*. §14 again — a preset that silently loses an effect
+  because a value was malformed is the worst version of this.
+
+The compiler stops being the only guard; it becomes the first of two.
+
 ## 12. Effect vocabulary
 
 Taken from Acid, which is the agreed basis for the MVP.
@@ -559,6 +717,20 @@ kick; `sine` breathes evenly and suits slower presets.
 
 Amounts want to be small. 0.02 is clearly visible at 720p; past about 0.05 it stops looking
 like a pulse and starts looking like a fault.
+
+### 12.2.2 Why effects are functions, and when that stops working
+
+An effect has no identity worth naming. Its interface is a single method, it shares no
+implementation with any other effect, and its only state is the parameters it was built with —
+so a class would add a name, a constructor, a field and a method to hold one number.
+
+Composition is the other half: `whenHolding([...])` takes effects and returns an effect. As
+functions that is five lines; as classes it needs a `CompositeEffect` type and a new concept.
+
+**This stops working the moment effects need to be data.** A closure cannot report its own
+name or parameters, so no UI can be generated for it and no preset containing one can be
+written to a file. §11.4 sets out what replaces this, and why the migration is a layer in
+front rather than a rewrite: the bodies stay, they gain a definition describing them.
 
 ### 12.3 Text selection modes
 
@@ -930,12 +1102,19 @@ Achieved with an OBS per-source Spout filter rather than a native sender (§13.4
 was needed. The native route is documented with its costs in case the plugin path ever
 proves insufficient; it has not.
 
-### Increment 7 — three.js layer
+### Increment 7 — editable presets
+
+Effects become classes with declared parameters; presets become JSON, edited in the HUD with
+a slider per parameter and saved alongside the texts (§11.4). This is the change that makes
+the tool configurable rather than merely usable, and it is a prerequisite for mapping MIDI to
+anything finer than a whole preset.
+
+### Increment 8 — three.js layer
 
 WebGL background plus the per-glyph sampler: a live shader colouring text, generalising
 Acid's video-sampling trick.
 
-### Increment 8+ — ongoing
+### Increment 9+ — ongoing
 
 Text preset manager, effect library expansion, transparent output, perf work, and possibly
 Ableton Link via a native module for exact sync on rekordbox and Serato.
@@ -979,6 +1158,9 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Fixed text hold of two phrases | **Dropped** | Predictable — you start anticipating the change. One or two, chosen each time (§11.2) |
 | Effects writing `transform` directly | **Dropped** | Scroll and pulse would overwrite each other. Stage is the single writer (§14) |
 | `count` applied per block | **Dropped** | Multiplied the text and clipped the surplus silently (§12.4.1) |
+| Effects as closures | **Correct for now, revisited** | Right while effects are authored in TypeScript; blocks editable and saveable presets, so §11.4 replaces them with classes plus definitions |
+| Built-in presets as a compiled special case | **Dropped** | Two mechanisms for one concept means two code paths and two failure modes. Everything is data (§11.4) |
+| Forking a built-in preset when edited | **Dropped** | Re-seeding gives the same safety net without duplicating every preset the first time a slider moves (§11.4) |
 
 ---
 
@@ -996,6 +1178,8 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Q11 | Block count is currently random 1–2 per re-typeset. Should it correlate with something — energy, or the layout in use — rather than being arbitrary? | §12.4.1 |
 | Q12 | Are `longSentences` (up to 27 words) too dense at the new size floor, especially two blocks at once? | §12.4.2 |
 | Q13 | Pulse amounts are guesses (0.012–0.022). Worth tuning against a projector rather than a monitor — apparent scale changes with viewing distance | §12.2.1 |
+| ~~Q14~~ | ~~Fork on editing a built-in?~~ **Answered: no fork.** Built-ins are editable directly; "Restore defaults" re-seeds them | §11.4 |
+| ~~Q15~~ | ~~Do built-ins stay compiled?~~ **Answered: no.** Everything becomes data, for consistency. Type safety comes from `as const` definitions plus validation on load | §11.4 |
 
 **Answered:** stage defaults to 1280×720 (Q5). Black on white (Q6). Preset cycling is a
 randomised 16–32 bars on phrase boundaries, with structure overrides deferred to Increment 4
