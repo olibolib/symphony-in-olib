@@ -1,51 +1,150 @@
-/* The HUD is deliberately plain and dark — it sits below the stage, is never captured,
-   and exists to be read at a glance from across a room. */
+/*
+ * The HUD. Never captured by OBS — the transparent gap above it exists so it can stay open
+ * during a set without appearing in the crop.
+ *
+ * No drag region except the small handle at top left. A drag region intercepts every pointer
+ * event over it, which is what broke the panel when larger areas were draggable.
+ */
 
-/* Only the small move handle at top left is a drag region — see .move-handle at the end of
-   this file. Making a large area draggable swallows pointer events over everything it
-   covers, which is what broke the panel when the whole HUD was a drag region. */
 #hud {
   position: absolute;
-  top: var(--stage-h);
+  top: calc(var(--stage-h) + var(--gap-h));
   left: 0;
   width: var(--stage-w);
   height: var(--hud-h);
-  padding: 12px 16px;
-  /* Sized to fit its contents outright — no scrollbar. If something is added that does not
-     fit, raise --hud-h and HUD_HEIGHT together rather than letting it scroll. */
-  overflow: hidden;
+  padding: 6px 14px 10px;
   background: #0b0b0b;
   color: #cfcfcf;
-  font: 12px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font: 12px/1.4 ui-monospace, 'Cascadia Mono', Consolas, monospace;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  overflow: hidden;
 }
 
-.readouts {
+#hud[hidden] {
+  display: none;
+}
+
+/* --- header --------------------------------------------------------------------------- */
+
+.hud-bar {
   display: flex;
-  gap: 28px;
-  align-items: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+}
+
+.hud-title {
+  flex: 1;
+  text-align: center;
+  color: #5a5a5a;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.move-handle {
+  -webkit-app-region: drag;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: #9a9a9a;
+  cursor: move;
+}
+
+.move-handle:hover {
+  color: #e6e6e6;
+}
+
+#opt-close {
+  flex: none;
+  background: transparent;
+  border: 1px solid #3a3a3a;
+  color: #9a9a9a;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+}
+
+#opt-close:hover {
+  border-color: #ff4a2b;
+  color: #ff4a2b;
+}
+
+/* --- the split -------------------------------------------------------------------------- */
+
+.hud-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 16px;
+}
+
+/* Readouts on the left, tabs on the right. Stacking them cost the panels half their depth
+   for information that only needs a column. */
+.strip {
+  flex: 0 0 40%;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: flex-start;
+  gap: 14px 18px;
+  padding-right: 16px;
+  border-right: 1px solid #242424;
+  min-width: 0;
+}
+
+.hud-right {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .readout {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
+  flex: none;
 }
 
-.readout .label {
-  font-size: 10px;
+/* Shared by readout labels and band names, so they sit on one line across the strip. */
+.readout .label,
+.meter .name {
+  font-size: 9px;
+  line-height: 12px;
+  height: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #6d6d6d;
+  white-space: nowrap;
 }
 
-/* Raw tracker output, shown beneath the locked tempo. These two disagreeing is a
-   meaningful signal: it means the clock is refusing a correction, which looks identical to
-   a bad estimate if you only publish one number. */
+.readout .value {
+  font-size: 24px;
+  line-height: 1;
+  color: #f2f2f2;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.readout .value.small {
+  font-size: 15px;
+}
+
+/* Raw tracker output beneath the locked tempo. The two disagreeing is meaningful: it means
+   the clock is refusing a correction, which looks identical to a bad estimate if you only
+   publish one number. */
 .readout .sub {
-  font-size: 10px;
+  font-size: 9px;
   color: #6d6d6d;
 }
 
@@ -53,19 +152,10 @@
   color: #9a9a9a;
 }
 
-.readout .value {
-  font-size: 26px;
-  white-space: nowrap;
-  line-height: 1;
-  color: #f2f2f2;
-  font-variant-numeric: tabular-nums;
-}
-
-/* The beat indicator. DESIGN.md §13.2: this is how you tell at a glance whether the
-   tracker is actually locked, without staring at the visual and guessing. */
+/* Beat indicator. How you tell at a glance whether the tracker is locked. */
 .readout.beat .dot {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   border: 1px solid #3a3a3a;
   background: #1a1a1a;
@@ -77,117 +167,127 @@
   transition: none;
 }
 
-/* A downbeat reads differently from the other three, so you can see phase, not just pulse. */
 .readout.beat .dot[data-downbeat='true'] {
   border-color: #f2f2f2;
 }
 
-.strip {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 20px;
-  color: #7d7d7d;
-}
+/* --- band meters ----------------------------------------------------------------------- */
 
-.strip code {
-  color: #cfcfcf;
-}
-
-kbd {
-  padding: 1px 5px;
-  border: 1px solid #3a3a3a;
-  border-radius: 3px;
-  color: #cfcfcf;
-}
-
-#options {
-  border-top: 1px solid #242424;
-  padding-top: 10px;
-  color: #9a9a9a;
-}
-
-#options[hidden] {
-  display: none;
-}
-
-.placeholder {
-  color: #6d6d6d;
-  font-style: italic;
-}
-
-/* --- band meters ------------------------------------------------------------------- */
-
+/* Vertical, so three of them cost about 70px of width instead of 450. */
 .meters {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-left: 8px;
+  align-items: flex-start;
+  gap: 12px;
+  flex: none;
 }
 
 .meter {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+}
+
+/* The name is the onset indicator. One element doing both jobs, and it frees the height a
+   separate LED was taking. */
+.meter .name[data-on='true'] {
+  color: #ff4a2b;
+  transition: none;
 }
 
 .meter .name {
-  width: 38px;
-  font-size: 10px;
-  color: #6d6d6d;
-  text-align: right;
+  transition: color 140ms ease-out;
 }
 
 .meter .bar {
+  position: relative;
   display: block;
-  width: 150px;
-  height: 8px;
+  width: 10px;
+  height: 44px;
   background: #1a1a1a;
   border: 1px solid #2a2a2a;
   overflow: hidden;
 }
 
 .meter .bar i {
-  display: block;
-  height: 100%;
-  width: 0;
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 0;
   background: #cfcfcf;
   /* No transition — the bar should show the signal, not a prettified version of it. */
 }
 
-/* Onset indicator. Lit on the frame a transient is detected, decays by CSS. */
-.meter .led {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: #1f1f1f;
-  border: 1px solid #333;
-  transition: background 140ms ease-out;
+.status {
+  width: 100%;
+  margin-top: auto;
+  color: #6d6d6d;
+  font-size: 11px;
 }
 
-.meter .led[data-on='true'] {
-  background: #ff4a2b;
-  transition: none;
+.status[data-error='true'] {
+  color: #ff6a4a;
 }
 
-/* --- options --------------------------------------------------------------------- */
+/* --- tabs ------------------------------------------------------------------------------ */
 
-#hud[hidden] {
+.tabs {
+  display: flex;
+  gap: 2px;
+  flex: none;
+  border-bottom: 1px solid #242424;
+}
+
+.tabs button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  color: #7d7d7d;
+  padding: 4px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tabs button:hover {
+  color: #cfcfcf;
+}
+
+.tabs button.active {
+  background: #161616;
+  border-color: #2f2f2f;
+  color: #f2f2f2;
+}
+
+.panels {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Panels lay out top-down now that they have real depth to work with. */
+.panel {
+  align-content: flex-start;
+}
+
+.panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 22px;
+  padding: 10px 2px;
+}
+
+.panel[hidden] {
   display: none;
 }
 
-#hud button,
-#hud select,
-#hud input {
-  -webkit-app-region: no-drag;
+.placeholder {
+  color: #5a5a5a;
+  font-style: italic;
 }
 
-#options {
-  display: flex;
-  align-items: center;
-  gap: 16px 20px;
-  flex-wrap: wrap;
-}
+/* --- controls -------------------------------------------------------------------------- */
 
 .field {
   display: flex;
@@ -208,26 +308,11 @@ kbd {
   border: 1px solid #333;
   padding: 4px 6px;
   font: inherit;
-  min-width: 132px;
+  min-width: 150px;
 }
 
-/* Device names are long and worth reading in full. */
 #opt-device {
-  min-width: 280px;
-}
-
-.status {
-  color: #6d6d6d;
-}
-
-.status[data-error='true'] {
-  color: #ff6a4a;
-}
-
-/* --- sensitivity sliders ------------------------------------------------------------ */
-
-#options {
-  flex-wrap: wrap;
+  min-width: 300px;
 }
 
 .sens {
@@ -235,7 +320,6 @@ kbd {
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
-  width: 100%;
 }
 
 .sens-title {
@@ -258,7 +342,7 @@ kbd {
 }
 
 .sens input[type='range'] {
-  width: 90px;
+  width: 100px;
   accent-color: #ff4a2b;
 }
 
@@ -267,70 +351,274 @@ kbd {
   color: #cfcfcf;
 }
 
-/* Close button — the frameless window has no system one. Top right of the HUD. */
-#opt-close {
-  flex: none;
+.stats {
+  display: flex;
+  gap: 22px;
+  color: #7d7d7d;
+}
+
+.stats code {
+  color: #cfcfcf;
+}
+
+/* Text being lost should look like a problem, not a statistic. */
+.clip code[data-warn='true'] {
+  color: #ff4a2b;
+}
+
+.keys {
+  width: 100%;
+  color: #6d6d6d;
+}
+
+kbd {
+  padding: 1px 5px;
+  border: 1px solid #3a3a3a;
+  border-radius: 3px;
+  color: #cfcfcf;
+}
+
+/* --- preset list ------------------------------------------------------------------------ */
+
+.preset-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+.preset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid #2f2f2f;
+  background: #141414;
+}
+
+/* Disabled presets are excluded from the automatic cycle, but can still be triggered by
+   hand — so they dim rather than disappear. */
+.preset[data-enabled='false'] {
+  opacity: 0.45;
+}
+
+.preset .pname {
+  color: #e6e6e6;
+  min-width: 54px;
+}
+
+.preset .penergy {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6d6d6d;
+}
+
+.preset button.go {
   background: transparent;
   border: 1px solid #3a3a3a;
   color: #9a9a9a;
-  width: 22px;
-  height: 22px;
-  cursor: pointer;
   font: inherit;
-  line-height: 1;
+  padding: 0 7px;
+  cursor: pointer;
 }
 
-#opt-close:hover {
-  border-color: #ff4a2b;
-  color: #ff4a2b;
+.preset button.go:hover {
+  border-color: #cfcfcf;
+  color: #f2f2f2;
 }
 
-
-/* --- header bar ---------------------------------------------------------------------- */
-
-.hud-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+.preset input[type='checkbox'] {
+  accent-color: #4ad07a;
 }
 
-.hud-title {
-  flex: 1;
-  text-align: center;
-  color: #5a5a5a;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-size: 10px;
+/* Live. */
+.preset[data-state='live'] {
+  border-color: #4ad07a;
+  background: #102016;
 }
 
-
+.preset[data-state='live'] .pname {
+  color: #7ee6a4;
+}
 
 /*
- * Move handle. Press and drag it to move the frameless window.
+ * Queued — chosen, waiting for the next phrase.
  *
- * `-webkit-app-region: drag` is the right tool at this size. The earlier mistake was
- * applying it to the *whole* HUD: a drag region intercepts every pointer event over it, so
- * everything it covered stopped being clickable. A dedicated icon has nothing to intercept
- * but itself.
+ * The pulse period is the beat, set from the clock as --beat-ms, so it breathes in time with
+ * the music rather than at some arbitrary UI rate. Nothing drives it per frame.
  */
-.move-handle {
-  -webkit-app-region: drag;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  color: #9a9a9a;
-  cursor: move;
+.preset[data-state='queued'] {
+  border-color: #ff4a2b;
+  animation: queued-pulse var(--beat-ms, 500ms) steps(1, end) infinite;
 }
 
-.move-handle:hover {
+.preset[data-state='queued'] .pname {
+  color: #ff8b73;
+}
+
+@keyframes queued-pulse {
+  0% {
+    background: #2a0f0a;
+    border-color: #ff4a2b;
+  }
+  50% {
+    background: #140909;
+    border-color: #7a2a1c;
+  }
+}
+
+/* --- text panel -------------------------------------------------------------------------- */
+
+.text-panel {
+  flex-direction: column;
+  /* Must not wrap: `.panel` sets flex-wrap for the horizontal panels, and in a column
+     direction that wraps into *columns* — the textarea ended up 250px wide inside a 735px
+     panel rather than filling it. */
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 6px;
+  height: 100%;
+  padding-bottom: 2px;
+}
+
+.text-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: none;
+}
+
+.text-tabs button {
+  background: #141414;
+  border: 1px solid #2f2f2f;
+  color: #9a9a9a;
+  padding: 2px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.text-tabs button:hover {
   color: #e6e6e6;
 }
 
-/* Clipped-block warning. Text being lost should look like a problem, not a statistic. */
-.clip code[data-warn='true'] {
-  color: #ff4a2b;
+/* The file being edited. Distinct from live and queued, which are about the stage. */
+.text-tabs button.selected {
+  border-color: #6a6a6a;
+  color: #f2f2f2;
+}
+
+/* Same language as the preset list: green is running, red pulsing is waiting on a phrase. */
+.text-tabs button[data-state='live'] {
+  border-color: #4ad07a;
+  color: #7ee6a4;
+}
+
+.text-tabs button[data-state='queued'] {
+  border-color: #ff4a2b;
+  color: #ff8b73;
+  animation: queued-pulse var(--beat-ms, 500ms) steps(1, end) infinite;
+}
+
+/* An unsaved draft. */
+.text-tabs button[data-edited='true']::after {
+  content: ' •';
+  color: #ffb000;
+}
+
+#opt-text-body {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  background: #111;
+  border: 1px solid #2a2a2a;
+  color: #ddd;
+  padding: 8px 10px;
+  font: 12px/1.5 ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+
+#opt-text-body:focus {
+  outline: none;
+  border-color: #4a4a4a;
+}
+
+.text-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.text-note {
+  flex: 1;
+  color: #6d6d6d;
+}
+
+.text-actions button {
+  background: #161616;
+  border: 1px solid #333;
+  color: #cfcfcf;
+  padding: 4px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.text-actions button:hover:not(:disabled) {
+  border-color: #6a6a6a;
+  color: #f2f2f2;
+}
+
+.text-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.text-actions button.primary {
+  border-color: #4ad07a;
+  color: #7ee6a4;
+}
+
+.text-actions button.primary:hover:not(:disabled) {
+  background: #102016;
+}
+
+/* New-text button, and the inline field it becomes. */
+.text-tabs button.add {
+  color: #6d6d6d;
+  padding: 2px 9px;
+}
+
+.text-tabs button.add:hover {
+  color: #7ee6a4;
+  border-color: #4ad07a;
+}
+
+.text-tabs .add-name {
+  background: #111;
+  border: 1px solid #4ad07a;
+  color: #e6e6e6;
+  padding: 2px 8px;
+  font: inherit;
+  width: 130px;
+}
+
+.text-tabs .add-name:focus {
+  outline: none;
+}
+
+/* Delete arms on first click and disarms itself, rather than opening a modal that would
+   steal focus and block the frame loop mid-set. */
+.text-actions button.danger {
+  color: #9a9a9a;
+}
+
+.text-actions button.danger:hover:not(:disabled) {
+  border-color: #ff4a2b;
+  color: #ff8b73;
+}
+
+.text-actions button.danger[data-armed='true'] {
+  border-color: #ff4a2b;
+  background: #2a0f0a;
+  color: #ff8b73;
 }

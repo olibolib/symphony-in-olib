@@ -25,7 +25,6 @@ export class Hud {
   private readonly crop: HTMLElement;
   private readonly fps: HTMLElement;
   private readonly clip: HTMLElement;
-  private readonly options: HTMLElement;
   private readonly root: HTMLElement;
   private readonly backgroundSelect: HTMLSelectElement;
   private readonly paletteSelect: HTMLSelectElement;
@@ -34,7 +33,7 @@ export class Hud {
   private readonly status: HTMLElement;
 
   /** Meter bar and onset LED for each band, looked up once rather than every frame. */
-  private readonly meters = new Map<BandName, { bar: HTMLElement; led: HTMLElement }>();
+  private readonly meters = new Map<BandName, { bar: HTMLElement; name: HTMLElement }>();
 
   /** Called when the user picks a different audio source. */
   onDeviceChange: ((id: string) => void) | null = null;
@@ -50,6 +49,27 @@ export class Hud {
 
   /** Called when the layout set changes. */
   onLayoutSetChange: ((name: LayoutSetName) => void) | null = null;
+
+  /** Called when a preset is enabled or disabled for the automatic cycle. */
+  onPresetToggle: ((name: string, enabled: boolean) => void) | null = null;
+
+  /** Called when a preset is chosen to go next. */
+  onPresetGo: ((name: string) => void) | null = null;
+
+  private readonly presetRows = new Map<string, HTMLElement>();
+
+  /** Called when a text sub-tab is selected for editing. */
+  onTextSelect: ((name: string) => void) | null = null;
+  /** Called when the editor content changes. */
+  onTextEdit: ((content: string) => void) | null = null;
+  onTextApply: (() => void) | null = null;
+  onTextRevert: (() => void) | null = null;
+  onTextImport: (() => void) | null = null;
+  /** Called with a name for a new, empty text. */
+  onTextCreate: ((name: string) => void) | null = null;
+  onTextDelete: (() => void) | null = null;
+
+  private readonly textTabs = new Map<string, HTMLElement>();
 
   private readonly sensInputs = new Map<BandName, { input: HTMLInputElement; out: HTMLElement }>();
 
@@ -68,7 +88,6 @@ export class Hud {
     this.crop = must(root, '#r-crop');
     this.fps = must(root, '#r-fps');
     this.clip = must(root, '#r-clip');
-    this.options = must(root, '#options');
     this.root = must(root, '#hud');
     this.status = must(root, '#opt-status');
 
@@ -90,6 +109,8 @@ export class Hud {
     });
 
     must(root, '#opt-close').addEventListener('click', () => window.olib.close());
+    this.wireTabs(root);
+    this.wireTextPanel(root);
 
     const select = root.querySelector<HTMLSelectElement>('#opt-device');
     if (!select) throw new Error('HUD element missing: #opt-device');
@@ -113,8 +134,8 @@ export class Hud {
     for (const el of root.querySelectorAll<HTMLElement>('.meter')) {
       const band = el.dataset['band'] as BandName | undefined;
       const bar = el.querySelector<HTMLElement>('.bar i');
-      const led = el.querySelector<HTMLElement>('.led');
-      if (band && bar && led) this.meters.set(band, { bar, led });
+      const name = el.querySelector<HTMLElement>('.name');
+      if (band && bar && name) this.meters.set(band, { bar, name });
     }
   }
 
@@ -139,9 +160,33 @@ export class Hud {
     entry.out.textContent = value.toFixed(1);
   }
 
+  /**
+   * Sticky until cleared or superseded by another error.
+   *
+   * Routine updates — the rolling peak readout, which runs four times a second — must not
+   * overwrite an error. That is exactly what happened: errors were visible for 250ms and
+   * then gone, which is indistinguishable from not reporting them at all.
+   */
+  private errorUntil = 0;
+
   setStatus(message: string, isError = false): void {
+    if (isError) {
+      this.errorUntil = performance.now() + 20_000;
+      this.status.textContent = message;
+      this.status.dataset['error'] = 'true';
+      console.error('[olib]', message);
+      return;
+    }
+
+    if (performance.now() < this.errorUntil) return;
+
     this.status.textContent = message;
-    this.status.dataset['error'] = String(isError);
+    this.status.dataset['error'] = 'false';
+  }
+
+  /** Drop a sticky error, e.g. once the thing that failed has succeeded. */
+  clearError(): void {
+    this.errorUntil = 0;
   }
 
   /** Bring the HUD back — used when startup needs the user to choose something. */
@@ -157,12 +202,12 @@ export class Hud {
     for (const [band, els] of this.meters) {
       const reading = readings[band];
       if (!reading) continue;
-      els.bar.style.width = `${(reading.level * 100).toFixed(1)}%`;
+      els.bar.style.height = `${(reading.level * 100).toFixed(1)}%`;
       if (reading.onset) {
-        els.led.dataset['on'] = 'true';
+        els.name.dataset['on'] = 'true';
         window.setTimeout(() => {
-          els.led.dataset['on'] = 'false';
-        }, 60);
+          els.name.dataset['on'] = 'false';
+        }, 70);
       }
     }
   }
@@ -215,15 +260,14 @@ export class Hud {
   }
 
   /**
-   * Show or hide the whole HUD, shrinking the window with it.
+   * Show or hide the HUD.
    *
-   * Hiding it leaves the window as exactly the stage, so an OBS window capture needs no
-   * crop at all. The trade-off of a frameless window is that the HUD is also the drag
-   * handle — with it hidden there is nothing to grab, so bring it back to move the window.
+   * The window is **not** resized. That was the old behaviour and it moved the capture
+   * geometry under OBS every time — with a fixed height and the transparent gap above, the
+   * crop is set once and the HUD can stay open through a set without appearing in it.
    */
   setVisible(visible: boolean): void {
     this.root.toggleAttribute('hidden', !visible);
-    window.olib.setHudVisible(visible);
   }
 
   get visible(): boolean {
@@ -246,6 +290,232 @@ export class Hud {
 
   setLayoutSet(name: LayoutSetName): void {
     this.layoutSelect.value = name;
+  }
+
+  /**
+   * Build the preset list. Each row: an enable toggle for the automatic cycle, the name, its
+   * energy tag, and a button to queue it next.
+   *
+   * Disabling only removes a preset from the *cycle* — you can still trigger it by hand,
+   * which is why disabled rows dim rather than vanish.
+   */
+  setPresets(presets: readonly { name: string; energy: string }[], enabled: (n: string) => boolean): void {
+    const list = must(document, '#opt-presets');
+    list.replaceChildren();
+    this.presetRows.clear();
+
+    for (const preset of presets) {
+      const row = document.createElement('div');
+      row.className = 'preset';
+      row.dataset['enabled'] = String(enabled(preset.name));
+
+      const toggle = document.createElement('input');
+      toggle.type = 'checkbox';
+      toggle.checked = enabled(preset.name);
+      toggle.title = 'Include in the automatic cycle';
+      toggle.addEventListener('change', () => {
+        this.onPresetToggle?.(preset.name, toggle.checked);
+      });
+
+      const name = document.createElement('span');
+      name.className = 'pname';
+      name.textContent = preset.name;
+
+      const energy = document.createElement('span');
+      energy.className = 'penergy';
+      energy.textContent = preset.energy;
+
+      const go = document.createElement('button');
+      go.className = 'go';
+      go.textContent = '→';
+      go.title = 'Go to this preset at the next phrase';
+      go.addEventListener('click', () => this.onPresetGo?.(preset.name));
+
+      row.append(toggle, name, energy, go);
+      list.append(row);
+      this.presetRows.set(preset.name, row);
+    }
+  }
+
+  /** Reflect a toggle the bank refused — disabling the last enabled preset. */
+  setPresetEnabled(name: string, enabled: boolean): void {
+    const row = this.presetRows.get(name);
+    if (!row) return;
+    row.dataset['enabled'] = String(enabled);
+    const toggle = row.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    if (toggle) toggle.checked = enabled;
+  }
+
+  /** Green for what is running, pulsing red for what is waiting on the next phrase. */
+  setPresetState(live: string, queued: string | null): void {
+    for (const [name, row] of this.presetRows) {
+      row.dataset['state'] = name === live ? 'live' : name === queued ? 'queued' : '';
+    }
+  }
+
+  /**
+   * Publish the beat period so queued indicators pulse in time.
+   *
+   * A CSS animation duration rather than a per-frame write: it stays smooth, costs nothing,
+   * and follows the tempo automatically when it changes.
+   */
+  setBeatPeriod(ms: number | null): void {
+    document.documentElement.style.setProperty('--beat-ms', `${ms ?? 500}ms`);
+  }
+
+  private wireTextPanel(root: ParentNode): void {
+    const body = root.querySelector<HTMLTextAreaElement>('#opt-text-body');
+    if (body) {
+      body.addEventListener('input', () => this.onTextEdit?.(body.value));
+    }
+
+    must(root, '#opt-text-apply').addEventListener('click', () => this.onTextApply?.());
+    must(root, '#opt-text-revert').addEventListener('click', () => this.onTextRevert?.());
+    must(root, '#opt-text-import').addEventListener('click', () => this.onTextImport?.());
+    this.wireDelete(root);
+  }
+
+  /**
+   * Delete is two-step rather than a modal confirm.
+   *
+   * A modal steals focus and blocks the frame loop, which is the last thing wanted during a
+   * set. Arming the button instead is reversible, needs no dialog, and disarms itself.
+   */
+  private wireDelete(root: ParentNode): void {
+    const button = must(root, '#opt-text-delete');
+    let armed = false;
+    let timer: number | undefined;
+
+    const disarm = (): void => {
+      armed = false;
+      button.dataset['armed'] = 'false';
+      button.textContent = '\u{1F5D1}';
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+
+    button.addEventListener('click', () => {
+      if (armed) {
+        disarm();
+        this.onTextDelete?.();
+        return;
+      }
+      armed = true;
+      button.dataset['armed'] = 'true';
+      button.textContent = 'Delete?';
+      timer = window.setTimeout(disarm, 4000);
+    });
+  }
+
+  /** Rebuild the text sub-tabs. */
+  setTextList(names: readonly string[], selected: string): void {
+    const tabs = must(document, '#opt-text-tabs');
+    tabs.replaceChildren();
+    this.textTabs.clear();
+
+    for (const name of names) {
+      const button = document.createElement('button');
+      button.textContent = name;
+      button.classList.toggle('selected', name === selected);
+      button.addEventListener('click', () => this.onTextSelect?.(name));
+      tabs.append(button);
+      this.textTabs.set(name, button);
+    }
+
+    this.buildAddButton(tabs);
+  }
+
+  /**
+   * The `+` that adds a text.
+   *
+   * It becomes an inline name field rather than opening a prompt — Electron does not
+   * implement `window.prompt`, and a dialog would be heavier than this needs to be.
+   */
+  private buildAddButton(tabs: HTMLElement): void {
+    const add = document.createElement('button');
+    add.className = 'add';
+    add.textContent = '+';
+    add.title = 'New text';
+
+    add.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.className = 'add-name';
+      input.placeholder = 'name…';
+      input.maxLength = 32;
+
+      /**
+       * Closing has to be idempotent and it has to detach its own blur listener first.
+       *
+       * Removing a focused element fires `blur` *synchronously*, so replacing the input
+       * re-enters this function while the replacement is still in flight — at which point
+       * the node has no parent and `replaceWith` throws. A DOM-state check is not enough;
+       * the guard has to be a flag.
+       */
+      let closed = false;
+      const close = (): void => {
+        if (closed) return;
+        closed = true;
+        input.removeEventListener('blur', close);
+        if (input.parentNode !== null) input.replaceWith(add);
+      };
+
+      input.addEventListener('keydown', (event) => {
+        // The HUD keys are global; typing a name must not tap tempo or hide the panel.
+        event.stopPropagation();
+
+        if (event.key === 'Enter') {
+          const name = input.value.trim();
+          close();
+          if (name.length > 0) this.onTextCreate?.(name);
+        } else if (event.key === 'Escape') {
+          close();
+        }
+      });
+
+      input.addEventListener('blur', close);
+
+      add.replaceWith(input);
+      input.focus();
+    });
+
+    tabs.append(add);
+  }
+
+  /** Which text is being edited, which is on the stage, and which is waiting for a phrase. */
+  setTextState(selected: string, live: string, queued: string | null, edited: (n: string) => boolean): void {
+    for (const [name, button] of this.textTabs) {
+      button.classList.toggle('selected', name === selected);
+      button.dataset['state'] = name === queued ? 'queued' : name === live ? 'live' : '';
+      button.dataset['edited'] = String(edited(name));
+    }
+  }
+
+  setTextBody(content: string): void {
+    const body = document.querySelector<HTMLTextAreaElement>('#opt-text-body');
+    if (body) body.value = content;
+  }
+
+  setTextControls(options: { canRevert: boolean; note: string }): void {
+    const revert = document.querySelector<HTMLButtonElement>('#opt-text-revert');
+    if (revert) revert.disabled = !options.canRevert;
+
+    const note = document.querySelector<HTMLElement>('#opt-text-note');
+    if (note) note.textContent = options.note;
+  }
+
+  /** Tab bar: one panel visible at a time, which is what makes the HUD fit its height. */
+  private wireTabs(root: ParentNode): void {
+    const buttons = Array.from(root.querySelectorAll<HTMLElement>('.tabs button'));
+    const panels = Array.from(root.querySelectorAll<HTMLElement>('.panel'));
+
+    for (const button of buttons) {
+      button.addEventListener('click', () => {
+        const name = button.dataset['tab'];
+        for (const other of buttons) other.classList.toggle('active', other === button);
+        for (const panel of panels) {
+          panel.toggleAttribute('hidden', panel.dataset['panel'] !== name);
+        }
+      });
+    }
   }
 
   /** Call once per rendered frame; updates the FPS readout about twice a second. */

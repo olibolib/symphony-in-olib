@@ -1,15 +1,25 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron';
-import { join, dirname } from 'node:path';
+import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
+import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Stage size — DESIGN.md §13.1. The window is sized to fit this at 1:1. */
 const STAGE = { width: 1280, height: 720 } as const;
 
-/** Height of the HUD strip below the stage. Outside the OBS crop.
- *  Keep in sync with --hud-h in style/base.css. */
-const HUD_HEIGHT = 268;
+/**
+ * Transparent band between the stage and the HUD, and the HUD itself.
+ *
+ * Keep in sync with --gap-h and --hud-h in style/base.css.
+ *
+ * The window height is the sum of all three and never changes. Hiding the HUD used to
+ * resize the window, which moved the capture geometry under OBS — the gap plus a fixed
+ * height means the crop is set once and never revisited, and the HUD can stay open through
+ * a whole set without appearing in it.
+ */
+const GAP_HEIGHT = 30;
+const HUD_HEIGHT = 260;
 
 // DESIGN.md §5: the app has to keep rendering while the DJ software covers it. Chromium
 // normally throttles or stops painting windows it thinks nobody can see — which in this
@@ -38,7 +48,7 @@ function createWindow(): void {
     // frame — so the stage really is 1280x720 of actual pixels.
     useContentSize: true,
     width: STAGE.width,
-    height: STAGE.height + HUD_HEIGHT,
+    height: STAGE.height + GAP_HEIGHT + HUD_HEIGHT,
     resizable: false,
 
     // Transparency for OBS compositing (DESIGN.md §13.3). Two constraints come with it on
@@ -76,6 +86,36 @@ function createWindow(): void {
     console.error(`[olib] preload failed: ${path}`, error);
   });
 
+  /**
+   * Forward the renderer console to the terminal.
+   *
+   * Errors in the renderer were previously only visible by opening devtools, which nobody
+   * does mid-problem. This puts them in the same place as everything else — the terminal
+   * running `npm run dev`.
+   *
+   * The event signature changed across Electron versions (positional arguments became a
+   * details object), so this reads whichever shape arrives rather than assuming one.
+   */
+  (win.webContents as unknown as NodeJS.EventEmitter).on(
+    'console-message',
+    (...args: unknown[]) => {
+      const first = args[0] as
+        | { message?: string; level?: string | number; lineNumber?: number; sourceId?: string }
+        | undefined;
+
+      const modern = typeof first === 'object' && first !== null && 'message' in first;
+      const message = modern ? first.message : (args[2] as string | undefined);
+      const level = modern ? first.level : (args[1] as string | number | undefined);
+      if (message === undefined) return;
+
+      // Chromium levels: 0/verbose, 1/info, 2/warning, 3/error.
+      const isError = level === 3 || level === 'error';
+      const tag = isError ? '[renderer:error]' : '[renderer]';
+      if (isError) console.error(tag, message);
+      else console.log(tag, message);
+    },
+  );
+
   if (process.env['ELECTRON_RENDERER_URL']) {
     void win.loadURL(process.env['ELECTRON_RENDERER_URL']);
   } else {
@@ -84,12 +124,66 @@ function createWindow(): void {
 }
 
 /**
- * The HUD lives below the stage, so hiding it has to shrink the window too — otherwise you
- * are left with 200px of transparent nothing that still catches mouse clicks.
+ * Text files live in a writable folder, not next to the executable.
+ *
+ * An installed app sits in Program Files, which is read-only — writing there fails for the
+ * user and succeeds for a developer running from source, which is the worst kind of bug.
+ * userData is writable in both cases.
  */
-ipcMain.on('olib:hud-visible', (_event, visible: boolean) => {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.setContentSize(STAGE.width, STAGE.height + (visible ? HUD_HEIGHT : 0));
+function textsDir(): string {
+  return join(app.getPath('userData'), 'texts');
+}
+
+/**
+ * Names arrive from the renderer, so they are treated as untrusted: stripped to a bare
+ * filename and restricted to safe characters. Without this, a name like `../../config`
+ * would write outside the folder.
+ */
+function textPath(name: string): string {
+  const safe = basename(name).replace(/[^A-Za-z0-9 _-]/g, '').trim();
+  if (safe.length === 0) throw new Error('invalid text name');
+  return join(textsDir(), `${safe}.txt`);
+}
+
+ipcMain.handle('olib:texts-list', async (): Promise<string[]> => {
+  await mkdir(textsDir(), { recursive: true });
+  const files = await readdir(textsDir());
+  return files.filter((f) => f.endsWith('.txt')).map((f) => f.slice(0, -4)).sort();
+});
+
+ipcMain.handle('olib:text-read', async (_event, name: string): Promise<string> => {
+  return readFile(textPath(name), 'utf8');
+});
+
+ipcMain.handle('olib:text-write', async (_event, name: string, content: string) => {
+  await mkdir(textsDir(), { recursive: true });
+  await writeFile(textPath(name), content, 'utf8');
+});
+
+ipcMain.handle('olib:text-delete', async (_event, name: string) => {
+  // `force` so deleting something already gone is not an error — the renderer's list can
+  // legitimately be a moment behind the folder.
+  await rm(textPath(name), { force: true });
+});
+
+/** Import a .txt from anywhere on disk. Returns the name it was saved under, or null. */
+ipcMain.handle('olib:text-import', async (): Promise<string | null> => {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Import text',
+    filters: [{ name: 'Text', extensions: ['txt'] }],
+    properties: ['openFile'],
+  });
+
+  const source = result.filePaths[0];
+  if (result.canceled || source === undefined) return null;
+
+  const name = basename(source, '.txt');
+  const content = await readFile(source, 'utf8');
+  await mkdir(textsDir(), { recursive: true });
+  await writeFile(textPath(name), content, 'utf8');
+  return name;
 });
 
 ipcMain.on('olib:close', () => {

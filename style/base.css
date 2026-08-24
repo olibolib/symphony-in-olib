@@ -4,8 +4,11 @@
   --stage-w: 1280px;
   --stage-h: 720px;
 
-  /* Keep in sync with HUD_HEIGHT in electron/main.ts, which sizes the window. */
-  --hud-h: 268px;
+  /* Keep in sync with GAP_HEIGHT and HUD_HEIGHT in electron/main.ts, which size the
+     window. The window height is now fixed — hiding the HUD no longer resizes it, so an
+     OBS crop is set once and never has to be revisited. */
+  --gap-h: 30px;
+  --hud-h: 260px;
 
   /* DESIGN.md §13.3 — black on white is the default look, as in Acid. */
   --stage-bg: #ffffff;
@@ -63,4 +66,22 @@ body {
 #container {
   width: 100%;
   height: 100%;
+}
+
+/*
+ * The transparent gap between stage and HUD.
+ *
+ * It exists to give the OBS crop a margin for error. Note it still receives mouse events —
+ * Electron cannot make part of a window click-through — so it is a small invisible band that
+ * blocks clicks to whatever is behind it. At 30px that is an acceptable trade for never
+ * having to touch the crop again.
+ */
+#gap {
+  position: absolute;
+  top: var(--stage-h);
+  left: 0;
+  width: var(--stage-w);
+  height: var(--gap-h);
+  background: transparent;
+  pointer-events: none;
 }
