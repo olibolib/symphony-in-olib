@@ -200,6 +200,152 @@ App
 └── Hud             readouts, settings, tap, crop values
 ```
 
+### 7.1 Two windows
+
+**Planned — branch `two-window-hud`.**
+
+The HUD is currently welded to the canvas in one window. That worked, and produced two
+workarounds it should not have needed: a transparent gap so an OBS crop had margin for error,
+and a fixed window height so hiding the HUD did not move the capture geometry. Splitting them
+removes both.
+
+```
+Output window     1280x720, frameless, transparent. The canvas, nothing else.
+                  OBS captures it whole — no crop at all.
+
+Control window    Ordinary resizable window. The HUD. Any size, any monitor,
+                  optionally always-on-top. Minimises to the tray.
+```
+
+**The engine runs in the output window.** Its whole job is mutating DOM text, so it lives
+where that DOM is. The control window is a view and an input surface.
+
+#### What that costs
+
+The HUD is currently driven by direct calls — `setBpm`, `flashBeat`, `setBands`. Across a
+process boundary those become messages, and at 60fps there are far too many.
+
+So **the HUD stops being a bag of setters and becomes a function of a state snapshot**: one
+batched message per tick, meters throttled to about 20Hz because nobody reads a bar chart
+sixty times a second, with beats and preset changes sent as discrete events. That is a better
+design than the current one, but it is most of `Hud` rewritten.
+
+The message protocol is a discriminated union shared by both windows — commands one way,
+state and events the other. One of the clearer places TypeScript earns its keep, since both
+ends are checked against the same definition.
+
+#### Decisions taken
+
+| Question | Decision |
+|---|---|
+| Closing the control window | Minimises to the tray; the show keeps running |
+| Bringing it back | Tray icon menu. **Not** a menu bar on the canvas window — that window is on the stream, and even an auto-hidden menu bar appears on Alt |
+| Keyboard | Only when the control window has focus. One place to control from, and no question about which window received a key |
+| Always-on-top | A toggle, on the control window |
+| Single-window mode | Not kept. Two modes means two layouts and two sets of bugs |
+| Catching up | The control window requests a full state snapshot on open, rather than only listening for changes. Retrofitting that is much worse than designing it in |
+| Stale window positions | Restored bounds are clamped to the displays currently attached. Saving a position on a second monitor, unplugging it, and finding the window unreachable is a bug worth never shipping |
+
+### 7.2 The panel system
+
+Everything in the control window is a **panel** — including the readouts. Consistency was the
+argument: a fixed header plus movable panels would mean two mechanisms and a rule to remember.
+
+Panels **float** inside the control window rather than tiling: each has a position and a size,
+a grab at the top-left to move it, and a grab at the bottom-right to resize. Dropping one onto
+another **merges them into a tabbed group**, which is how the layout stays usable when the
+window is small.
+
+> **Assumption to confirm.** Floating, not tiled. The sketch shows boxes with gaps between
+> them and a corner resize grab, which is a floating-window gesture — in a tiled layout you
+> would drag the boundary *between* two panels instead. Floating is also considerably simpler
+> to build, since there is no split tree to keep balanced.
+
+#### Model
+
+```ts
+/** What panels exist. A registry, so the View menu can list them. */
+interface PanelSpec {
+  readonly id: PanelId;          // 'readouts' | 'audio' | 'text' | 'effects' | ...
+  readonly title: string;
+  readonly minWidth: number;
+  readonly minHeight: number;
+}
+
+/** A floating box. Holds one panel, or several shown as tabs. */
+interface GroupState {
+  readonly id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  panels: PanelId[];
+  active: PanelId;
+}
+
+interface HudLayout {
+  groups: GroupState[];
+  /** Closed from the View menu. Not deleted — restorable. */
+  hidden: PanelId[];
+}
+```
+
+Panels are objects implementing an interface, not subclasses:
+
+```ts
+interface Panel {
+  readonly spec: PanelSpec;
+  mount(host: HTMLElement): void;
+  update(state: HudState): void;   // called from the state snapshot
+  dispose(): void;
+}
+```
+
+That keeps the codebase's existing property — **no inheritance anywhere** (§ object model) —
+while being fully object-based. Composition and interfaces, not a base class.
+
+#### Classes
+
+| Class | Owns |
+|---|---|
+| `PanelRegistry` | Which panels exist and how to construct them |
+| `HudLayoutModel` | The group list. Every mutation — move, resize, merge, split out, close, restore — goes through it, so minimum sizes and clamping are enforced in one place |
+| `HudDock` | The view: renders groups, handles pointer interaction, draws the drop preview |
+
+#### The parts that will be fiddly
+
+Hand-rolled rather than using a docking library, deliberately. These are where the time will
+go, so they are worth naming before starting rather than discovering:
+
+- **Drop-target detection.** Deciding, while dragging, which group the pointer is over and
+  whether the gesture means "join as a tab" or "drop beside". Needs a live preview overlay or
+  it feels like guessing.
+- **Dragging the last panel out of a group.** The group must disappear and not leave an empty
+  box behind. Most docking bugs live in this transition.
+- **Minimum sizes composing.** A group's minimum is the largest minimum of the panels in it,
+  so merging two panels can force a group to grow.
+- **Restoring a layout that references a panel that no longer exists.** Drop it, say so, and
+  carry on — never throw, never silently omit.
+- **Clamping.** Panels must not be draggable off the edge of the control window, and must
+  survive the window being resized smaller than the layout.
+
+### 7.3 State that persists
+
+One JSON file in the app-data folder, alongside the texts and (later) the presets.
+
+Settings currently live in eight separate `localStorage` keys — device, palette, layout set,
+background, sensitivities, enabled presets, active text, crash flag. Those move into the same
+file. One inspectable, hand-editable, backup-able place, consistent with how everything else
+is stored.
+
+```
+config.json
+  windows      bounds for both windows, always-on-top flag
+  hud          the panel layout (§7.2)
+  audio        device id, per-band sensitivities
+  show         palette, layout set, background mode, enabled presets, active text
+```
+
 ---
 
 ## 8. Audio input
@@ -1075,6 +1221,17 @@ deferred rather than solved.
 Detection goes in straight away rather than being stubbed. If it works poorly it still
 works, and Increment 2 is where it gets good.
 
+### Increment 1.2 — two windows and the panel system
+
+*Branch `two-window-hud`.*
+
+Canvas and HUD become separate windows (§7.1); everything in the control window becomes a
+floating, dockable panel (§7.2); scattered `localStorage` keys consolidate into one config
+file (§7.3).
+
+Removes two workarounds that only existed because the windows were welded together: the
+transparent gap, and the fixed window height. OBS stops needing a crop entirely.
+
 ### Increment 2 — detection hardening
 
 Confidence scoring, octave correction, faster re-lock on track change, downbeat and phrase
@@ -1161,6 +1318,11 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Effects as closures | **Correct for now, revisited** | Right while effects are authored in TypeScript; blocks editable and saveable presets, so §11.4 replaces them with classes plus definitions |
 | Built-in presets as a compiled special case | **Dropped** | Two mechanisms for one concept means two code paths and two failure modes. Everything is data (§11.4) |
 | Forking a built-in preset when edited | **Dropped** | Re-seeding gives the same safety net without duplicating every preset the first time a slider moves (§11.4) |
+| HUD attached to the canvas window | **Dropped** | Forced a transparent gap and a fixed window height, both workarounds for the coupling itself (§7.1) |
+| A menu bar on the canvas window | **Dropped** | That window is on the stream; even an auto-hidden menu bar appears on Alt. Tray menu instead (§7.1) |
+| Global keyboard shortcuts | **Dropped** | Would steal keys from the DJ software. Control window focus only (§7.1) |
+| A docking library | **Dropped** | Preference for owning the code unless the problem is excessive. The fiddly parts are named in §7.2 so they are planned for rather than discovered |
+| Settings scattered across localStorage | **Dropped** | One config file, consistent with texts and presets (§7.3) |
 
 ---
 
