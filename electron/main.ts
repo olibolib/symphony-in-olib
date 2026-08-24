@@ -1,25 +1,17 @@
-import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, screen, session } from 'electron';
 import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { COMMAND_CHANNEL, EVENT_CHANNEL } from '../src/ipc/protocol';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Stage size — DESIGN.md §13.1. The window is sized to fit this at 1:1. */
 const STAGE = { width: 1280, height: 720 } as const;
 
-/**
- * Transparent band between the stage and the HUD, and the HUD itself.
- *
- * Keep in sync with --gap-h and --hud-h in style/base.css.
- *
- * The window height is the sum of all three and never changes. Hiding the HUD used to
- * resize the window, which moved the capture geometry under OBS — the gap plus a fixed
- * height means the crop is set once and never revisited, and the HUD can stay open through
- * a whole set without appearing in it.
- */
-const GAP_HEIGHT = 30;
-const HUD_HEIGHT = 260;
+/** Default size of the control window. Resizable, and its bounds are remembered. */
+const CONTROL_DEFAULT = { width: 980, height: 560 } as const;
+const CONTROL_MIN = { width: 560, height: 320 } as const;
 
 // DESIGN.md §5: the app has to keep rendering while the DJ software covers it. Chromium
 // normally throttles or stops painting windows it thinks nobody can see — which in this
@@ -40,15 +32,48 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // capturer, which is slower but permitted.
 app.commandLine.appendSwitch('disable-features', 'AllowWgcScreenCapturer');
 
-let mainWindow: BrowserWindow | null = null;
+/** The canvas. What OBS captures — no chrome, no crop needed. */
+let outputWindow: BrowserWindow | null = null;
 
-function createWindow(): void {
+/** The HUD. An ordinary window; hiding it minimises to the tray. */
+let controlWindow: BrowserWindow | null = null;
+
+/**
+ * Keep restored bounds on a display that currently exists.
+ *
+ * Saving a position on a second monitor, unplugging it and finding the window unreachable is
+ * a bug worth never shipping. DESIGN.md §7.1.
+ */
+function onVisibleDisplay(bounds: Electron.Rectangle): Electron.Rectangle {
+  const displays = screen.getAllDisplays();
+  const visible = displays.some((d) => {
+    const a = d.workArea;
+    return (
+      bounds.x < a.x + a.width &&
+      bounds.x + bounds.width > a.x &&
+      bounds.y < a.y + a.height &&
+      bounds.y + bounds.height > a.y
+    );
+  });
+
+  if (visible) return bounds;
+
+  const primary = screen.getPrimaryDisplay().workArea;
+  return {
+    width: bounds.width,
+    height: bounds.height,
+    x: primary.x + Math.round((primary.width - bounds.width) / 2),
+    y: primary.y + Math.round((primary.height - bounds.height) / 2),
+  };
+}
+
+function createOutputWindow(): void {
   const win = new BrowserWindow({
     // useContentSize means these numbers describe the web page area, excluding the window
     // frame — so the stage really is 1280x720 of actual pixels.
     useContentSize: true,
     width: STAGE.width,
-    height: STAGE.height + GAP_HEIGHT + HUD_HEIGHT,
+    height: STAGE.height,
     resizable: false,
 
     // Transparency for OBS compositing (DESIGN.md §13.3). Two constraints come with it on
@@ -71,7 +96,24 @@ function createWindow(): void {
 
   // Avoid a white flash on launch: build the page first, reveal when it's painted.
   win.once('ready-to-show', () => win.show());
-  mainWindow = win;
+
+  /**
+   * Click-through.
+   *
+   * A frameless transparent window still swallows every pointer event over its rectangle,
+   * so the canvas sat invisibly on top of whatever was behind it and ate the clicks. It has
+   * no interactive content at all now that the HUD is a separate window, so nothing is lost
+   * by making it ignore the mouse entirely — and it stops being a hole in the desktop.
+   */
+  win.setIgnoreMouseEvents(true);
+
+  outputWindow = win;
+
+  // Closing the canvas quits. Closing the control window only hides it (see the tray).
+  win.on('closed', () => {
+    outputWindow = null;
+    app.quit();
+  });
 
   // DESIGN.md §14 — unbreakable. A renderer can die outright (Chromium will terminate one
   // that sends a malformed IPC, for instance), and the result is a black window that never
@@ -116,11 +158,44 @@ function createWindow(): void {
     },
   );
 
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    void win.loadURL(process.env['ELECTRON_RENDERER_URL']);
-  } else {
-    void win.loadFile(join(__dirname, '../renderer/index.html'));
-  }
+  loadRenderer(win, 'index.html');
+}
+
+/** Both windows load the same way; only the entry file differs. */
+function loadRenderer(win: BrowserWindow, file: string): void {
+  const devUrl = process.env['ELECTRON_RENDERER_URL'];
+  if (devUrl) void win.loadURL(`${devUrl}/${file}`);
+  else void win.loadFile(join(__dirname, `../renderer/${file}`));
+}
+
+function createControlWindow(): void {
+  const win = new BrowserWindow({
+    ...onVisibleDisplay({ x: 60, y: 60, ...CONTROL_DEFAULT }),
+    minWidth: CONTROL_MIN.width,
+    minHeight: CONTROL_MIN.height,
+    title: 'Symphony in Olib — Control',
+    backgroundColor: '#0b0b0b',
+    autoHideMenuBar: true,
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/preload.mjs'),
+      backgroundThrottling: false,
+      sandbox: false,
+    },
+  });
+
+  win.once('ready-to-show', () => win.show());
+  controlWindow = win;
+
+  // Hide rather than close: the show carries on, and the tray brings it back.
+  win.on('close', (event) => {
+    if (outputWindow !== null && !outputWindow.isDestroyed()) {
+      event.preventDefault();
+      win.hide();
+    }
+  });
+
+  loadRenderer(win, 'control.html');
 }
 
 /**
@@ -168,9 +243,10 @@ ipcMain.handle('olib:text-delete', async (_event, name: string) => {
 
 /** Import a .txt from anywhere on disk. Returns the name it was saved under, or null. */
 ipcMain.handle('olib:text-import', async (): Promise<string | null> => {
-  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  const parent = controlWindow ?? outputWindow;
+  if (!parent || parent.isDestroyed()) return null;
 
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(parent, {
     title: 'Import text',
     filters: [{ name: 'Text', extensions: ['txt'] }],
     properties: ['openFile'],
@@ -187,7 +263,76 @@ ipcMain.handle('olib:text-import', async (): Promise<string | null> => {
 });
 
 ipcMain.on('olib:close', () => {
-  mainWindow?.close();
+  outputWindow?.close();
+});
+
+/**
+ * Message relay between the two renderers. DESIGN.md §7.1.
+ *
+ * Main is only a broker here — it does not read or act on the payloads, it forwards them.
+ * Keeping the routing dumb means the protocol can change without touching this file.
+ */
+ipcMain.on(COMMAND_CHANNEL, (_event, command: unknown) => {
+  if (outputWindow && !outputWindow.isDestroyed()) {
+    outputWindow.webContents.send(COMMAND_CHANNEL, command);
+  }
+});
+
+ipcMain.on(EVENT_CHANNEL, (_event, message: unknown) => {
+  if (controlWindow && !controlWindow.isDestroyed() && controlWindow.isVisible()) {
+    controlWindow.webContents.send(EVENT_CHANNEL, message);
+  }
+});
+
+ipcMain.on('olib:show-control', () => {
+  if (controlWindow && !controlWindow.isDestroyed()) {
+    controlWindow.show();
+    controlWindow.focus();
+  }
+});
+
+ipcMain.on('olib:always-on-top', (_event, value: boolean) => {
+  controlWindow?.setAlwaysOnTop(value);
+});
+
+/**
+ * Output window placement, driven from the control window.
+ *
+ * The canvas is frameless — transparency requires it on Windows, and transparency is worth
+ * having (verified: alpha does survive OBS window capture). Frameless means no title bar to
+ * drag, so position and size are typed rather than dragged. Which is arguably better when
+ * OBS is pointed at the window: exact numbers, reproduced on every launch.
+ */
+ipcMain.handle('olib:output-bounds', () => {
+  if (!outputWindow || outputWindow.isDestroyed()) return null;
+  const [x, y] = outputWindow.getPosition();
+  const [width, height] = outputWindow.getContentSize();
+  return { x: x ?? 0, y: y ?? 0, width: width ?? 0, height: height ?? 0 };
+});
+
+ipcMain.on(
+  'olib:set-output-bounds',
+  (_event, bounds: { x: number; y: number; width: number; height: number }) => {
+    if (!outputWindow || outputWindow.isDestroyed()) return;
+    const safe = onVisibleDisplay({
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      width: Math.max(160, Math.round(bounds.width)),
+      height: Math.max(90, Math.round(bounds.height)),
+    });
+    outputWindow.setContentSize(safe.width, safe.height);
+    outputWindow.setPosition(safe.x, safe.y);
+  },
+);
+
+ipcMain.on('olib:centre-output', () => {
+  if (!outputWindow || outputWindow.isDestroyed()) return;
+  const [width, height] = outputWindow.getContentSize();
+  const area = screen.getDisplayNearestPoint(outputWindow.getBounds()).workArea;
+  outputWindow.setPosition(
+    area.x + Math.round((area.width - (width ?? 0)) / 2),
+    area.y + Math.round((area.height - (height ?? 0)) / 2),
+  );
 });
 
 void app.whenReady().then(() => {
@@ -213,10 +358,14 @@ void app.whenReady().then(() => {
     { useSystemPicker: false },
   );
 
-  createWindow();
+  createOutputWindow();
+  createControlWindow();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createOutputWindow();
+      createControlWindow();
+    }
   });
 });
 

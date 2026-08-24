@@ -22,7 +22,14 @@ export default defineConfig({
     root: '.',
     build: {
       outDir: 'out/renderer',
-      rollupOptions: { input: resolve(__dirname, 'index.html') },
+      // Two windows, two entry points: index.html is the canvas OBS captures, control.html
+      // is the HUD. DESIGN.md §7.1.
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'index.html'),
+          control: resolve(__dirname, 'control.html'),
+        },
+      },
     },
   },
 });

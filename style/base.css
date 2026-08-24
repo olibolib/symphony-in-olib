@@ -69,6 +69,15 @@ body {
 }
 
 /*
+ * The control window is an ordinary opaque window. Only the output window is transparent,
+ * and it is transparent so the canvas can be composited in OBS.
+ */
+body.control {
+  background: #0b0b0b;
+  overflow: hidden;
+}
+
+/*
  * The transparent gap between stage and HUD.
  *
  * It exists to give the OBS crop a margin for error. Note it still receives mouse events —

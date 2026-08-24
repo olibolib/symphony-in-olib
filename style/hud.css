@@ -6,13 +6,13 @@
  * event over it, which is what broke the panel when larger areas were draggable.
  */
 
+/* This stylesheet is loaded only by the control window now, so the HUD simply fills it.
+   It used to be positioned below the stage in a shared window — hence the stage-relative
+   offset, which put it 750px down inside a window 560px tall. */
 #hud {
   position: absolute;
-  top: calc(var(--stage-h) + var(--gap-h));
-  left: 0;
-  width: var(--stage-w);
-  height: var(--hud-h);
-  padding: 6px 14px 10px;
+  inset: 0;
+  padding: 10px 14px 12px;
   background: #0b0b0b;
   color: #cfcfcf;
   font: 12px/1.4 ui-monospace, 'Cascadia Mono', Consolas, monospace;
@@ -621,4 +621,58 @@ kbd {
   border-color: #ff4a2b;
   background: #2a0f0a;
   color: #ff8b73;
+}
+
+/* --- canvas panel ------------------------------------------------------------------------ */
+
+.canvas-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.field.num input {
+  background: #161616;
+  color: #e6e6e6;
+  border: 1px solid #333;
+  padding: 4px 6px;
+  font: inherit;
+  width: 82px;
+  font-variant-numeric: tabular-nums;
+}
+
+.field.num input:focus {
+  outline: none;
+  border-color: #6a6a6a;
+}
+
+.canvas-row button {
+  background: #161616;
+  border: 1px solid #333;
+  color: #cfcfcf;
+  padding: 4px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.canvas-row button:hover {
+  border-color: #6a6a6a;
+  color: #f2f2f2;
+}
+
+.canvas-row button.primary {
+  border-color: #4ad07a;
+  color: #7ee6a4;
+}
+
+.canvas-row button.primary:hover {
+  background: #102016;
+}
+
+.canvas-note {
+  width: 100%;
+  color: #6d6d6d;
+  max-width: 62ch;
 }

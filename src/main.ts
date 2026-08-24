@@ -31,13 +31,13 @@ window.addEventListener('unhandledrejection', (event) => {
   console.error('[olib] unhandled rejection', event.reason);
 });
 import { Stage } from './render/Stage';
-import { Hud } from './hud/Hud';
+import { EngineBridge } from './ipc/EngineBridge';
 import { AudioInput, SYSTEM_SOURCE_ID } from './audio/AudioInput';
 import { Analyser } from './audio/Analyser';
 import { BANDS, type BandName } from './audio/bands';
 import { BeatTracker } from './time/BeatTracker';
 import { Clock } from './time/Clock';
-import { TextBank } from './text/TextBank';
+import { parseText, type TextPreset } from './text/TextSource';
 import { Typesetter, type TextMode } from './text/Typesetter';
 import { randomRange } from './util/random';
 import prologueRaw from '../presets/text/prologue.txt?raw';
@@ -45,7 +45,7 @@ import { Conductor, type Lane } from './show/Conductor';
 import { PRESETS } from './show/presets';
 import { PresetBank } from './show/PresetBank';
 import { GlitchState, type EffectContext } from './effects/types';
-import type { BackgroundMode } from './hud/Hud';
+type BackgroundMode = 'white' | 'black' | 'transparent';
 import { PALETTES, type PaletteName } from './render/palette';
 import { LAYOUT_SETS, type LayoutSetName } from './show/layouts';
 
@@ -57,10 +57,10 @@ import { LAYOUT_SETS, type LayoutSetName } from './show/layouts';
  */
 
 let stage: Stage;
-let hud: Hud;
+let hud: EngineBridge;
 try {
   stage = new Stage(el('#stage'), el('#container'));
-  hud = new Hud();
+  hud = new EngineBridge();
 } catch (error) {
   fatal(error);
 }
@@ -68,7 +68,6 @@ const input = new AudioInput();
 const tracker = new BeatTracker();
 const clock = new Clock();
 const typesetter = new Typesetter(stage);
-const texts = new TextBank();
 const conductor = new Conductor();
 const glitches = new GlitchState();
 const bank = new PresetBank(PRESETS);
@@ -105,11 +104,12 @@ function sensitivityFor(band: BandName): number {
 
 for (const band of BANDS) hud.setSensitivity(band.name, sensitivityFor(band.name));
 
-hud.onSensitivityChange = (band, value) => {
+function setSensitivity(band: BandName, value: number): void {
   sensitivities[band] = value;
   localStorage.setItem(SENS_KEY, JSON.stringify(sensitivities));
   analyser?.setSensitivity(band, value);
-};
+  hud.setSensitivity(band, value);
+}
 
 /**
  * Stage background. Transparent is for compositing over other layers in OBS (§13.3) — the
@@ -121,12 +121,12 @@ function applyBackground(mode: BackgroundMode): void {
   document.documentElement.dataset['bg'] = mode;
   stage.backgroundMode = mode;
   localStorage.setItem(BG_KEY, mode);
+  hud.setBackground(mode);
 }
 
 const storedBackground = (localStorage.getItem(BG_KEY) as BackgroundMode | null) ?? 'white';
 applyBackground(storedBackground);
-hud.setBackgroundMode(storedBackground);
-hud.onBackgroundChange = applyBackground;
+hud.setBackground(storedBackground);
 
 /**
  * Palette and layout set. Both exist for compositing over other visuals: saturated accents
@@ -141,20 +141,23 @@ let layoutSetName = (localStorage.getItem(LAYOUT_KEY) as LayoutSetName | null) ?
 hud.setPalette(paletteName);
 hud.setLayoutSet(layoutSetName);
 
-hud.onPaletteChange = (name) => {
+function setPalette(name: PaletteName): void {
   paletteName = name;
   localStorage.setItem(PALETTE_KEY, name);
-};
+  hud.setPalette(name);
+}
 
-hud.onLayoutSetChange = (name) => {
+function setLayoutSet(name: LayoutSetName): void {
   layoutSetName = name;
   localStorage.setItem(LAYOUT_KEY, name);
+  hud.setLayoutSet(name);
+
   // Apply immediately rather than waiting for the next bar — if you have just switched to
   // "edges" because text is sitting on your visuals, four beats is too long to wait.
   const options = LAYOUT_SETS[name];
   const next = options[Math.floor(Math.random() * options.length)];
   if (next !== undefined) stage.container.dataset['layout'] = String(next);
-};
+}
 
 hud.setSource('none');
 hud.setBpm(null);
@@ -164,11 +167,39 @@ hud.setCrop(stage.cropRect());
 // on a projector and gets smeared into mush by a visualiser warping the output.
 
 
+// --- text -----------------------------------------------------------------------------
+
+/**
+ * The engine holds only the text that is *on the stage*.
+ *
+ * Editing — drafts, one-level undo, the file list, create and delete — lives in the control
+ * window, which owns the editor. The engine receives finished content and nothing else, so
+ * none of that state crosses the window boundary. DESIGN.md §7.1.
+ */
+let activeText: TextPreset = parseText('empty', '');
+let activeTextName = '';
+let pendingText: { name: string; content: string } | null = null;
+
+/** Queued rather than applied, like every other change (§11.2). */
+function queueText(name: string, content: string): void {
+  pendingText = { name, content };
+  hud.setTextList(activeTextName, pendingText.name);
+}
+
+function takePendingText(): boolean {
+  if (pendingText === null) return false;
+  activeText = parseText(pendingText.name, pendingText.content);
+  activeTextName = pendingText.name;
+  pendingText = null;
+  hud.setTextList(activeTextName, null);
+  return true;
+}
+
 /** Render the current preset's text selection. */
 function typesetNext(): void {
   const preset = bank.current;
 
-  typesetter.render(texts.active, {
+  typesetter.render(activeText, {
     mode: preset.text.mode,
     splitChars: preset.text.splitChars,
     count: preset.text.count,
@@ -209,130 +240,15 @@ function applyPreset(): void {
   hud.setPreset(preset.name, preset.energy);
 }
 
-hud.setPresets(PRESETS, (name) => bank.isEnabled(name));
+function publishPresets(): void {
+  hud.setPresets(
+    PRESETS.map((p) => ({ name: p.name, energy: p.energy, enabled: bank.isEnabled(p.name) })),
+  );
+}
 
-hud.onPresetToggle = (name, enabled) => {
-  // The bank refuses to disable the last enabled preset; reflect that back rather than
-  // leaving the checkbox showing a state that is not true.
-  const accepted = bank.setEnabled(name, enabled);
-  if (!accepted) hud.setPresetEnabled(name, true);
-};
-
-hud.onPresetGo = (name) => {
-  bank.queue(name);
-  hud.setPresetState(bank.current.name, bank.pending);
-};
+publishPresets();
 
 applyPreset();
-
-// --- text -----------------------------------------------------------------------------
-
-/** Which file the editor is showing. Not necessarily the one on the stage. */
-let editing = '';
-
-function refreshTextUi(): void {
-  hud.setTextState(editing, texts.liveName, texts.pendingName, (n) => texts.isEdited(n));
-  hud.setTextControls({
-    canRevert: texts.canRevert(editing),
-    note:
-      texts.pendingName !== null
-        ? `"${texts.pendingName}" goes live at the next phrase`
-        : texts.isEdited(editing)
-          ? 'Unsaved edits — Apply to save and use them'
-          : '',
-  });
-}
-
-function selectText(name: string): void {
-  editing = name;
-  hud.setTextBody(texts.draft(name));
-  refreshTextUi();
-}
-
-hud.onTextSelect = selectText;
-
-hud.onTextEdit = (content) => {
-  texts.setDraft(editing, content);
-  refreshTextUi();
-};
-
-hud.onTextApply = () => {
-  texts
-    .apply(editing)
-    .then(refreshTextUi)
-    .catch((error: unknown) => reportTextError('apply', error));
-};
-
-/** One place so every text failure is logged with its stack as well as shown. */
-function reportTextError(action: string, error: unknown): void {
-  console.error(`[olib] text ${action} failed`, error);
-  const message = error instanceof Error ? error.message : String(error);
-  hud.setStatus(`Text ${action} failed — ${message}`, true);
-}
-
-hud.onTextRevert = () => {
-  const older = texts.revert(editing);
-  // Revert only refills the editor. It still has to be applied, like any other change.
-  if (older !== null) hud.setTextBody(older);
-  refreshTextUi();
-};
-
-hud.onTextCreate = (name) => {
-  texts
-    .create(name)
-    .then((made) => {
-    if (!made) {
-      hud.setTextControls({ canRevert: texts.canRevert(editing), note: `"${name}" already exists` });
-      return;
-    }
-      hud.setTextList(texts.list, name);
-      selectText(name);
-    })
-    .catch((error: unknown) => reportTextError('create', error));
-};
-
-hud.onTextDelete = () => {
-  const target = editing;
-  void texts.remove(target).then((next) => {
-    if (next === null) {
-      // Refused: this is the last text. Say so rather than appearing to do nothing.
-      hud.setTextControls({
-        canRevert: texts.canRevert(editing),
-        note: 'Cannot delete the only text',
-      });
-      return;
-    }
-    hud.setTextList(texts.list, next);
-    selectText(next);
-  }).catch((error: unknown) => reportTextError('delete', error));
-};
-
-hud.onTextImport = () => {
-  void texts.import().then((name) => {
-    if (name === null) return;
-    hud.setTextList(texts.list, name);
-    selectText(name);
-  });
-};
-
-// Seeded from the bundled prologue on first run — the packaged app does not ship the
-// source presets folder, so the content is handed to the main process rather than read.
-void texts
-  .load('prologue', prologueRaw)
-  .then(() => {
-    editing = texts.liveName;
-    hud.setTextList(texts.list, editing);
-    hud.setTextBody(texts.draft(editing));
-    refreshTextUi();
-    typesetNext();
-  })
-  .catch((error: unknown) => {
-    // A rejection here would otherwise leave a blank stage and no explanation — the text
-    // never loads, but everything else carries on as though it had. §14.
-    const message = error instanceof Error ? error.message : String(error);
-    hud.setStatus(`Could not load texts — ${message}`, true);
-    hud.showOptions();
-  });
 
 /** Built fresh each frame so effects always see current levels. */
 function effectContext(): EffectContext {
@@ -365,7 +281,10 @@ window.addEventListener('unhandledrejection', (event) => {
 
 async function refreshDevices(): Promise<void> {
   const options = await input.list();
-  hud.setDevices(options, input.activeId ?? AudioInput.remembered() ?? SYSTEM_SOURCE_ID);
+  hud.setDevices(
+    options.map((o) => ({ id: o.id, label: o.label })),
+    input.activeId ?? AudioInput.remembered() ?? SYSTEM_SOURCE_ID,
+  );
 }
 
 async function startCapture(id: string): Promise<void> {
@@ -387,11 +306,10 @@ async function startCapture(id: string): Promise<void> {
     // DESIGN.md §14: never fail silently, never take the app down.
     const message = error instanceof Error ? error.message : String(error);
     hud.setStatus(`Could not open source — ${message}`, true);
-    hud.showOptions();
-  }
+    }
 }
 
-hud.onDeviceChange = (id) => void startCapture(id);
+
 input.onDevicesChanged = () => void refreshDevices();
 
 // Come up already capturing: last used source, or system output on a first run.
@@ -406,12 +324,95 @@ void (async () => {
   if (crashed !== null) {
     AudioInput.clearCrashFlag();
     hud.setStatus(`"${crashed}" failed last time — pick a source to try again`, true);
-    hud.showOptions();
-    return;
+      return;
   }
 
   await startCapture(AudioInput.remembered() ?? SYSTEM_SOURCE_ID);
 })();
+
+// --- commands from the control window -------------------------------------------------
+
+/**
+ * One switch, exhaustively checked.
+ *
+ * Because `ControlCommand` is a discriminated union, adding a command without handling it
+ * here is a compile error rather than a message that silently does nothing.
+ */
+hud.onCommand = (command) => {
+  switch (command.type) {
+    case 'requestState':
+      // A window that just opened needs everything, not the next delta.
+      publishPresets();
+      hud.publish();
+      break;
+
+    case 'setDevice':
+      void startCapture(command.id);
+      break;
+
+    case 'setSensitivity':
+      setSensitivity(command.band, command.value);
+      break;
+
+    case 'setPalette':
+      setPalette(command.name);
+      break;
+
+    case 'setLayoutSet':
+      setLayoutSet(command.name);
+      break;
+
+    case 'setBackground':
+      applyBackground(command.mode);
+      break;
+
+    case 'queuePreset':
+      bank.queue(command.name);
+      hud.setPresetState(bank.current.name, bank.pending);
+      break;
+
+    case 'setPresetEnabled':
+      bank.setEnabled(command.name, command.enabled);
+      publishPresets();
+      break;
+
+    case 'applyText':
+      queueText(command.name, command.content);
+      break;
+
+    case 'selectText':
+      // Selecting only changes what the editor shows; nothing on the stage moves.
+      break;
+
+    case 'tapTempo':
+      clock.tap(performance.now());
+      hud.setBpm(clock.bpm);
+      hud.setSource(clock.source);
+      hud.setConfidence(clock.confidence);
+      break;
+
+    case 'releaseManual':
+      clock.releaseManual();
+      hud.setSource('detected');
+      break;
+  }
+};
+
+/**
+ * Keep the stage the size of the window.
+ *
+ * The stage is still a fixed, exact resolution — you set it from the Canvas tab rather than
+ * by dragging, so layout stays deterministic (§13.1). This only makes the CSS follow when
+ * that number changes.
+ */
+function syncStageSize(): void {
+  document.documentElement.style.setProperty('--stage-w', `${window.innerWidth}px`);
+  document.documentElement.style.setProperty('--stage-h', `${window.innerHeight}px`);
+  hud.setCrop(stage.cropRect());
+}
+
+window.addEventListener('resize', syncStageSize);
+syncStageSize();
 
 // --- frame loop ----------------------------------------------------------------------
 
@@ -458,7 +459,6 @@ function frame(now: number): void {
       hud.setBpm(clock.bpm);
       hud.setSource(clock.source);
       hud.setConfidence(clock.confidence);
-      hud.setBeatPeriod(clock.bpm === null ? null : 60_000 / clock.bpm);
     }
 
     // Report the raw input peak a few times a second. If this reads -inf while music is
@@ -474,7 +474,7 @@ function frame(now: number): void {
   // Grid lanes. Predicted rather than detected (§9.3), so they land on the beat instead of
   // just after it.
   if (beat) {
-    hud.flashBeat(beat.isDownbeat);
+    hud.flashBeat(beat.isDownbeat, clock.bpm === null ? 500 : 60_000 / clock.bpm);
     conductor.fire('beat', ctx);
 
     if (beat.isDownbeat) {
@@ -493,10 +493,7 @@ function frame(now: number): void {
       hud.setPresetState(bank.current.name, bank.pending);
 
       // Queued text goes live on the same boundary, through the same one-path rule.
-      if (texts.takePending()) {
-        typesetNext();
-        refreshTextUi();
-      }
+      if (takePendingText()) typesetNext();
     }
   }
 
@@ -504,6 +501,7 @@ function frame(now: number): void {
   stage.updateScroll(dt);
 
   hud.countFrame(now);
+  hud.tick(now);
   requestAnimationFrame(frame);
 }
 
@@ -514,7 +512,7 @@ requestAnimationFrame(frame);
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Tab') {
     event.preventDefault();
-    hud.toggle();
+    window.olib.showControl();
     return;
   }
 

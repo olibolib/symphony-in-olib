@@ -1,6 +1,5 @@
 import type { ClockSource } from '../types';
 import type { BandName } from '../audio/bands';
-import type { Readings } from '../audio/Analyser';
 import type { InputOption } from '../audio/AudioInput';
 
 import type { PaletteName } from '../render/palette';
@@ -108,7 +107,8 @@ export class Hud {
       this.onLayoutSetChange?.(this.layoutSelect.value as LayoutSetName);
     });
 
-    must(root, '#opt-close').addEventListener('click', () => window.olib.close());
+    // No custom close button any more: the control window has an ordinary title bar, and
+    // closing it hides to the tray rather than quitting (DESIGN.md §7.1).
     this.wireTabs(root);
     this.wireTextPanel(root);
 
@@ -195,21 +195,27 @@ export class Hud {
   }
 
   /**
-   * Update the band meters. Writes only what changed: levels move every frame, but the
-   * onset LED is a data attribute flip that CSS animates, so JS does no work decaying it.
+   * Meter levels, from the throttled state snapshot.
+   *
+   * Onsets arrive separately via {@link flashOnset} — they are discrete and need to land on
+   * time, so they are not batched with the levels.
    */
-  setBands(readings: Readings): void {
+  setBandLevels(levels: Readonly<Record<BandName, { level: number }>>): void {
     for (const [band, els] of this.meters) {
-      const reading = readings[band];
+      const reading = levels[band];
       if (!reading) continue;
       els.bar.style.height = `${(reading.level * 100).toFixed(1)}%`;
-      if (reading.onset) {
-        els.name.dataset['on'] = 'true';
-        window.setTimeout(() => {
-          els.name.dataset['on'] = 'false';
-        }, 70);
-      }
     }
+  }
+
+  /** Light a band name to mark a transient. */
+  flashOnset(band: BandName): void {
+    const els = this.meters.get(band);
+    if (!els) return;
+    els.name.dataset['on'] = 'true';
+    window.setTimeout(() => {
+      els.name.dataset['on'] = 'false';
+    }, 70);
   }
 
   setBpm(bpm: number | null): void {
