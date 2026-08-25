@@ -103,14 +103,6 @@
         </section>
 
         <section class="panel" data-panel="effects" hidden>
-          <label class="field">
-            <span>Layouts</span>
-            <select id="opt-layout">
-              <option value="centre">Centre — uses whole stage</option>
-              <option value="edges">Edges — keeps middle clear</option>
-              <option value="all">All</option>
-            </select>
-          </label>
           <div class="preset-list" id="opt-presets"></div>
         </section>
 
@@ -133,6 +125,25 @@
             The canvas window is frameless, so transparency works — there is no title bar to
             drag it by. Set its placement here instead; exact numbers reproduce on every launch.
           </p>
+
+          <div class="mask-block">
+            <div class="mask-head">
+              <span>Where text may spawn</span>
+              <div class="mask-actions">
+                <button id="opt-mask-all" type="button">All</button>
+                <button id="opt-mask-centre" type="button">Clear middle</button>
+                <button id="opt-mask-invert" type="button">Invert</button>
+              </div>
+            </div>
+
+            <div class="mask-grid" id="opt-mask" role="group" aria-label="Spawn mask"></div>
+
+            <p class="canvas-note">
+              Click a cell to allow or block it. A block <em>anchors</em> at a lit cell and is
+              sized by its preset, so it can extend past the mask — this decides where text
+              starts, not where it ends. Presets can only narrow this further, never widen it.
+            </p>
+          </div>
         </section>
 
         <section class="panel" data-panel="colours" hidden>

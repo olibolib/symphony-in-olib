@@ -28,8 +28,6 @@ export interface EffectContext {
 
   /** Accent colours the user has selected. Empty means "no colour". */
   readonly palette: readonly string[];
-  /** Layout numbers `newLayout` may choose from. */
-  readonly layouts: readonly number[];
 
   /** Position within the current beat, 0–1. Continuous, for anything that pulses. */
   readonly beatPhase: number;

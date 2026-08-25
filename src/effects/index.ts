@@ -24,35 +24,9 @@ import type { EffectContext, EffectRef } from './types';
 
 // --- layout effects --------------------------------------------------------------------
 
-/**
- * Change the layout slot on the stage — the main look switch.
- *
- * Picks from whichever set the user has selected rather than a numeric range, so choosing
- * "edges" in the HUD genuinely constrains every layout change from then on.
- */
-export const newLayout = (): EffectRef => {
-  return (ctx: EffectContext) => {
-    const options = ctx.layouts;
-    if (options.length === 0) return;
-
-    const current = ctx.stage.container.dataset['layout'];
-    const choices = options.length > 1 ? options.filter((n) => String(n) !== current) : options;
-
-    const next = pick(choices);
-    if (next !== undefined) ctx.stage.container.dataset['layout'] = String(next);
-  };
-};
-
 export const columns = (params: { min: number; max: number }): EffectRef => {
   return (ctx: EffectContext) => {
     ctx.stage.container.style.columnCount = String(randomRange(params.min, params.max));
-  };
-};
-
-export const fontScale = (params: { min: number; max: number }): EffectRef => {
-  return (ctx: EffectContext) => {
-    const scale = params.min + Math.random() * (params.max - params.min);
-    ctx.stage.setFontScale(scale);
   };
 };
 

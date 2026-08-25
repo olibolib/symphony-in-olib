@@ -51,7 +51,7 @@ import { Channels } from './show/Channels';
 import { Layer } from './show/Layer';
 type BackgroundMode = 'white' | 'black' | 'transparent';
 import { PALETTES, type PaletteName } from './render/palette';
-import { LAYOUT_SETS, type LayoutSetName } from './show/layouts';
+import { FULL, intersect, normalise, type Mask } from './show/mask';
 
 /**
  * Increment 1 complete.
@@ -188,17 +188,38 @@ applyBackground(storedBackground);
 hud.setBackground(storedBackground);
 
 /**
- * Palette and layout set. Both exist for compositing over other visuals: saturated accents
- * clash with whatever is underneath, and centre layouts land text on top of it.
+ * Palette and the global spawn mask. Both exist for compositing over other visuals:
+ * saturated accents clash with whatever is underneath, and text landing on the subject of
+ * the frame is the fastest way to spoil it.
  */
 const PALETTE_KEY = 'olib.palette';
-const LAYOUT_KEY = 'olib.layoutSet';
+const MASK_KEY = 'olib.mask';
 
 let paletteName = (localStorage.getItem(PALETTE_KEY) as PaletteName | null) ?? 'acid';
-let layoutSetName = (localStorage.getItem(LAYOUT_KEY) as LayoutSetName | null) ?? 'centre';
+
+/**
+ * Where text may anchor, whatever a preset asks for (§11.6).
+ *
+ * Defaults to everything allowed: a mask is a constraint the VJ adds for tonight's video,
+ * and starting with one already applied would be the app inventing a restriction nobody
+ * asked for. The presets carry their own, and the two are intersected.
+ */
+let globalMask: Mask = readMask();
+
+function readMask(): Mask {
+  const saved = localStorage.getItem(MASK_KEY);
+  if (saved === null) return FULL;
+  try {
+    return normalise(JSON.parse(saved) as Mask);
+  } catch {
+    // A corrupt setting must not stop the app starting. Falling back to "everywhere" is
+    // visible and recoverable; failing to launch is not (§14).
+    return FULL;
+  }
+}
 
 hud.setPalette(paletteName);
-hud.setLayoutSet(layoutSetName);
+hud.setMask(globalMask);
 
 function setPalette(name: PaletteName): void {
   paletteName = name;
@@ -206,16 +227,18 @@ function setPalette(name: PaletteName): void {
   hud.setPalette(name);
 }
 
-function setLayoutSet(name: LayoutSetName): void {
-  layoutSetName = name;
-  localStorage.setItem(LAYOUT_KEY, name);
-  hud.setLayoutSet(name);
-
-  // Apply immediately rather than waiting for the next bar — if you have just switched to
-  // "edges" because text is sitting on your visuals, four beats is too long to wait.
-  const options = LAYOUT_SETS[name];
-  const next = options[Math.floor(Math.random() * options.length)];
-  if (next !== undefined) stage.container.dataset['layout'] = String(next);
+/**
+ * Apply a new global mask.
+ *
+ * Re-typesets immediately rather than waiting for the next phrase. If you have just excluded
+ * a corner because text is sitting on the club's logo, sixteen bars is much too long to
+ * wait — the same reasoning the layout set was changed under.
+ */
+function setMask(mask: Mask): void {
+  globalMask = normalise(mask);
+  localStorage.setItem(MASK_KEY, JSON.stringify(globalMask));
+  hud.setMask(globalMask);
+  typesetNext();
 }
 
 hud.setSource('none');
@@ -263,6 +286,13 @@ function typesetNext(): void {
     splitChars: preset.text.splitChars,
     count: preset.text.count,
     blocks: preset.text.blocks,
+    // The VJ's mask wins: a preset can only ever be more restricted, never less (§11.6).
+    mask: intersect(globalMask, preset.spawn),
+    shapes: preset.blockShapes,
+    align: preset.align,
+    flow: preset.flow,
+    size: preset.text.size,
+    ...(preset.text.varyBy ? { varyBy: preset.text.varyBy } : {}),
   });
 
   // The tracked elements no longer exist after a re-render.
@@ -270,6 +300,12 @@ function typesetNext(): void {
   textAge = 0;
 
   hud.setClipped(typesetter.clipped);
+
+  // No allowed cell means the preset cannot be placed at all. §14: say so, rather than
+  // leaving a blank stage that looks identical to a crash.
+  if (typesetter.unplaceable) {
+    hud.setStatus(`"${bank.current.name}" has nowhere to spawn — widen the mask`, true);
+  }
 }
 
 /**
@@ -297,7 +333,7 @@ function applyPreset(): void {
   channels.clearAll();
 
   hud.setPresetState(preset.name, bank.pending);
-  stage.setFontScale(preset.fontScale);
+  // Base size is rolled by the typesetter now, from the preset's range (§11.5).
 
   // Continuous stage state persists until something sets it, so a preset that does not use
   // pulse or scroll would otherwise inherit whatever the previous one left running — and a
@@ -328,7 +364,6 @@ function effectContext(): EffectContext {
     energy: analyser?.energy ?? 0,
     bass: analyser?.bass ?? 0,
     palette: PALETTES[paletteName],
-    layouts: LAYOUT_SETS[layoutSetName],
     beatPhase: clock.phase(performance.now()),
     textAge,
     dt: frameDelta,
@@ -438,8 +473,8 @@ hud.onCommand = (command) => {
       setPalette(command.name);
       break;
 
-    case 'setLayoutSet':
-      setLayoutSet(command.name);
+    case 'setMask':
+      setMask(command.mask);
       break;
 
     case 'setBackground':

@@ -53,7 +53,7 @@ function render(state: EngineState): void {
   hud.setClipped(state.clipped);
   hud.setCrop(state.crop);
   hud.setPalette(state.palette);
-  hud.setLayoutSet(state.layoutSet);
+  hud.setMask(state.mask);
   hud.setBackgroundMode(state.background);
   hud.setDevices(
     state.devices.map((d) => ({ id: d.id, label: d.label, isSystem: false })),
@@ -223,7 +223,7 @@ hud.onDeviceChange = (id) => {
 hud.onSensitivityChange = (band, value) =>
   window.olib.sendCommand({ type: 'setSensitivity', band, value });
 hud.onPaletteChange = (name) => window.olib.sendCommand({ type: 'setPalette', name });
-hud.onLayoutSetChange = (name) => window.olib.sendCommand({ type: 'setLayoutSet', name });
+hud.onMaskChange = (mask) => window.olib.sendCommand({ type: 'setMask', mask });
 hud.onBackgroundChange = (mode) => window.olib.sendCommand({ type: 'setBackground', mode });
 hud.onPresetGo = (name) => window.olib.sendCommand({ type: 'queuePreset', name });
 hud.onPresetToggle = (name, enabled) =>

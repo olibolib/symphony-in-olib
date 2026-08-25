@@ -676,3 +676,84 @@ kbd {
   color: #6d6d6d;
   max-width: 62ch;
 }
+
+/* --- spawn mask (§11.6) ---------------------------------------------------------------
+   A 7x7 picture of the frame. Aspect-correct at 16:9, because the whole point is judging
+   where text will land against what is underneath — a square grid would misrepresent it. */
+
+.mask-block {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid #262626;
+}
+
+.mask-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: #9a9a9a;
+}
+
+.mask-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.mask-actions button {
+  background: #161616;
+  border: 1px solid #333;
+  color: #cfcfcf;
+  padding: 3px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.mask-actions button:hover {
+  border-color: #6a6a6a;
+  color: #f2f2f2;
+}
+
+.mask-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--mask-cols, 7), 1fr);
+  gap: 2px;
+  width: 100%;
+  max-width: 420px;
+  aspect-ratio: 16 / 9;
+  background: #262626;
+  padding: 2px;
+}
+
+.mask-cell {
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  background: #101010;
+  transition: background 90ms linear;
+}
+
+/* Lit means "text may start here". Deliberately the brighter state: the mask is normally
+   mostly on, and making the *exclusions* the quiet ones matches how it is read. */
+.mask-cell.on {
+  background: #2f6f48;
+}
+
+.mask-cell:hover {
+  outline: 1px solid #6a6a6a;
+  outline-offset: -1px;
+}
+
+.mask-cell.on:hover {
+  background: #3d8c5b;
+}
+
+.mask-cell:focus-visible {
+  outline: 2px solid #7ee6a4;
+  outline-offset: -2px;
+}

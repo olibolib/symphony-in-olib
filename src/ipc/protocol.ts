@@ -1,6 +1,6 @@
 import type { BandName } from '../audio/bands';
 import type { PaletteName } from '../render/palette';
-import type { LayoutSetName } from '../show/layouts';
+import type { Mask } from '../show/mask';
 import type { ClockSource } from '../types';
 
 /**
@@ -54,7 +54,14 @@ export interface EngineState {
   readonly sensitivities: Readonly<Record<BandName, number>>;
 
   readonly palette: PaletteName;
-  readonly layoutSet: LayoutSetName;
+  /**
+   * The VJ's global spawn mask (§11.6) — where text may anchor, whatever a preset asks for.
+   *
+   * Sent as rows of `#` and `.` because that is what it *is*; the control window draws a
+   * grid from it and sends a whole mask back rather than a diff, which keeps both ends
+   * holding the same kind of value and makes the command idempotent.
+   */
+  readonly mask: Mask;
   readonly background: 'white' | 'black' | 'transparent';
 
   readonly status: string;
@@ -87,7 +94,7 @@ export type ControlCommand =
   | { readonly type: 'setAppSource'; readonly processId: string; readonly title: string }
   | { readonly type: 'setSensitivity'; readonly band: BandName; readonly value: number }
   | { readonly type: 'setPalette'; readonly name: PaletteName }
-  | { readonly type: 'setLayoutSet'; readonly name: LayoutSetName }
+  | { readonly type: 'setMask'; readonly mask: Mask }
   | { readonly type: 'setBackground'; readonly mode: 'white' | 'black' | 'transparent' }
   | { readonly type: 'queuePreset'; readonly name: string }
   | { readonly type: 'setPresetEnabled'; readonly name: string; readonly enabled: boolean }

@@ -1,7 +1,7 @@
 import type { BandName } from '../audio/bands';
 import type { Readings } from '../audio/Analyser';
 import type { PaletteName } from '../render/palette';
-import type { LayoutSetName } from '../show/layouts';
+import type { Mask } from '../show/mask';
 import type { ClockSource } from '../types';
 import {
   STATE_INTERVAL_MS,
@@ -45,7 +45,7 @@ export class EngineBridge {
     apps: [],
     sensitivities: { kick: 0, snare: 0, hat: 0 },
     palette: 'acid',
-    layoutSet: 'centre',
+    mask: [],
     background: 'white',
     status: 'Starting…',
     statusIsError: false,
@@ -127,8 +127,8 @@ export class EngineBridge {
     this.state.palette = name;
   }
 
-  setLayoutSet(name: LayoutSetName): void {
-    this.state.layoutSet = name;
+  setMask(mask: Mask): void {
+    this.state.mask = mask;
   }
 
   setBackground(mode: 'white' | 'black' | 'transparent'): void {

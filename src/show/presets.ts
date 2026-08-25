@@ -1,15 +1,9 @@
-import {
-  colourShift,
-  newLayout,
-  pulse,
-  retext,
-  scroll,
-  stopScroll,
-} from '../effects';
+import { colourShift, pulse, retext, scroll, stopScroll } from '../effects';
 import type { EffectRef } from '../effects/types';
-import type { TextMode } from '../text/Typesetter';
+import type { Align, BlockShape, Flow, TextMode } from '../text/Typesetter';
 import type { Bindings } from './Conductor';
 import type { LayerSpec } from './Layer';
+import { KEEP_CENTRE_CLEAR, type Mask } from './mask';
 
 /**
  * Visual presets. DESIGN.md §11.1 and §11.5.
@@ -33,6 +27,14 @@ import type { LayerSpec } from './Layer';
  * - **`swell` set a `min-width` floor** scaled by live bass; it is now a `transform: scale`
  *   rolled within bounds, because per-element reflow several times a bar reads as broken
  *   and continuous following was dropped (§11.5).
+ *
+ * ## Placement is not a port
+ *
+ * The layout table is gone (§11.6), and unlike the layers it was not reproduced. Variety
+ * used to come from `newLayout` switching between eighteen fixed arrangements every bar; it
+ * now comes from the anchor and the block shape being rolled on every typeset, with `align`
+ * and `flow` fixed per preset. That is a deliberate change of character, not a regression —
+ * these are the first four presets authored in the new vocabulary rather than translated.
  */
 
 export type EnergyTag = 'sparse' | 'mid' | 'peak' | 'any';
@@ -54,10 +56,36 @@ export interface VisualPreset {
     readonly count: number;
     readonly splitChars: boolean;
     readonly blocks: 1 | 2;
+
+    /**
+     * Base size in px, rolled once per typeset (§11.5).
+     *
+     * `min === max` is what `fontScale` used to be. A range makes it a look: the text is a
+     * different size each phrase without anything having to drive it.
+     */
+    readonly size: { readonly min: number; readonly max: number };
+
+    /** Give each word or character its own size within the range. */
+    readonly varyBy?: 'word' | 'char';
   };
 
-  /** Base size in px; everything in CSS is a percentage of this. */
-  readonly fontScale: number;
+  /**
+   * Where blocks may anchor (§11.6). Intersected with the VJ's global mask before use, so a
+   * preset can only ever be more restricted than the global rule, never less.
+   */
+  readonly spawn: Mask;
+
+  /**
+   * Candidate shapes in cells. One is chosen per block, then rolled within its ranges.
+   *
+   * A list rather than a pair of ranges because width and height are *related*: rolling them
+   * independently keeps landing on the square blob between the column and the band that were
+   * actually wanted (§11.6).
+   */
+  readonly blockShapes: readonly BlockShape[];
+
+  readonly align: Align;
+  readonly flow: Flow;
 
   /**
    * The Lego. Order matters: a later layer contending for the same channel sits on top.
@@ -114,8 +142,13 @@ export const PRESETS: readonly VisualPreset[] = [
   {
     name: 'still',
     energy: 'sparse',
-    text: { mode: 'sentence', count: 1, splitChars: true, blocks: 1 },
-    fontScale: 40,
+    text: { mode: 'sentence', count: 1, splitChars: true, blocks: 1, size: { min: 36, max: 44 } },
+    spawn: KEEP_CENTRE_CLEAR,
+    // One large statement. Wide rather than tall, because a single sentence set big wants
+    // room to breathe across rather than a column to fall down.
+    blockShapes: [{ cols: { min: 4, max: 6 }, rows: { min: 2, max: 3 } }],
+    align: 'centre',
+    flow: 'stack',
     layers: [
       // Was `invertBlock({ count: 1 })` — one character, black block behind it.
       {
@@ -141,7 +174,7 @@ export const PRESETS: readonly VisualPreset[] = [
       },
     ],
     bindings: {
-      phrase: [retext({ hold: [1, 2] }), newLayout(), stopScroll()],
+      phrase: [retext({ hold: [1, 2] }), stopScroll()],
     },
     minPhrases: 4,
   },
@@ -150,8 +183,15 @@ export const PRESETS: readonly VisualPreset[] = [
   {
     name: 'scatter',
     energy: 'mid',
-    text: { mode: 'shortSentences', count: 5, splitChars: true, blocks: 2 },
-    fontScale: 28,
+    text: { mode: 'shortSentences', count: 5, splitChars: true, blocks: 2, size: { min: 24, max: 32 } },
+    spawn: KEEP_CENTRE_CLEAR,
+    // A column and a band, so two blocks on stage rarely look like the same thing twice.
+    blockShapes: [
+      { cols: { min: 2, max: 3 }, rows: { min: 3, max: 5 } },
+      { cols: { min: 4, max: 6 }, rows: { min: 1, max: 2 } },
+    ],
+    align: 'left',
+    flow: 'stack',
     layers: [
       { treatment: 'invert', target: { slice: 'word', count: 1 }, triggers: { hat: true }, decayBars: FADE.fast },
       { treatment: 'invert', target: { slice: 'word', proportion: 0.05 }, triggers: { kick: true }, decayBars: FADE.fast },
@@ -167,7 +207,6 @@ export const PRESETS: readonly VisualPreset[] = [
       { treatment: 'underline', target: { slice: 'char', count: 4 }, triggers: { held: true }, decayBars: FADE.fast },
     ],
     bindings: {
-      bar: [newLayout()],
       phrase: [retext({ hold: [1, 2] }), colourShift({ accents: 2 })],
     },
     ambient: [pulse({ amount: 0.012 })],
@@ -180,8 +219,23 @@ export const PRESETS: readonly VisualPreset[] = [
   {
     name: 'swarm',
     energy: 'peak',
-    text: { mode: 'sentences', count: 8, splitChars: true, blocks: 2 },
-    fontScale: 24,
+    text: {
+      mode: 'sentences',
+      count: 8,
+      splitChars: true,
+      blocks: 2,
+      size: { min: 20, max: 30 },
+      // Uneven word sizes, rolled once and then still. The one preset dense enough for
+      // ransom-note type to read as intent rather than as a fault.
+      varyBy: 'word',
+    },
+    spawn: KEEP_CENTRE_CLEAR,
+    blockShapes: [
+      { cols: { min: 3, max: 4 }, rows: { min: 3, max: 5 } },
+      { cols: { min: 5, max: 7 }, rows: { min: 2, max: 3 } },
+    ],
+    align: 'left',
+    flow: 'wrapped',
     layers: [
       { treatment: 'invert', target: { slice: 'word', count: 1 }, triggers: { hat: true }, decayBars: FADE.instant },
       { treatment: 'underline', target: { slice: 'char', count: 1 }, triggers: { hat: true }, decayBars: FADE.instant },
@@ -203,7 +257,6 @@ export const PRESETS: readonly VisualPreset[] = [
       { treatment: 'invert', target: { slice: 'char', count: 8 }, triggers: { held: true }, decayBars: FADE.medium },
     ],
     bindings: {
-      bar: [newLayout()],
       phrase: [retext({ hold: [1, 2] }), colourShift({ accents: 3 })],
     },
     // Hard on the beat, falling away fast. Reads as the kick.
@@ -215,8 +268,18 @@ export const PRESETS: readonly VisualPreset[] = [
   {
     name: 'drift',
     energy: 'mid',
-    text: { mode: 'longSentences', count: 3, splitChars: false, blocks: 1 },
-    fontScale: 30,
+    text: { mode: 'longSentences', count: 3, splitChars: false, blocks: 1, size: { min: 26, max: 34 } },
+    spawn: KEEP_CENTRE_CLEAR,
+    // A tall column or a wide band, never the square in between — the reason shapes are a
+    // list rather than two independent ranges (§11.6).
+    blockShapes: [
+      { cols: { min: 2, max: 2 }, rows: { min: 4, max: 7 } },
+      { cols: { min: 5, max: 7 }, rows: { min: 2, max: 3 } },
+    ],
+    align: 'justify',
+    // Paragraphs run together into a single justified slab. Was layout 7, and it suits long
+    // sentences better than anything else in the old table did.
+    flow: 'run-on',
     // Whole words, not characters — `splitChars` is false, so `char` targets would find
     // nothing here.
     layers: [
@@ -226,7 +289,7 @@ export const PRESETS: readonly VisualPreset[] = [
       { treatment: 'invert', target: { slice: 'word', proportion: 0.08 }, triggers: { held: true }, decayBars: FADE.fast },
     ],
     bindings: {
-      phrase: [retext({ hold: [1, 2] }), newLayout()],
+      phrase: [retext({ hold: [1, 2] })],
       // Held text drifts instead of sitting still. `held` is a real trigger now, so this
       // no longer needs a wrapper effect to detect the hold for itself.
       held: [scroll({ power: 0.14 })],

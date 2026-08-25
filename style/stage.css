@@ -1,18 +1,14 @@
 /* The typographic vocabulary. Follows Acid: black on white, Helvetica, tight leading,
    words and characters as addressable elements. DESIGN.md §12. */
 
+/* Blocks are positioned from the spawn grid (§11.6), so the container is a plain
+   positioning context rather than the table-cell that used to centre a single flow. */
 #container {
-  display: table-cell;
-  vertical-align: middle;
-  text-align: center;
-  padding: calc(var(--fs) * 0.75);
+  position: relative;
+  width: 100%;
+  height: 100%;
   font-weight: 700;
   letter-spacing: -0.01em;
-}
-
-#stage {
-  display: table;
-  table-layout: fixed;
 }
 
 p {
@@ -112,225 +108,80 @@ w[data-slot='7'] { color: var(--c7); }
 
 [data-vis='1'] { visibility: hidden; }
 
-/* --- layouts (§12.4) -----------------------------------------------------------------
-   The `layout` slot on #container. Same rule as the channels: the engine picks a
-   number, this file decides what it means. Adding a layout is a CSS change only. */
 
-#container[data-layout='1'] {
-  vertical-align: top;
-  text-align: left;
-  font-size: 180%;
-}
+/* --- blocks (§11.6) -------------------------------------------------------------------
+   A block is anchored at a cell of the 7x7 spawn grid and sized by its preset, both rolled
+   per typeset. Position and size arrive as inline percentages — they are per-block data,
+   not style, and there is no sensible way to express "this one, here" as a rule.
 
-#container[data-layout='2'] {
-  vertical-align: bottom;
-  text-align: right;
-  font-size: 140%;
-}
-
-#container[data-layout='3'] {
-  font-size: 82%;
-  line-height: 1.1;
-}
-
-#container[data-layout='4'] {
-  font-size: 320%;
-  letter-spacing: -0.03em;
-  line-height: 0.82;
-}
-
-/* Wrapped blocks with animated widths — the layout shoves itself around. */
-#container[data-layout='5'] {
-  display: flex;
-  flex-wrap: wrap;
-  align-content: center;
-  text-align: left;
-  font-size: 92%;
-}
-#container[data-layout='5'] p {
-  min-width: 25%;
-  transition: width 0.12s ease;
-}
-
-/* Grid of bordered cells. */
-#container[data-layout='6'] {
-  font-size: 84%;
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  align-content: center;
-}
-#container[data-layout='6'] p {
-  outline: 0.08em solid currentColor;
-  padding: 0.1em;
-  margin: -0.04em;
-}
-
-/* Dense continuous text — paragraphs run together rather than stacking. */
-#container[data-layout='7'] {
-  font-size: 76%;
-  text-align: justify;
-  line-height: 1.15;
-}
-#container[data-layout='7'] p {
-  display: inline;
-}
-
-#container[data-layout='8'] {
-  font-size: 100%;
-  text-align: center;
-  font-style: italic;
-}
-
-/* Borders slot. */
-#container[data-borders='1'] w { outline: 0.05em solid currentColor; }
-#container[data-borders='2'] c { outline: 0.05em solid currentColor; }
-#container[data-borders='3'] p { outline: 0.08em solid currentColor; }
-#container[data-borders='4'] w { border-bottom: 0.08em solid currentColor; }
-
-/* Swell transitions. Effects set min-width; CSS animates getting there. */
-w, c {
-  transition: min-width 0.14s ease, min-height 0.14s ease;
-}
-
-/* --- edge layouts --------------------------------------------------------------------
-   For compositing over other visuals. These keep the middle of the stage clear and push
-   the text out to bands and rails around it. All absolutely positioned, because that is
-   the only way to reserve a region reliably regardless of how much text there is. */
-
-#container[data-layout='10'],
-#container[data-layout='11'],
-#container[data-layout='12'],
-#container[data-layout='13'],
-#container[data-layout='14'] {
-  position: absolute;
-  display: flex;
-  overflow: hidden;
-  padding: 1.6vh 2.4vw;
-  font-size: 86%;
-  line-height: 1.06;
-}
-
-/* Top band. */
-#container[data-layout='10'] {
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 27%;
-  align-items: flex-start;
-  justify-content: center;
-  text-align: center;
-}
-
-/* Bottom band. */
-#container[data-layout='11'] {
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 27%;
-  align-items: flex-end;
-  justify-content: center;
-  text-align: center;
-}
-
-/*
- * Two rails, left and right.
- *
- * A two-column layout with an enormous gap is the trick here: the text flows into narrow
- * columns at either edge and the gap *is* the protected middle. It needs no knowledge of
- * how much text there is, which the band layouts do.
- */
-#container[data-layout='12'] {
-  inset: 0;
-  display: block;
-  column-count: 2;
-  column-gap: 56%;
-  text-align: justify;
-  font-size: 78%;
-  padding: 3vh 2.4vw;
-}
-
-/* Left rail only. */
-#container[data-layout='13'] {
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 26%;
-  align-items: center;
-  text-align: left;
-  font-size: 80%;
-}
-
-/* Right rail only. */
-#container[data-layout='14'] {
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 26%;
-  align-items: center;
-  text-align: right;
-  font-size: 80%;
-}
-
-/* Bands and rails hold a flex child, so the paragraphs need a wrapper context. */
-#container[data-layout='10'] p,
-#container[data-layout='11'] p,
-#container[data-layout='13'] p,
-#container[data-layout='14'] p {
-  width: 100%;
-}
-
-
-/* --- blocks ---------------------------------------------------------------------------
-   Independent text regions. Each is assigned a distinct cell of a 3x3 grid at typeset
-   time, with the centre cell never used — that is what makes "up to three at once, not
-   overlapping" true by construction rather than by luck.
-
-   In non-grid layouts the grid-area is simply ignored and blocks stack normally. */
+   Blocks may overlap. Under the 3x3 grid each took a distinct cell so non-overlap was true
+   by construction; anchors give that up on purpose, because the VJ chooses the size and the
+   app second-guessing it is worse than the occasional collision. */
 
 .block {
+  position: absolute;
   min-width: 0;
+  padding: calc(var(--fs) * 0.28);
   overflow: hidden;
+
+  /* Vertically centred within its own box, which is what the table-cell used to do for the
+     whole stage — now per block, so a short passage sits in the middle of its band. */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
-/* Scattered — three blocks around the edges, centre kept clear. */
-#container[data-layout='15'] {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  /* The middle row and column are the protected centre, so they are deliberately the
-     smallest — edge cells need the space, the centre only needs to stay clear. */
-  grid-template-columns: 1fr 0.7fr 1fr;
-  grid-template-rows: 1fr 0.6fr 1fr;
-  gap: 1.2vh 1.6vw;
-  padding: 2vh 2.4vw;
-  font-size: 76%;
-  align-items: center;
-  text-align: left;
+/* --- align (§11.6) --------------------------------------------------------------------
+   Was bundled into layouts 1, 2 and 8 along with a font size and a line height. On its own
+   it combines with any anchor, any shape and any flow. */
+
+#container[data-align='left'] { text-align: left; }
+#container[data-align='centre'] { text-align: center; }
+#container[data-align='right'] { text-align: right; }
+#container[data-align='justify'] { text-align: justify; }
+
+/* --- flow (§11.6) ---------------------------------------------------------------------
+   How paragraphs arrange inside a block — the part of the old layout table that was neither
+   placement nor typography, and the one genuinely new setting to come out of deleting it. */
+
+/* Paragraphs stack. The default, and what most text wants. */
+#container[data-flow='stack'] .block > p { display: block; }
+
+/* Run together into one slab. Was layout 7, and it still suits long sentences best. */
+#container[data-flow='run-on'] .block > p {
+  display: inline;
+}
+#container[data-flow='run-on'] .block {
+  line-height: 1.15;
 }
 
-/* Corners — same idea, pushed harder into the frame edges. */
-#container[data-layout='16'] {
-  position: absolute;
-  inset: 0;
+/* A grid of outlined cells. Was layout 6, at a size it was welded to. */
+#container[data-flow='grid'] .block {
   display: grid;
-  grid-template-columns: 1fr 0.6fr 1fr;
-  grid-template-rows: 1fr 0.5fr 1fr;
-  padding: 1.4vh 1.8vw;
-  font-size: 88%;
-  text-align: left;
+  grid-template-columns: repeat(auto-fill, minmax(6em, 1fr));
+  align-content: center;
+  gap: 0.06em;
 }
-#container[data-layout='16'] .block:nth-child(odd) {
-  text-align: right;
+#container[data-flow='grid'] .block > p {
+  outline: 0.08em solid currentColor;
+  padding: 0.1em;
 }
 
-/* Diagonal drift — blocks staggered across the frame, larger type. */
-#container[data-layout='17'] {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  grid-template-columns: 1fr 0.7fr 1fr;
-  grid-template-rows: 1fr 0.6fr 1fr;
-  padding: 2vh 2.4vw;
-  font-size: 104%;
-  align-items: center;
+/* Wrapped paragraphs of uneven width, shoving each other about. Was layout 5. */
+#container[data-flow='wrapped'] .block {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-content: center;
+  gap: 0 0.4em;
+}
+#container[data-flow='wrapped'] .block > p {
+  min-width: 25%;
+}
+
+/* Two columns with a gap. Was layout 12, where the gap *was* the protected middle — it is
+   now just a number, on a block sized and placed like any other. */
+#container[data-flow='columns'] .block {
+  display: block;
+  column-count: 2;
+  column-gap: var(--column-gap, 12%);
 }

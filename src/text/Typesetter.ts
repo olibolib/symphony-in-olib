@@ -1,5 +1,6 @@
 import type { Stage } from '../render/Stage';
-import { pick, pickSome, randomInt } from '../util/random';
+import { anchors, normalise, place, type Cell, type Mask } from '../show/mask';
+import { pick, randomInt, randomRange } from '../util/random';
 import { sentenceLength, type Sentence, type TextPreset } from './TextSource';
 
 /**
@@ -39,29 +40,72 @@ export interface TypesetOptions {
    * How many independent text blocks to place, 1–3.
    *
    * Each block gets its own selection, so they show different text rather than repeating.
-   * Blocks are assigned distinct cells of a 3x3 grid, which is what guarantees they cannot
-   * overlap — the alternative, positioning them freely and hoping, produces collisions
-   * exactly when the text is longest.
+   *
+   * They may now **overlap**. Under the 3x3 grid every block took a distinct cell, so
+   * non-overlap was true by construction; anchors plus a VJ-chosen size gives that up
+   * deliberately (§11.6). Two blocks anchored close together and sized large will collide,
+   * and that is the author's call rather than the app's to prevent.
    */
   readonly blocks?: number;
+
+  /** Which cells a block may anchor at (§11.6). Already intersected with the global mask. */
+  readonly mask?: Mask;
+
+  /** Candidate shapes in cells; one is chosen per block, then rolled within its ranges. */
+  readonly shapes?: readonly BlockShape[];
+
+  readonly align?: Align;
+  readonly flow?: Flow;
+
+  /**
+   * Base size in px, rolled once per typeset and then left alone.
+   *
+   * `min === max` is a fixed size, which is what `fontScale` used to be. A range makes it a
+   * look rather than a setting — and because it is rolled at typeset rather than driven by
+   * audio, it costs nothing per frame and nothing has to decay it.
+   */
+  readonly size?: { readonly min: number; readonly max: number };
+
+  /**
+   * What gets its own roll of the size dice. Omit and the whole block matches.
+   *
+   * Uses `font-size`, and therefore reflows — which is correct here: uneven word sizes need
+   * the line to re-wrap around them or the text overlaps itself, and it happens once. The
+   * reactive `swell` treatment uses a transform for the opposite reason (§11.5).
+   */
+  readonly varyBy?: 'word' | 'char';
 }
+
+export type Align = 'left' | 'centre' | 'right' | 'justify';
+
+/**
+ * How paragraphs arrange inside a block.
+ *
+ * What is left of the old layout table once placement and typography are taken out of it:
+ * `run-on` was layout 7, `grid` was 6, `wrapped` was 5, and `columns` was 12's two rails.
+ * As a setting they combine with any anchor and any size, which none of them could before.
+ */
+export type Flow = 'stack' | 'run-on' | 'grid' | 'wrapped' | 'columns';
+
+export interface Range {
+  readonly min: number;
+  readonly max: number;
+}
+
+export interface BlockShape {
+  readonly cols: Range;
+  readonly rows: Range;
+}
+
+/** A shape that fills most of the frame. Used when a preset declares none. */
+const DEFAULT_SHAPES: readonly BlockShape[] = [
+  { cols: { min: 5, max: 5 }, rows: { min: 3, max: 3 } },
+];
 
 /** Number of colour slots. Must match the `--c0`..`--c7` variables in CSS (§12.5). */
 const COLOUR_SLOTS = 8;
 
 const DEFAULT_MAX_ELEMENTS = 6000;
-
-/**
- * Grid cells a block may occupy: a 3x3 grid with the middle removed.
- *
- * The centre is never used. Composited output usually has its subject there — a logo, a
- * visualiser's focal point — and text landing on it is the fastest way to spoil the frame.
- */
-const BLOCK_CELLS: readonly { row: number; col: number }[] = [
-  { row: 1, col: 1 }, { row: 1, col: 2 }, { row: 1, col: 3 },
-  { row: 2, col: 1 },                     { row: 2, col: 3 },
-  { row: 3, col: 1 }, { row: 3, col: 2 }, { row: 3, col: 3 },
-];
 
 export class Typesetter {
   private readonly stage: Stage;
@@ -77,6 +121,14 @@ export class Typesetter {
    * while tuning instead of looking like text that mysteriously failed to appear.
    */
   clipped = 0;
+
+  /**
+   * True when the effective mask had no allowed cell, so nothing could be placed.
+   *
+   * Reported rather than silently rendering an empty stage — a preset that never appears is
+   * exactly the kind of thing §14 says must not fail quietly.
+   */
+  unplaceable = false;
   paragraphs: readonly HTMLElement[] = [];
   words: readonly HTMLElement[] = [];
   chars: readonly HTMLElement[] = [];
@@ -98,8 +150,20 @@ export class Typesetter {
     // same as one rather than twice as much.
     const budgetPerBlock = Math.max(1, Math.floor(budget / blocks));
 
-    const cells = pickSome(BLOCK_CELLS, blocks);
+    const mask = normalise(options.mask);
+    const cells = anchors(mask);
+    const shapes = options.shapes?.length ? options.shapes : DEFAULT_SHAPES;
     const parts: string[] = [];
+
+    // No allowed cell means nowhere to anchor. Rendering nothing and saying nothing would
+    // look exactly like a broken preset, so the caller is told (§14).
+    if (cells.length === 0) {
+      this.stage.container.innerHTML = '';
+      this.refresh();
+      this.unplaceable = true;
+      return;
+    }
+    this.unplaceable = false;
 
     // `count` is a total across blocks, not per block. Passing the full count to each was a
     // bug: two blocks asking for four sentences produced eight, crammed into cells a third
@@ -109,10 +173,23 @@ export class Typesetter {
     for (let index = 0; index < blocks; index++) {
       // Each block selects independently, so they show different text.
       const lines = this.select(preset, { ...options, count: perBlock });
-      const cell = cells[index] ?? BLOCK_CELLS[0];
-      const area = cell ? `grid-area:${cell.row}/${cell.col};` : '';
 
-      parts.push(`<div class="block" data-block="${index}" style="${area}">`);
+      // Anchor and shape are rolled per block, independently. That is what puts a tall
+      // column beside a wide band — a composition the 3x3 grid could not produce, since
+      // every cell there was the same size (§11.6).
+      const anchor = pick(cells) as Cell;
+      const shape = pick(shapes) ?? DEFAULT_SHAPES[0]!;
+      const box = place(
+        anchor,
+        randomRange(shape.cols.min, shape.cols.max),
+        randomRange(shape.rows.min, shape.rows.max),
+      );
+
+      const style =
+        `left:${box.left.toFixed(3)}%;top:${box.top.toFixed(3)}%;` +
+        `width:${box.width.toFixed(3)}%;height:${box.height.toFixed(3)}%;`;
+
+      parts.push(`<div class="block" data-block="${index}" style="${style}">`);
       parts.push(this.build(lines, options, budgetPerBlock));
       parts.push('</div>');
     }
@@ -120,9 +197,19 @@ export class Typesetter {
     // One assignment, not an append per word. Parsing a single string is dramatically
     // faster than thousands of DOM insertions, and it is the difference between a preset
     // change being invisible and being a visible hitch.
-    this.stage.container.innerHTML = parts.join('');
+    // Base size is rolled once here, not per frame and not per trigger. Nothing decays it
+    // and nothing follows the audio with it — it is simply how big the text is (§11.5).
+    const size = options.size ?? { min: 28, max: 28 };
+    this.stage.setFontScale(randomRange(size.min, size.max));
+
+    const container = this.stage.container;
+    container.dataset['align'] = options.align ?? 'centre';
+    container.dataset['flow'] = options.flow ?? 'stack';
+
+    container.innerHTML = parts.join('');
 
     this.refresh();
+    if (options.varyBy) this.varySizes(options.varyBy, size);
     this.measureClipping();
   }
 
@@ -141,6 +228,28 @@ export class Typesetter {
       }
     }
     this.clipped = clipped;
+  }
+
+  /**
+   * Give each word or character its own size within the range.
+   *
+   * Written as a multiplier of the base rather than an absolute, so the two settings stay
+   * independent — changing the base range moves everything, and `varyBy` decides how evenly.
+   *
+   * Applied after the DOM exists rather than baked into the markup string: it is one style
+   * write per element on a re-typeset, which happens a few times a minute, and keeping it
+   * out of `build` leaves that function about text and nothing else.
+   */
+  private varySizes(slice: 'word' | 'char', size: { min: number; max: number }): void {
+    if (size.max <= size.min) return;
+
+    const elements = slice === 'char' ? this.chars : this.words;
+    const base = (size.min + size.max) / 2;
+
+    for (const el of elements) {
+      const px = size.min + Math.random() * (size.max - size.min);
+      el.style.fontSize = `${(px / base).toFixed(3)}em`;
+    }
   }
 
   clear(): void {

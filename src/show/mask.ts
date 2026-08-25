@@ -1,0 +1,166 @@
+/**
+ * Where text may be placed. DESIGN.md §11.6.
+ *
+ * A 7x7 grid of cells, written as rows of characters so a preset file shows you the shape
+ * rather than making you decode coordinates:
+ *
+ * ```
+ * "#######"     "#######"     "..###.."
+ * "#######"     "#.....#"     "..###.."
+ * "##...##"     "#.....#"     "..###.."
+ * "##...##"     "#.....#"     "..###.."
+ * "##...##"     "#.....#"     "..###.."
+ * "#######"     "#.....#"     "..###.."
+ * "#######"     "#######"     "..###.."
+ *  keep the      edges only    a centre column
+ *  middle clear
+ * ```
+ *
+ * It diffs sensibly in git, which a packed bitfield does not, and it is legible in a code
+ * review, which a list of coordinates is not.
+ *
+ * **7x7 rather than 5x5** because odd is required — an even grid has no centre cell, and
+ * "keep off the middle" is the thing this must express well — and because at 5x5, excluding
+ * the middle 3x3 leaves text only on the outermost ring, hard against the frame edge with
+ * nowhere else to go. At 7x7 the same exclusion leaves two rings.
+ */
+
+export const GRID = 7;
+
+const ON = '#';
+const OFF = '.';
+
+/** Rows of `#` and `.`, one string per row. */
+export type Mask = readonly string[];
+
+export interface Cell {
+  readonly row: number;
+  readonly col: number;
+}
+
+/** Every cell allowed. The default for a preset that has not been given a shape. */
+export const FULL: Mask = Array.from({ length: GRID }, () => ON.repeat(GRID));
+
+/**
+ * The historical default, and what the 3x3 grid did: keep the middle clear.
+ *
+ * Composited output usually has its subject in the centre — a logo, a visualiser's focal
+ * point — and text landing on it is the fastest way to spoil the frame.
+ */
+export const KEEP_CENTRE_CLEAR: Mask = [
+  '#######',
+  '#######',
+  '##...##',
+  '##...##',
+  '##...##',
+  '#######',
+  '#######',
+];
+
+/**
+ * Normalise anything to a well-formed mask.
+ *
+ * Masks arrive from preset files and from saved settings, so they can be the wrong length,
+ * ragged, or full of characters nobody intended. Rather than throwing during a set, short
+ * rows are padded as allowed and unknown characters are read as allowed — the failure mode
+ * of "more space than expected" is visible and recoverable, where "no space at all" is a
+ * blank screen with no explanation (§14).
+ */
+export function normalise(mask: Mask | undefined): Mask {
+  if (!mask || mask.length === 0) return FULL;
+
+  const rows: string[] = [];
+  for (let row = 0; row < GRID; row++) {
+    const source = mask[row] ?? '';
+    let out = '';
+    for (let col = 0; col < GRID; col++) {
+      out += source[col] === OFF ? OFF : ON;
+    }
+    rows.push(out);
+  }
+  return rows;
+}
+
+export function isAllowed(mask: Mask, row: number, col: number): boolean {
+  return mask[row]?.[col] !== OFF;
+}
+
+/**
+ * Both masks must allow a cell.
+ *
+ * The VJ's global mask is a fact about tonight — there is a logo bottom-right and nothing
+ * should start there. The preset's is its own composition. Intersecting means a preset can
+ * only ever be *more* restricted than the global rule, never less, so a preset built weeks
+ * ago and forgotten cannot start somewhere deliberately ruled out.
+ */
+export function intersect(a: Mask, b: Mask): Mask {
+  const left = normalise(a);
+  const right = normalise(b);
+
+  return left.map((row, r) =>
+    Array.from(row, (char, c) => (char === OFF || right[r]?.[c] === OFF ? OFF : ON)).join(''),
+  );
+}
+
+/** Every cell a block may anchor at. Empty means the preset cannot be placed. */
+export function anchors(mask: Mask): readonly Cell[] {
+  const out: Cell[] = [];
+  for (let row = 0; row < GRID; row++) {
+    for (let col = 0; col < GRID; col++) {
+      if (isAllowed(mask, row, col)) out.push({ row, col });
+    }
+  }
+  return out;
+}
+
+/**
+ * Place a block of the given size at an anchor, as percentages of the stage.
+ *
+ * **A block may extend past the mask, and that is deliberate.** The mask says where a block
+ * may *start*; how big it is, is a separate decision the VJ made. Requiring the whole block
+ * to fit would mean the app searching for somewhere it fits, silently shrinking it, or
+ * refusing to place it — all three second-guess a size that was chosen on purpose.
+ *
+ * **Position clamps to the canvas; size never does.** Overflowing into the middle of the
+ * frame is a look you chose and can see. Overflowing off the *edge* is not: text nobody can
+ * read reads as a fault rather than a decision. So a block that would run off is shifted
+ * back until it fits, keeping every pixel of the size it was given.
+ */
+export function place(
+  anchor: Cell,
+  cols: number,
+  rows: number,
+): { left: number; top: number; width: number; height: number } {
+  const w = clampSpan(cols);
+  const h = clampSpan(rows);
+
+  const col = Math.min(anchor.col, GRID - w);
+  const row = Math.min(anchor.row, GRID - h);
+
+  const unit = 100 / GRID;
+  return {
+    left: col * unit,
+    top: row * unit,
+    width: w * unit,
+    height: h * unit,
+  };
+}
+
+function clampSpan(cells: number): number {
+  if (!Number.isFinite(cells)) return 1;
+  return Math.min(GRID, Math.max(1, Math.round(cells)));
+}
+
+/** For the control window's clickable grid, and for writing a mask back to settings. */
+export function toggle(mask: Mask, row: number, col: number): Mask {
+  const rows = normalise(mask).map((line, r) => {
+    if (r !== row) return line;
+    const chars = Array.from(line);
+    chars[col] = chars[col] === OFF ? ON : OFF;
+    return chars.join('');
+  });
+
+  // A mask with nothing allowed has no failure mode worth having: every preset would be
+  // skipped and the stage would simply go empty with no indication why. Refuse the last one.
+  return anchors(rows).length === 0 ? normalise(mask) : rows;
+}

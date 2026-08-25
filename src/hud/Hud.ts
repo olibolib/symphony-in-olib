@@ -3,7 +3,7 @@ import type { BandName } from '../audio/bands';
 import type { InputOption } from '../audio/AudioInput';
 
 import type { PaletteName } from '../render/palette';
-import type { LayoutSetName } from '../show/layouts';
+import { FULL, GRID, KEEP_CENTRE_CLEAR, isAllowed, normalise, toggle, type Mask } from '../show/mask';
 import { APP_PREFIX } from '../ipc/protocol';
 
 export type BackgroundMode = 'white' | 'black' | 'transparent';
@@ -28,7 +28,10 @@ export class Hud {
   private readonly root: HTMLElement;
   private readonly backgroundSelect: HTMLSelectElement;
   private readonly paletteSelect: HTMLSelectElement;
-  private readonly layoutSelect: HTMLSelectElement;
+  private readonly maskGrid: HTMLElement;
+
+  /** The mask as last drawn, so a click knows what it is toggling. */
+  private mask: Mask = FULL;
   private readonly deviceSelect: HTMLSelectElement;
   private readonly status: HTMLElement;
 
@@ -47,8 +50,8 @@ export class Hud {
   /** Called when the accent palette changes. */
   onPaletteChange: ((name: PaletteName) => void) | null = null;
 
-  /** Called when the layout set changes. */
-  onLayoutSetChange: ((name: LayoutSetName) => void) | null = null;
+  /** Called when the global spawn mask changes (§11.6). Carries the whole mask. */
+  onMaskChange: ((mask: Mask) => void) | null = null;
 
   /** Called when a preset is enabled or disabled for the automatic cycle. */
   onPresetToggle: ((name: string, enabled: boolean) => void) | null = null;
@@ -103,10 +106,9 @@ export class Hud {
       this.onPaletteChange?.(this.paletteSelect.value as PaletteName);
     });
 
-    this.layoutSelect = requireSelect(root, '#opt-layout');
-    this.layoutSelect.addEventListener('change', () => {
-      this.onLayoutSetChange?.(this.layoutSelect.value as LayoutSetName);
-    });
+    this.maskGrid = must(root, '#opt-mask');
+    this.buildMask();
+    this.wireMaskButtons(root);
 
     // No custom close button any more: the control window has an ordinary title bar, and
     // closing it hides to the tray rather than quitting (DESIGN.md §7.1).
@@ -337,8 +339,79 @@ export class Hud {
     this.paletteSelect.value = name;
   }
 
-  setLayoutSet(name: LayoutSetName): void {
-    this.layoutSelect.value = name;
+  /**
+   * Draw the mask.
+   *
+   * Cells are built once and only their state is written afterwards. The state arrives with
+   * every snapshot — twenty times a second — and rebuilding forty-nine elements at that rate
+   * would fight the user for their own click.
+   */
+  setMask(mask: Mask): void {
+    const next = normalise(mask);
+    if (sameMask(next, this.mask)) return;
+
+    this.mask = next;
+    for (const cell of this.maskGrid.children) {
+      const el = cell as HTMLElement;
+      const row = Number(el.dataset['row']);
+      const col = Number(el.dataset['col']);
+      const on = isAllowed(next, row, col);
+      el.classList.toggle('on', on);
+      el.setAttribute('aria-pressed', String(on));
+    }
+  }
+
+  /**
+   * One button per cell, built once.
+   *
+   * Real buttons rather than a canvas or divs: they are keyboard-reachable and carry their
+   * own pressed state, which is most of what this control needs and none of which would be
+   * true of something painted.
+   */
+  private buildMask(): void {
+    this.maskGrid.style.setProperty('--mask-cols', String(GRID));
+
+    for (let row = 0; row < GRID; row++) {
+      for (let col = 0; col < GRID; col++) {
+        const cell = document.createElement('button');
+        cell.type = 'button';
+        cell.className = 'mask-cell on';
+        cell.dataset['row'] = String(row);
+        cell.dataset['col'] = String(col);
+        cell.setAttribute('aria-pressed', 'true');
+        cell.setAttribute('aria-label', `Row ${row + 1}, column ${col + 1}`);
+        cell.addEventListener('click', () => this.applyMask(toggle(this.mask, row, col)));
+        this.maskGrid.append(cell);
+      }
+    }
+  }
+
+  private wireMaskButtons(root: ParentNode): void {
+    must(root, '#opt-mask-all').addEventListener('click', () => this.applyMask(FULL));
+
+    must(root, '#opt-mask-centre').addEventListener('click', () =>
+      this.applyMask(KEEP_CENTRE_CLEAR),
+    );
+
+    must(root, '#opt-mask-invert').addEventListener('click', () => {
+      const flipped = this.mask.map((line) =>
+        Array.from(line, (char) => (char === '#' ? '.' : '#')).join(''),
+      );
+      // Inverting a full mask would leave nothing allowed, which is the one state worth
+      // refusing: every preset would be skipped and the stage would empty with no clue why.
+      this.applyMask(flipped.some((line) => line.includes('#')) ? flipped : this.mask);
+    });
+  }
+
+  /**
+   * Paint immediately, then tell the engine.
+   *
+   * The snapshot that confirms it is up to 50ms away, and a toggle that visibly lags its
+   * own click feels broken even when it is working.
+   */
+  private applyMask(mask: Mask): void {
+    this.setMask(mask);
+    this.onMaskChange?.(this.mask);
   }
 
   /**
@@ -590,4 +663,10 @@ function must(root: ParentNode, selector: string): HTMLElement {
   const el = root.querySelector<HTMLElement>(selector);
   if (!el) throw new Error(`HUD element missing: ${selector}`);
   return el;
+}
+
+/** Cheap equality, so a snapshot arriving 20 times a second does not redraw 49 elements. */
+function sameMask(a: Mask, b: Mask): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((row, i) => row === b[i]);
 }
