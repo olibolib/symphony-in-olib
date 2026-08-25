@@ -111,17 +111,18 @@ export class Typesetter {
   private readonly stage: Stage;
 
   /**
-   * How far `continuous` has read, in sentences.
+   * How far `continuous` has read into each text, in sentences.
    *
-   * Lives on the typesetter rather than in the preset, because it is a position in a
-   * *reading*, not a property of the preset or of the text. Two presets both set to
-   * `continuous` share the thread through the passage, which is what you want: switching
-   * preset mid-poem should change how it looks, not restart it.
+   * Keyed by text, not global, because a preset can now draw from several (§11.7) and two
+   * blocks can be showing different ones at once. A position belongs to a *reading* of a
+   * particular passage — sharing one cursor across texts would make each one jump to
+   * wherever the last one happened to stop.
+   *
+   * Not on the preset, though: two presets both set to `continuous` share the thread through
+   * the same text, so switching preset mid-poem changes how it looks rather than restarting
+   * it.
    */
-  private cursor = 0;
-
-  /** The text the cursor refers to. Changing text starts the reading again. */
-  private cursorText = '';
+  private readonly cursors = new Map<string, number>();
 
   /** Live registries, refreshed on every render so effects never walk a stale DOM. */
   blocks: readonly HTMLElement[] = [];
@@ -155,7 +156,12 @@ export class Typesetter {
     return this.chars.length > 0 ? this.chars : this.words;
   }
 
-  render(preset: TextPreset, options: TypesetOptions): void {
+  /**
+   * @param texts One per block. A preset drawing from several texts (§11.7) rolls one for
+   * each block independently, so a short list still tends to put different passages side by
+   * side. Fewer entries than blocks is fine — the first is reused.
+   */
+  render(texts: readonly TextPreset[], options: TypesetOptions): void {
     const blocks = Math.min(3, Math.max(1, options.blocks ?? 1));
     const budget = options.maxElements ?? DEFAULT_MAX_ELEMENTS;
 
@@ -187,16 +193,14 @@ export class Typesetter {
     // overlap needs to see the boxes already placed.
     const boxes = placeBlocks(cells, shapes, blocks, options.avoidOverlap !== false);
 
-    if (preset.name !== this.cursorText) {
-      this.cursorText = preset.name;
-      this.cursor = 0;
-    }
-
     for (let index = 0; index < blocks; index++) {
+      const text = texts[index] ?? texts[0];
+      if (!text) break;
+
       // Each block selects independently, so two blocks show different text — except in
-      // `continuous`, where they deliberately show *consecutive* text and read as one
-      // passage split across the frame.
-      const lines = this.select(preset, { ...options, count: perBlock });
+      // `continuous` on the same text, where they deliberately show *consecutive* passages
+      // and read as one thread split across the frame.
+      const lines = this.select(text, { ...options, count: perBlock });
 
       // Rolled per block, so a tall column can sit beside a wide band — a composition the
       // 3x3 grid could not produce, since every cell there was the same size (§11.6).
@@ -212,8 +216,9 @@ export class Typesetter {
       // drops whole sentences that will not fit, and advancing past those would skip lines
       // of the text outright — the reading would have holes in it, which is the one thing a
       // continuous mode must not do.
-      if (options.mode === 'continuous' && preset.sentences.length > 0) {
-        this.cursor = (this.cursor + built.used) % preset.sentences.length;
+      if (options.mode === 'continuous' && text.sentences.length > 0) {
+        const at = this.cursors.get(text.name) ?? 0;
+        this.cursors.set(text.name, (at + built.used) % text.sentences.length);
       }
 
       parts.push(`<div class="block" data-block="${index}" style="${style}">`);
@@ -315,10 +320,11 @@ export class Typesetter {
        * chunk of the text is followed by the first rather than by a gap.
        */
       case 'continuous': {
+        const at = this.cursors.get(preset.name) ?? 0;
         const span = Math.min(count, sentences.length);
         const out: Sentence[] = [];
         for (let i = 0; i < span; i++) {
-          const sentence = sentences[(this.cursor + i) % sentences.length];
+          const sentence = sentences[(at + i) % sentences.length];
           if (sentence) out.push(sentence);
         }
         return out;

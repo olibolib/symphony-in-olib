@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 // selectors in main.ts must exist in index.html.
 const documents = {
   'src/hud/Hud.ts': 'control.html',
+  'src/hud/PresetEditor.ts': 'control.html',
   'src/control.ts': 'control.html',
   'src/main.ts': 'index.html',
 };

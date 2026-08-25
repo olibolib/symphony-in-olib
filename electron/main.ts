@@ -277,6 +277,44 @@ function textPath(name: string): string {
   return join(textsDir(), `${safe}.txt`);
 }
 
+/**
+ * Presets live beside the texts: one JSON file each, in writable app data.
+ *
+ * A file per preset rather than one big document, for the same reasons the texts are
+ * separate files — a preset can be copied to someone, a corrupt one costs you that preset
+ * rather than the whole bank, and the folder is browsable without the app.
+ */
+function presetsDir(): string {
+  return join(app.getPath('userData'), 'presets');
+}
+
+function presetPath(name: string): string {
+  const safe = basename(name).replace(/[^A-Za-z0-9 _-]/g, '').trim();
+  if (safe.length === 0) throw new Error('invalid preset name');
+  return join(presetsDir(), `${safe}.json`);
+}
+
+ipcMain.handle('olib:presets-list', async (): Promise<string[]> => {
+  await mkdir(presetsDir(), { recursive: true });
+  const files = await readdir(presetsDir());
+  return files.filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)).sort();
+});
+
+ipcMain.handle('olib:preset-read', async (_event, name: string): Promise<string> => {
+  return readFile(presetPath(name), 'utf8');
+});
+
+ipcMain.handle('olib:preset-write', async (_event, name: string, content: string) => {
+  await mkdir(presetsDir(), { recursive: true });
+  await writeFile(presetPath(name), content, 'utf8');
+});
+
+ipcMain.handle('olib:preset-delete', async (_event, name: string) => {
+  // `force`, like the text delete: the renderer's list can legitimately be a moment behind
+  // the folder, and deleting something already gone is not a failure.
+  await rm(presetPath(name), { force: true });
+});
+
 ipcMain.handle('olib:texts-list', async (): Promise<string[]> => {
   await mkdir(textsDir(), { recursive: true });
   const files = await readdir(textsDir());

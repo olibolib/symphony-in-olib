@@ -46,6 +46,7 @@ import prologueRaw from '../presets/text/prologue.txt?raw';
 import { Conductor, type Lane } from './show/Conductor';
 import { PresetStore } from './show/PresetStore';
 import type { PresetDoc } from './ipc/protocol';
+import type { VisualPreset } from './show/presets';
 import { PresetBank } from './show/PresetBank';
 import { type EffectContext } from './effects/types';
 import { Channels } from './show/Channels';
@@ -279,11 +280,73 @@ function takePendingText(): boolean {
   return true;
 }
 
+/**
+ * Texts a preset has pinned by name (§11.7), parsed and kept.
+ *
+ * The engine is handed the *active* text and nothing else — editing lives in the control
+ * window (§7.1) — so a preset naming a different text has to fetch it. Read straight from the
+ * folder rather than routed through the other window: it is saved content, which is exactly
+ * what the engine is allowed to see, and it keeps drafts on the side of the boundary they
+ * belong.
+ *
+ * Loaded ahead of time because typesetting is synchronous and happens on a phrase boundary.
+ * Waiting on a file read there would mean a missed phrase.
+ */
+const pinnedTexts = new Map<string, TextPreset>();
+
+/** Names that could not be loaded, so the warning is given once rather than every phrase. */
+const missingTexts = new Set<string>();
+
+async function loadPinnedTexts(): Promise<void> {
+  const wanted = new Set<string>();
+  for (const doc of store.all) {
+    for (const name of doc.texts) if (name !== 'default') wanted.add(name);
+  }
+
+  for (const name of wanted) {
+    if (pinnedTexts.has(name) || missingTexts.has(name)) continue;
+    try {
+      pinnedTexts.set(name, parseText(name, await window.olib.texts.read(name)));
+    } catch {
+      // §11.7: a pinned name will eventually not resolve — a text renamed or deleted outside
+      // the app, or a preset imported from someone else. Say so and fall back; nothing should
+      // vanish because a file was renamed in October.
+      missingTexts.add(name);
+      hud.setStatus(`Text "${name}" is missing — presets using it fall back`, true);
+    }
+  }
+
+  // A text that has come back should stop being treated as missing.
+  for (const name of Array.from(missingTexts)) {
+    if (!wanted.has(name)) missingTexts.delete(name);
+  }
+}
+
+/**
+ * Resolve a preset's text list to one text per block.
+ *
+ * `'default'` is a reference to the menu selection rather than a filename, so it is looked up
+ * fresh each time and keeps following the menu as it changes. Each block rolls independently,
+ * which is what puts two different passages side by side (§11.7).
+ */
+function textsForBlocks(preset: VisualPreset, blocks: number): readonly TextPreset[] {
+  const options = preset.texts.length > 0 ? preset.texts : ['default'];
+
+  const resolve = (name: string): TextPreset =>
+    name === 'default' ? activeText : (pinnedTexts.get(name) ?? activeText);
+
+  const out: TextPreset[] = [];
+  for (let i = 0; i < blocks; i++) {
+    out.push(resolve(options[Math.floor(Math.random() * options.length)] ?? 'default'));
+  }
+  return out;
+}
+
 /** Render the current preset's text selection. */
 function typesetNext(): void {
   const preset = bank.current;
 
-  typesetter.render(activeText, {
+  typesetter.render(textsForBlocks(preset, preset.text.blocks), {
     mode: preset.text.mode,
     splitChars: preset.text.splitChars,
     count: preset.text.count,
@@ -353,6 +416,7 @@ function publishPresets(): void {
     bank.all.map((p) => ({ name: p.name, energy: p.energy, enabled: bank.isEnabled(p.name) })),
   );
   hud.setPresetDocs(store.all);
+  void loadPinnedTexts();
 }
 
 /**
@@ -428,6 +492,27 @@ function retuneLayers(doc: PresetDoc): void {
 publishPresets();
 
 applyPreset();
+
+/**
+ * Load saved presets, then re-apply.
+ *
+ * Started after the first `applyPreset` rather than before it, so the stage has something on
+ * it while the folder is read. A blank canvas during startup is indistinguishable from a
+ * failure to launch.
+ */
+void (async () => {
+  await store.load();
+  bank.replace(store.resolve());
+  await loadPinnedTexts();
+  publishPresets();
+  applyPreset();
+
+  for (const problem of store.problems) hud.setStatus(problem, true);
+})();
+
+// Anything still unsaved when the window goes away would be lost — the debounce is 600ms and
+// closing the app is faster than that.
+window.addEventListener('beforeunload', () => void store.flush());
 
 /** Built fresh each frame so effects always see current levels. */
 function effectContext(): EffectContext {
@@ -595,6 +680,16 @@ hud.onCommand = (command) => {
       }
       break;
     }
+
+    case 'restorePresetDefaults':
+      void (async () => {
+        await store.restoreDefaults();
+        bank.replace(store.resolve());
+        publishPresets();
+        applyPreset();
+        hud.setStatus('Built-in presets restored');
+      })();
+      break;
 
     case 'setPresetEnabled':
       bank.setEnabled(command.name, command.enabled);

@@ -52,6 +52,19 @@ export interface PresetDoc {
     readonly varyBy?: 'word' | 'char';
   };
 
+  /**
+   * Texts this preset may draw from, by **name** (§11.7).
+   *
+   * `'default'` is not a filename — it is a reference to whatever the text menu has
+   * selected, so it keeps following the menu as it changes mid-set. An empty list means the
+   * same thing.
+   *
+   * Names rather than content, and the reason is staleness rather than size: a preset that
+   * embedded the words would keep an old copy after the text was edited, and you would find
+   * that out mid-set staring at a typo you know you fixed.
+   */
+  readonly texts: readonly string[];
+
   readonly spawn: Mask;
   readonly blockShapes: readonly BlockShape[];
   readonly align: Align;
@@ -156,6 +169,8 @@ export type ControlCommand =
   | { readonly type: 'createPreset'; readonly from: string | null }
   | { readonly type: 'deletePreset'; readonly name: string }
   | { readonly type: 'renamePreset'; readonly from: string; readonly to: string }
+  /** Re-seed the presets that ship with the app, leaving anything you made alone (§11.4). */
+  | { readonly type: 'restorePresetDefaults' }
   /**
    * Text editing lives in the control window; the engine only ever receives finished
    * content. Drafts, undo and the editor's own state never cross the boundary.

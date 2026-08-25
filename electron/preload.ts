@@ -78,6 +78,15 @@ const api = {
     remove: (name: string): Promise<void> => ipcRenderer.invoke('olib:text-delete', name),
     import: (): Promise<string | null> => ipcRenderer.invoke('olib:text-import'),
   },
+
+  /** Preset documents, one JSON file each, beside the texts (§11.4). */
+  presets: {
+    list: (): Promise<string[]> => ipcRenderer.invoke('olib:presets-list'),
+    read: (name: string): Promise<string> => ipcRenderer.invoke('olib:preset-read', name),
+    write: (name: string, content: string): Promise<void> =>
+      ipcRenderer.invoke('olib:preset-write', name, content),
+    remove: (name: string): Promise<void> => ipcRenderer.invoke('olib:preset-delete', name),
+  },
 } as const;
 
 export type OlibApi = typeof api;

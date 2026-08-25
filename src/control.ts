@@ -1,4 +1,5 @@
 import './types';
+import type { PresetDoc } from './ipc/protocol';
 import { Hud } from './hud/Hud';
 import { TextBank } from './text/TextBank';
 import prologueRaw from '../presets/text/prologue.txt?raw';
@@ -54,6 +55,7 @@ function render(state: EngineState): void {
   hud.setCrop(state.crop);
   hud.setPalette(state.palette);
   hud.setMask(state.mask);
+  presetDocs = state.docs;
   hud.setPresetDocs(state.docs);
   hud.setBackgroundMode(state.background);
   hud.setDevices(
@@ -179,7 +181,31 @@ hud.onTextCreate = (name) => {
     .catch((error: unknown) => reportTextError('create', error));
 };
 
+/**
+ * Presets that name a text, for delete protection (§11.7).
+ *
+ * Kept from the last state snapshot rather than asked for on demand: the check has to be
+ * instant and it runs at the moment of a click.
+ */
+let presetDocs: readonly PresetDoc[] = [];
+
+function presetsUsing(name: string): readonly string[] {
+  return presetDocs.filter((doc) => doc.texts.includes(name)).map((doc) => doc.name);
+}
+
 hud.onTextDelete = () => {
+  // Refused rather than allowed-with-fallback. Letting the delete through would move the
+  // failure into a live set — a preset quietly showing the wrong words, in the dark. Refusing
+  // here puts it where there is time to think about it, and names what to fix.
+  const used = presetsUsing(editing);
+  if (used.length > 0) {
+    hud.setTextControls({
+      canRevert: texts.canRevert(editing),
+      note: `Cannot delete "${editing}" — contained in preset: ${used.join(', ')}`,
+    });
+    return;
+  }
+
   texts
     .remove(editing)
     .then((next) => {
@@ -232,6 +258,8 @@ hud.editor.onChange = (doc) => window.olib.sendCommand({ type: 'updatePreset', d
 hud.editor.onCreate = (from) => window.olib.sendCommand({ type: 'createPreset', from });
 hud.editor.onDelete = (name) => window.olib.sendCommand({ type: 'deletePreset', name });
 hud.editor.onRename = (from, to) => window.olib.sendCommand({ type: 'renamePreset', from, to });
+hud.editor.onRestoreDefaults = () =>
+  window.olib.sendCommand({ type: 'restorePresetDefaults' });
 hud.onBackgroundChange = (mode) => window.olib.sendCommand({ type: 'setBackground', mode });
 hud.onPresetGo = (name) => window.olib.sendCommand({ type: 'queuePreset', name });
 hud.onPresetToggle = (name, enabled) =>

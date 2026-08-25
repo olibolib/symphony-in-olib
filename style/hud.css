@@ -975,3 +975,20 @@ kbd {
   color: #d9b070;
   font-size: 12px;
 }
+
+/* Texts a preset may draw from (§11.7). A checkbox each, because the set is small and
+   already known — seeing which are ticked at a glance beats being able to reorder a list
+   whose order does not matter, since one is rolled per block. */
+.pe-texts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  min-width: 0;
+}
+
+.pe-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}

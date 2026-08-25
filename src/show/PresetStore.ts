@@ -3,6 +3,7 @@ import type { PresetDoc } from '../ipc/protocol';
 import { colourShift, retext } from '../effects';
 import { FULL } from './mask';
 import type { Bindings } from './Conductor';
+import { parsePreset } from './presetIo';
 import { PRESETS, toDoc, type VisualPreset } from './presets';
 
 /**
@@ -16,8 +17,10 @@ import { PRESETS, toDoc, type VisualPreset } from './presets';
  * worth stating: renaming a preset has to move its effects too, or the preset would keep its
  * layers and quietly lose its ability to change text. {@link rename} does that.
  *
- * Nothing here persists yet. Edits last for the session; saving to disk is 2d, and the shape
- * above is what makes that a file-writing job rather than a design problem.
+ * Documents persist as one JSON file each, beside the texts (§11.3). Built-ins are seeded on
+ * first run from the compiled copies, which is what makes "restore defaults" possible without
+ * keeping a second copy of everything in the list: the compiled version is always there to
+ * seed from again.
  */
 
 interface StageParts {
@@ -48,6 +51,7 @@ const NEW_PRESET_DOC: Omit<PresetDoc, 'name'> = {
     blocks: 1,
     size: { min: 28, max: 34 },
   },
+  texts: ['default'],
   spawn: FULL,
   blockShapes: [{ cols: { min: 3, max: 5 }, rows: { min: 2, max: 3 } }],
   align: 'centre',
@@ -69,6 +73,13 @@ export class PresetStore {
   private docs: PresetDoc[];
   private readonly parts = new Map<string, StageParts>();
 
+  /** Names with unsaved changes, and the timer that will flush them. */
+  private readonly dirty = new Set<string>();
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Reported to the control window after a load. Corrections, never silent (§14). */
+  problems: readonly string[] = [];
+
   constructor() {
     this.docs = PRESETS.map(toDoc);
     for (const preset of PRESETS) {
@@ -77,6 +88,115 @@ export class PresetStore {
         ...(preset.ambient ? { ambient: preset.ambient } : {}),
         ...(preset.minPhrases !== undefined ? { minPhrases: preset.minPhrases } : {}),
       });
+    }
+  }
+
+  /**
+   * Read the folder, seeding it with the built-ins on first run.
+   *
+   * A preset on disk **replaces** its compiled namesake rather than being added alongside:
+   * the built-ins are ordinary presets that happen to ship with the app (§11.4), so an edited
+   * `scatter` is still `scatter`. Its stage effects are already registered under that name,
+   * which is what lets an edited built-in keep working.
+   */
+  async load(): Promise<void> {
+    const problems: string[] = [];
+
+    let names: readonly string[];
+    try {
+      names = await window.olib.presets.list();
+    } catch {
+      // No folder, no permissions, nothing readable. The compiled built-ins are already in
+      // place, so the app runs — it simply will not remember edits until this is fixed.
+      this.problems = ['Could not read the presets folder — edits will not be saved'];
+      return;
+    }
+
+    if (names.length === 0) {
+      await this.seed();
+      return;
+    }
+
+    const loaded: PresetDoc[] = [];
+    for (const name of names) {
+      try {
+        const raw = await window.olib.presets.read(name);
+        const fallback = this.find(name) ?? { ...NEW_PRESET_DOC, name };
+        const result = parsePreset(name, raw, fallback);
+        loaded.push(result.doc);
+        problems.push(...result.problems);
+      } catch {
+        problems.push(`${name}: could not be read, skipped`);
+      }
+    }
+
+    // Never end up with nothing. An empty bank has no way back without a restart, and the
+    // compiled presets are right there.
+    if (loaded.length > 0) this.docs = loaded;
+    else problems.push('No preset loaded, using the built-ins');
+
+    this.problems = problems;
+  }
+
+  /** Write every compiled preset out, so the folder starts as a full, editable set. */
+  private async seed(): Promise<void> {
+    this.docs = PRESETS.map(toDoc);
+    await Promise.all(this.docs.map((doc) => this.write(doc)));
+  }
+
+  /**
+   * Put the built-ins back.
+   *
+   * The safety net that replaces forking (§11.4): because the compiled copies never go away,
+   * a preset can be edited directly and still be recoverable. Only touches presets that ship
+   * with the app — anything you made yourself is left alone, since "restore defaults" should
+   * not be a way to lose your own work.
+   */
+  async restoreDefaults(): Promise<void> {
+    const builtIn = new Set(PRESETS.map((preset) => preset.name));
+
+    this.docs = [
+      ...PRESETS.map(toDoc),
+      ...this.docs.filter((doc) => !builtIn.has(doc.name)),
+    ];
+
+    await Promise.all(PRESETS.map((preset) => this.write(toDoc(preset))));
+  }
+
+  /**
+   * Mark a preset for saving.
+   *
+   * Debounced, because an edit arrives on every frame of a slider drag and each one would
+   * otherwise be a file write. 600ms after you stop moving is invisible to you and turns a
+   * few hundred writes into one.
+   */
+  private touch(name: string): void {
+    this.dirty.add(name);
+    if (this.flushTimer !== null) clearTimeout(this.flushTimer);
+    this.flushTimer = setTimeout(() => void this.flush(), 600);
+  }
+
+  /** Write everything outstanding. Safe to call at any time. */
+  async flush(): Promise<void> {
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+
+    const names = Array.from(this.dirty);
+    this.dirty.clear();
+
+    for (const name of names) {
+      const doc = this.find(name);
+      if (doc) await this.write(doc);
+    }
+  }
+
+  private async write(doc: PresetDoc): Promise<void> {
+    try {
+      await window.olib.presets.write(doc.name, `${JSON.stringify(doc, null, 2)}\n`);
+    } catch {
+      this.problems = [`Could not save "${doc.name}"`];
     }
   }
 
@@ -106,6 +226,7 @@ export class PresetStore {
     const index = this.docs.findIndex((existing) => existing.name === doc.name);
     if (index === -1) return false;
     this.docs[index] = doc;
+    this.touch(doc.name);
     return true;
   }
 
@@ -122,6 +243,7 @@ export class PresetStore {
 
     const doc: PresetDoc = source ? { ...source, name } : { ...NEW_PRESET_DOC, name };
     this.docs.push(doc);
+    this.touch(name);
     return doc;
   }
 
@@ -139,6 +261,8 @@ export class PresetStore {
 
     this.docs.splice(index, 1);
     this.parts.delete(name);
+    this.dirty.delete(name);
+    void window.olib.presets.remove(name);
     return true;
   }
 
@@ -154,9 +278,14 @@ export class PresetStore {
       this.parts.set(name, parts);
     }
 
-    this.update({ ...doc, name });
     const index = this.docs.findIndex((existing) => existing.name === from);
     if (index !== -1) this.docs[index] = { ...doc, name };
+
+    // The old file is not the new file: a rename has to remove one and write the other, or
+    // the folder would accumulate a copy under every name a preset ever had.
+    this.dirty.delete(from);
+    void window.olib.presets.remove(from);
+    this.touch(name);
     return name;
   }
 

@@ -70,6 +70,9 @@ export interface VisualPreset {
     readonly varyBy?: 'word' | 'char';
   };
 
+  /** Texts this preset may draw from, by name. `['default']` follows the menu (§11.7). */
+  readonly texts: readonly string[];
+
   /**
    * Where blocks may anchor (§11.6). Intersected with the VJ's global mask before use, so a
    * preset can only ever be more restricted than the global rule, never less.
@@ -160,6 +163,7 @@ export function toDoc(preset: VisualPreset): PresetDoc {
       size: preset.text.size,
       ...(preset.text.varyBy ? { varyBy: preset.text.varyBy } : {}),
     },
+    texts: preset.texts,
     spawn: preset.spawn,
     blockShapes: preset.blockShapes,
     align: preset.align,
@@ -181,6 +185,7 @@ export const PRESETS: readonly VisualPreset[] = [
     name: 'still',
     energy: 'sparse',
     text: { mode: 'sentence', count: 1, splitChars: true, blocks: 1, size: { min: 36, max: 44 } },
+    texts: ['default'],
     spawn: KEEP_CENTRE_CLEAR,
     // One large statement. Wide rather than tall, because a single sentence set big wants
     // room to breathe across rather than a column to fall down.
@@ -223,6 +228,7 @@ export const PRESETS: readonly VisualPreset[] = [
     name: 'scatter',
     energy: 'mid',
     text: { mode: 'shortSentences', count: 5, splitChars: true, blocks: 2, size: { min: 24, max: 32 } },
+    texts: ['default'],
     spawn: KEEP_CENTRE_CLEAR,
     // A column and a band, so two blocks on stage rarely look like the same thing twice.
     blockShapes: [
@@ -269,6 +275,7 @@ export const PRESETS: readonly VisualPreset[] = [
       // ransom-note type to read as intent rather than as a fault.
       varyBy: 'word',
     },
+    texts: ['default'],
     spawn: KEEP_CENTRE_CLEAR,
     blockShapes: [
       { cols: { min: 3, max: 4 }, rows: { min: 3, max: 5 } },
@@ -310,6 +317,7 @@ export const PRESETS: readonly VisualPreset[] = [
     name: 'drift',
     energy: 'mid',
     text: { mode: 'longSentences', count: 3, splitChars: false, blocks: 1, size: { min: 26, max: 34 } },
+    texts: ['default'],
     spawn: KEEP_CENTRE_CLEAR,
     // A tall column or a wide band, never the square in between — the reason shapes are a
     // list rather than two independent ranges (§11.6).

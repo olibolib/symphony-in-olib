@@ -473,6 +473,8 @@ export class Hud {
 
   /** Rebuild the text sub-tabs. */
   setTextList(names: readonly string[], selected: string): void {
+    // The Presets tab needs the same list, so a preset can pin one (§11.7).
+    this.editor.setTextNames(names);
     const tabs = must(document, '#opt-text-tabs');
     tabs.replaceChildren();
     this.textTabs.clear();
