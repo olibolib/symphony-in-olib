@@ -864,11 +864,15 @@ interface PresetData {
 
   /** Where blocks may anchor, and how big they are (§11.6). */
   spawn: string[];
-  /** In cells. Rolled per block, per typeset. min === max for a fixed shape. */
-  blockSize: {
+  /**
+   * Candidate shapes, in cells. One is chosen per block, per typeset, then
+   * rolled within its ranges. A list rather than a pair so width and height
+   * stay coupled — see §11.6.
+   */
+  blockShapes: {
     cols: { min: number; max: number };
     rows: { min: number; max: number };
-  };
+  }[];
   align: 'left' | 'centre' | 'right' | 'justify';
   flow: 'stack' | 'run-on' | 'grid' | 'wrapped' | 'columns';
 
@@ -926,12 +930,12 @@ Inside the Effects tab, per preset:
 ```
 scatter                                          [live]  [→]
   text     prologue, default                            [edit]
-  spawn    ▓▓▓▓▓▓▓   cols 1 ●──● 3   align left
-           ▓▓▓▓▓▓▓   rows 2 ●────● 5   flow stack
+  spawn    ▓▓▓▓▓▓▓   shapes                        align left
+           ▓▓▓▓▓▓▓     column  cols 1●●1  rows 4●──●7   [x]
+           ▓▓···▓▓     band    cols 5●─●7  rows 1●●2    [x]
+           ▓▓···▓▓     + add shape
            ▓▓···▓▓
-           ▓▓···▓▓
-           ▓▓···▓▓
-           ▓▓▓▓▓▓▓
+           ▓▓▓▓▓▓▓                                   flow stack
            ▓▓▓▓▓▓▓
   layers                                    kick snare hat
     accent    12% of words    ──●─────  1.0   ■    □    □   [x]
@@ -1239,39 +1243,59 @@ sensible line of text where a square cell would be an awkward box.
 
 At 3x3 a cell was a third of the stage, so a block could simply be given one. At 7x7 a cell is
 14% and text in it would be unreadably cramped — so a block is **anchored** at a cell and sized
-separately. The mask says where blocks may start; `blockSize` says how big they are.
+separately. The mask says where blocks may start; `blockShapes` says how big they are.
 
-#### Width and height are ranges, not numbers
+#### Shapes are a list, so width and height stay coupled
 
-Both are given as a min and a max in cells, and rolled per block on every typeset — the same
-treatment base size gets (§11.5), for the same reason: a shape that varies within bounds you
-set is a look, where a fixed one is a setting.
+Width and height are each a min and a max in cells, rolled per block on every typeset — the
+same treatment base size gets (§11.5), for the same reason: a shape that varies within bounds
+you set is a look, where a fixed one is a setting.
+
+But rolling the two axes **independently** does not work. `cols 1–7, rows 1–7` gives a
+rectangle anywhere in the bounding box, so a preset asking for columns and bands will keep
+producing square blobs in between. "Tall or wide, never square" is a constraint two independent
+ranges cannot express, because the whole point is that the choices are *related*.
+
+So a preset holds a **list of candidate shapes**. One is chosen per block, then rolled within
+its own ranges:
 
 ```ts
-blockSize: { cols: { min: 1, max: 1 }, rows: { min: 4, max: 7 } }   // a tall column
-blockSize: { cols: { min: 5, max: 7 }, rows: { min: 1, max: 2 } }   // a wide band
-blockSize: { cols: { min: 2, max: 4 }, rows: { min: 2, max: 4 } }   // varies, roughly square
-blockSize: { cols: { min: 3, max: 3 }, rows: { min: 2, max: 2 } }   // fixed
+blockShapes: [
+  { cols: { min: 1, max: 1 }, rows: { min: 4, max: 7 } },   // a tall column
+  { cols: { min: 5, max: 7 }, rows: { min: 1, max: 2 } },   // a wide band
+]
 ```
 
-The non-square cells matter here and work in our favour. A one-column block seven rows tall is
-about **14% of the frame wide and the full height** — a genuinely narrow vertical column of
-text. A seven-column block one row tall is full width and 14% high — a band. Both are shapes
-the 3x3 grid could not produce at all, because a third of the stage is neither narrow nor
-short.
+Width and height are now picked *together*, as a pair that was authored to make sense. There is
+no blob, because no entry describes one. Weighting is by repetition, the way `LAYOUT_SETS` did
+it — list the column twice to see it twice as often.
 
-**Rolled independently, which is a limitation worth naming.** Wide ranges on both axes give a
-rectangle anywhere in the bounding box, so a preset asking for `cols 1–7, rows 1–7` will
-sometimes produce a square blob rather than the column or band that was wanted. "Either tall or
-wide, never square" is a constraint independent ranges cannot express.
+**This introduces no new concept.** Presets already roll from lists: texts (§11.7), spawn cells,
+and previously the layout set. A single fixed shape is a one-entry list, and `min === max`
+inside it pins the size exactly.
 
-That is deliberate rather than an oversight: the fix is two presets, or a tight range on one
-axis, and both are clearer than an `orientation` mode that would need explaining every time it
-is read. Reconsider only if the blob turns out to be common in practice.
+#### Which also puts different shapes on stage together
+
+With two or three blocks, each draws from the list **independently** — so a tall column and a
+wide band can be on the canvas at the same time, one beside the other. That is a composition the
+3x3 grid could not produce at all, since every block there got a cell of identical size.
+
+Not forced to be distinct. Two blocks may both roll the column, and that is a real look rather
+than a failure — the same reasoning as the text lists (§11.7): random still produces the
+one-each case often enough to show whether it is worth making explicit.
+
+#### Why the shapes are reachable at all
+
+The non-square cells work in our favour here. A one-column block seven rows tall is about **14%
+of the frame wide and its full height** — a genuinely narrow vertical column of text. A
+seven-column block one row tall is full width and 14% high — a band. Neither was reachable on
+the 3x3 grid, because a third of the stage is neither narrow nor short. The shapes did not
+become configurable; they became *possible*.
 
 **Clamped to 1–7, and clipping stays visible.** A tall narrow column holding three sentences
 will overflow, and §12.4.1's rule still applies — the block clips and the count is reported,
-rather than text quietly going missing.
+rather than text quietly going missing. Worth pairing narrow shapes with a smaller `count` in
+the preset's text settings.
 
 **A block may extend past the mask, and that is deliberate.** The alternative — requiring the
 whole block to fit inside allowed cells — means the app searches for somewhere it will fit,
@@ -1975,6 +1999,7 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | `LAYOUT_SETS` and the layout numbers `0..17` | **Dropped** | Eighteen fixed combinations from Acid, each welding typography to placement. Four independent settings that multiply (§11.6) |
 | Embedding text content inside preset files | **Dropped** | Not a size problem — a staleness one. Editing a text would leave stale copies in presets. Reference by name; inline only on export (§11.7) |
 | Letting a referenced text be deleted, with graceful fallback | **Dropped** | Moves the failure into a live set. Refuse the delete and name the presets instead (§11.7) |
+| Rolling block width and height independently | **Dropped** | Produces square blobs between the column and band that were wanted; the axes are related, so they are chosen together from a shape list (§11.6) |
 | Letterboxed, scaled stage | **Dropped** | Resamples text; 1:1 top-left also makes the OBS crop trivial (§13.1) |
 | Onset threshold as `mean × k` | **Dropped** | Cleared constantly by steady-state signal. Use `mean + k × stddev` (§9.2.1) |
 | 0.7s flux history window | **Dropped** | Spans a beat, not a bar; collapses in breakdowns (§9.2.1) |
@@ -2024,7 +2049,7 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | ~~Q18~~ | ~~Does `flicker` belong with the treatments given it is continuous?~~ **Answered: yes** — same authoring, CSS runs the animation | §11.5 |
 | ~~Q19~~ | ~~Region targets?~~ **Answered: no** — replaced by the spawn grid, which was the actual intent | §11.6 |
 | Q20 | Does `flow: 'columns'` need a tunable gap, or is one number enough to recover layout 12's look? | §11.6 |
-| Q23 | Independent width and height ranges cannot say "tall or wide, never square". Does that shape come up often enough to want an orientation setting, or do two presets cover it? | §11.6 |
+| ~~Q23~~ | ~~Independent width and height ranges cannot say "tall or wide, never square".~~ **Answered: a list of candidate shapes**, rolled per block, so the two axes are chosen together as an authored pair | §11.6 |
 | Q21 | With three blocks and three named texts, the list feeds variety (each block draws independently). Should one-each composition be an explicit option, or is random enough? | §11.7 |
 | Q22 | Layout 16 aligned alternate blocks outward. Dropped as a between-blocks relationship the model does not store — does it turn out to matter? | §11.6 |
 
