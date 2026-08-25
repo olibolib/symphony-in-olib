@@ -61,9 +61,13 @@ the user cannot be relied upon to be looking at it, focusing it, or fixing it.
 | **Clock** | Tempo and beat phase. Where "the beat is now" comes from. |
 | **Band** | A frequency range of the spectrum, e.g. 60–120 Hz. |
 | **Lane** | A named event channel — `kick`, `snare`, `hat`, `beat`, `bar`, `phrase`. |
-| **Visual preset** | A bundle: layout, effect bindings, palette, intensity. |
+| **Visual preset** | A bundle: a stack of layers, placement, palette, intensity. |
 | **Text preset** | A prepared body of text plus how it gets selected and displayed. |
-| **Effect** | A named visual operation — `glitchWords`, `newLayout`, `invertBlock`. |
+| **Effect** | A named visual operation. Being split into **target** and **treatment** (§11.5). |
+| **Layer** | One target, one treatment, its triggers and its decay. Presets are stacks of these (§11.5). |
+| **Target** | Which elements a layer touches — a string to match, a proportion or a count of a slice. |
+| **Treatment** | What visually happens to them — `invert`, `accent`, `dingbat`, `swell`. |
+| **Channel** | A CSS property a treatment writes. Layers on different channels compose (§11.5). |
 | **Slot** | An abstract attribute value (`glitch="3"`) whose *appearance* the preset's CSS defines. |
 
 ---
@@ -702,6 +706,8 @@ interface TextPreset {
 }
 
 interface VisualPreset {
+  // As built. §11.4 to §11.7 replace most of this — layers instead of bindings,
+  // a spawn mask instead of `layout`, per-preset texts, decay per layer in bars.
   name: string;
   layout: string;          // → [layout="grid"] on the stage
   columns?: number | 'auto';
@@ -758,12 +764,27 @@ Text presets are plain `.txt` files loaded at runtime.
 
 ### 11.4 Editable presets
 
-**Planned, not built.** Recorded now because it changes what an effect *is*, and the longer
-that goes unwritten the more code assumes the current shape.
+**Planned, not built. Now the highest priority** — see the note below.
 
-The goal: take one of the built-in presets, open it, see the effects bound to each lane, tune
-each one with a slider, add or remove effects, and save the result. Presets become editable
-objects rather than compiled-in constants.
+> **Why this moved up.** Used in a real set on 2026-08-21, with the DJ software on auto and
+> the app left running. It worked: capture held, the beat tracked, the visual ran unattended
+> for the length of the set. The one thing that did not hold up was **the presets themselves**
+> — some were not effective, and there was no way to adjust them without a rebuild.
+>
+> That is the first priority change in this project driven by use rather than by reasoning,
+> and it beat every guess that was ahead of it. MIDI pads and the panel system both dropped
+> below it: hands-on control and a nicer interface are worth less than material that works.
+
+Recorded before it is built because it changes what an effect *is*, and the longer that goes
+unwritten the more code assumes the current shape.
+
+The goal: take one of the built-in presets, open it, see what it is made of, tune each part
+with a slider, add and remove parts, and save the result. Presets become editable objects
+rather than compiled-in constants.
+
+**§11.5 to §11.7 describe what is being made editable**, and they are the larger half of this
+change: effects pulled apart into combinable pieces, placement moved to a spawn grid, and text
+assignable per preset. Reviewed and agreed 2026-08-25.
 
 #### The problem with today's effects
 
@@ -827,10 +848,43 @@ the dispatch path is affected.
 interface PresetData {
   name: string;
   energy: EnergyTag;
-  text: { mode: TextMode; count: number; splitChars: boolean; blocks: 1 | 2 };
-  fontScale: number;
-  lanes: Record<Lane, EffectData[]>;
-  ambient: EffectData[];
+
+  /** Names, not content — see §11.7. Empty means "follow the text menu". */
+  texts: string[];
+
+  text: {
+    slice: Slice;
+    count: number;
+    splitChars: boolean;
+    blocks: 1 | 2 | 3;
+    /** Base size in px, rolled once per typeset (§11.5). */
+    size: { min: number; max: number };
+    varyBy?: Slice;
+  };
+
+  /** Where blocks may anchor, and how big they are (§11.6). */
+  spawn: string[];
+  blockSize: { cols: number; rows: number };
+  align: 'left' | 'centre' | 'right' | 'justify';
+  flow: 'stack' | 'run-on' | 'grid' | 'wrapped' | 'columns';
+
+  /** The Lego. Order matters: later layers sit on top (§11.5). */
+  layers: LayerData[];
+
+  /** Stage-wide: palette, background, pulse, colour movement. */
+  stage: EffectData[];
+}
+
+interface LayerData {
+  treatment: string;
+  target: TargetData;
+  triggers: Partial<Record<Lane, boolean>>;
+  /** Bars to fade. 0 means it stays until re-typeset. */
+  decayBars: number;
+  amount: number;
+  follow?: 'energy' | 'bass';
+  /** Only read by size treatments. */
+  size?: { min: number; max: number };
 }
 
 interface EffectData {
@@ -846,7 +900,8 @@ already has: list, load, edit, apply, revert, save.
 
 **Container effects need the `children` field.** `whenHolding([...])` wraps other effects, and
 a flat list of ids and values cannot express that. Easy to overlook until it is the one thing
-that will not round-trip.
+that will not round-trip. Layers do not need it — a layer is flat by construction, which is
+one of the quieter benefits of the split.
 
 #### Two speeds of change
 
@@ -865,16 +920,25 @@ phrase would make it feel broken. A structural change is a decision, and those l
 Inside the Effects tab, per preset:
 
 ```
-scatter                                    [live]  [→]
-  kick
-    glitchWords    amount  ──●─────  0.05          [x]
-    invertBlock    count   ─────●──  2             [x]
-  snare
-    glitchChars                                    [x]
-  ambient
-    removeGlitches amount  ──●─────  0.06          [x]
-  + add effect
+scatter                                          [live]  [→]
+  text     prologue, default                            [edit]
+  spawn    ▓▓▓▓▓▓▓   block 3x2   align left   flow stack
+           ▓▓▓▓▓▓▓
+           ▓▓···▓▓
+           ▓▓···▓▓
+           ▓▓···▓▓
+           ▓▓▓▓▓▓▓
+           ▓▓▓▓▓▓▓
+  layers                                    kick snare hat
+    accent    12% of words    ──●─────  1.0   ■    □    □   [x]
+    invert    every "e"       ─────●──  1.0   □    ■    □   [x]
+    dingbat   1 word          ──●─────  0.8   □    □    ■   [x]
+    swell     3 words   0.9 ●──────● 1.5      ■    □    □   [x]
+  + add layer
 ```
+
+One row per layer, a dropdown per axis, a slider for amount, a checkbox per trigger, and a
+two-handle range where the treatment takes one. The grid is clickable and drag-selectable.
 
 #### Open risks
 
@@ -914,6 +978,422 @@ what caught six stale text-mode names in an afternoon during Increment 1. Moving
 
 The compiler stops being the only guard; it becomes the first of two.
 
+---
+
+### 11.5 Effects as composable parts
+
+Agreed 2026-08-25, after the set. This is the change that makes presets worth editing: without
+it the editor would only offer sliders on effects that were already the wrong shape.
+
+#### The fault
+
+Every effect today welds two separate decisions together: **which elements** it touches, and
+**what it does** to them.
+
+```ts
+glitchWords({ amount: 0.05 })   // picks 5% of words AND applies a glitch
+glitchChars({})                 // picks every instance of a char AND applies a glitch
+```
+
+Both halves of "invert every instance of the letter e" already exist in the codebase —
+*every instance of a character* lives in `glitchChars`, *invert* lives in `invertBlock` — and
+there is no way to combine them. That is why the presets felt limited in a real set. The knobs
+were not the problem; the fixed pairings were.
+
+#### The axes
+
+A **layer** is one choice on each axis. A **preset** is a stack of layers plus its placement,
+text and stage settings.
+
+| Axis | Options |
+|---|---|
+| Target | everything matching a string · a proportion of a slice · exactly N of a slice · every Nth |
+| Slice | `char` · `word` · `sentence` · `paragraph` · `block` |
+| Treatment | `invert` · `accent` · `dingbat` · `underline` · `strike` · `outline` · `swell` · `flicker` · `blank` |
+| Trigger | `kick` · `snare` · `hat` · `beat` · `bar` · `phrase` · `held` · `always` |
+
+Four targets by nine treatments is thirty-six combinations from thirteen primitives, and most
+of them cannot be expressed today. The point is not that all thirty-six are good — it is that
+you get to find out which ones are.
+
+#### One call shape, for every treatment
+
+The instinct was one `glitch` that dispatches on what you pass it. String versus number works
+— `typeof` separates them. **Integer versus float does not**, because JavaScript has one
+number type: `glitch(1.0)` *is* `glitch(1)`, and the collision lands on exactly the value you
+reach for when you want *all of them*.
+
+So the unit is named rather than encoded in the number's type:
+
+```ts
+apply('invert',  'e')                      // every instance of "e"
+apply('accent',  { word: '5%' })           // 5% of words
+apply('dingbat', { char: '5%' })           // 5% of characters
+apply('swell',   { sentence: 1 })          // exactly one sentence
+```
+
+A proportion is a **percentage string**, a count is a **number**. No edge case at any value,
+and it serialises straight to JSON, which saving requires anyway. The sugar normalises to the
+stored `TargetData` form — `{ word: '5%' }` becomes `{ slice: 'word', proportion: 0.05 }`.
+
+> Worth remembering who authors these: presets are built from dropdowns and sliders, not typed
+> as function calls. The signature only needs to be good enough for the built-ins defined in
+> TypeScript. Optimising call syntax at the cost of an ambiguity would trade the important
+> thing for the unimportant one.
+
+#### Channels, so several treatments share one element
+
+Today an element is **one thing at a time** — a single `data-glitch` attribute, so whichever
+layer runs last wins. That is a large part of why the presets read flat.
+
+A treatment instead declares which **channels** it writes, and a channel is *a CSS property
+being contended for*. Treatments touching different properties compose freely; only a literal
+same-property collision resolves, and there the later layer wins.
+
+| Treatment | Channels |
+|---|---|
+| `invert` | `bg` + `fg` |
+| `accent` | `fg` |
+| `dingbat` | `font` |
+| `underline` / `strike` | `deco` |
+| `outline` | `outline` |
+| `swell` | `size` |
+| `flicker` | `anim` |
+| `blank` | `vis` |
+
+```html
+<!-- four layers landed on this word, all of them visible -->
+<w data-bg="invert" data-fg="accent" data-deco="underline" data-size="swell">
+```
+
+**Because channels follow CSS properties rather than treatment names, `invert` and `accent`
+compose.** Invert writes `bg` and `fg`; a later accent overwrites only `fg`. The result is a
+black block with accent-coloured text — not currently reachable at all, and it falls out of
+the model rather than being a special case.
+
+#### Ownership, so decay does not clear what it no longer owns
+
+Per-layer decay means each layer clears its own elements at its own rate. But a layer may have
+been overwritten since it tagged something, and must not then clear a value belonging to
+someone else. So each channel records who set it:
+
+```html
+<w data-fg="accent" data-fg-by="4">
+```
+
+Layer 4's decay only clears elements where `data-fg-by` is still `4`. If a later layer has
+taken that channel, layer 4 finds it is no longer the owner, drops the element from its own
+set, and leaves the attribute alone.
+
+**The ownership lives on the element, not in a map.** The DOM is replaced wholesale on every
+re-typeset, and a central registry would need invalidating each time; attributes vanish with
+the elements that carried them. Self-healing, and the decay loop stays proportional to what is
+actually lit.
+
+#### Four beats is the unit for everything the audience sees
+
+> **Anything visible is measured in bars. Anything the DSP does stays in seconds.**
+
+| Measured in bars | Stays in seconds |
+|---|---|
+| Motion speed — fractions of the box per 4 beats | Onset refractory (~110ms) |
+| Layer decay | Flux history window (3s) |
+| Flicker rate | Correlation envelope (8s) |
+| Pulse | Tempo re-estimate interval |
+| Preset cycling, text holds | Status message timeouts |
+
+The line is not arbitrary. The DSP measures *physical* properties — a drum transient is about
+a tenth of a second whatever the tempo, and a correlation window needs a fixed span of signal
+to work on. Tying those to the grid would make the detector change behaviour with the music it
+is trying to detect, which is circular.
+
+Everything above the grid should re-time itself when you change record. A fade that takes a
+bar takes a bar at 128 and at 174.
+
+**This also fixes a bug that is in the code now.** Decay currently clears a fixed fraction of
+lit elements *per frame*, so it runs twice as fast at 60fps as at 30 — the visual quietly
+changes character when the machine gets busy. Expressed in bars it becomes both tempo-relative
+and frame-rate independent, because the per-frame probability is derived from elapsed time
+rather than assumed: `p = 1 - (1 - f) ^ (dt / barSeconds)`.
+
+#### Size, in two kinds
+
+Every other treatment is a switch — a word is inverted or it is not. Size is a *quantity*, and
+an unbounded quantity driven by live audio will eventually find a value that ruins the frame.
+
+**Reactive size** is the `swell` treatment, and it carries a range:
+
+```ts
+{ treatment: 'swell', target: { slice: 'word', proportion: 0.1 },
+  size: { min: 0.7, max: 1.6 }, follow: 'bass' }
+```
+
+Both ends earn their place. The maximum stops a word overrunning the block; the minimum stops
+it shrinking past legibility on a projector at the back of the room. The range is also what
+makes `follow` mean anything — quiet sits at `min`, a peak reaches `max`.
+
+**Base size** is not a layer. It is how big the text is, and it should not need a trigger or a
+decay to set it. It lives on `text`, is rolled once at typeset and never touched again:
+
+```ts
+size: { min: 40, max: 40 }                    // uniform, as `fontScale` is now
+size: { min: 28, max: 52 }, varyBy: 'word'    // every word its own size
+size: { min: 28, max: 52 }, varyBy: 'char'    // ransom-note
+```
+
+Without `varyBy` the block picks one size and everything matches; with it, each word or
+character rolls its own.
+
+#### Which settles reflow
+
+| | Mechanism | Reflows? | When |
+|---|---|---|---|
+| Base size | `font-size` | Yes — and that is correct | Once, at typeset |
+| Reactive swell | `transform: scale()` | No | On triggers, many times a bar |
+
+Base size *should* reflow: uneven word sizes need the line to re-wrap around them or the text
+overlaps itself, and it happens once so the cost is invisible. Reactive swell must not, because
+re-wrapping a paragraph several times a bar reads as broken rather than as an effect.
+
+They compose in that order: `font-size` sets the element's real box, `transform` scales what is
+already there without disturbing the layout around it. Inline elements need
+`display: inline-block` to accept a transform at all, which `<w>` and `<c>` can simply carry.
+
+#### Decided
+
+- **Fine-grained channels**, following CSS properties rather than treatment names.
+- **Soft limit on layers, with a warning** — never a hard cap, since it would eventually block
+  a look that ran fine. The FPS readout (`#r-fps`) already exists and gains thresholds. The
+  warning is based on *elements touched per second*, not layer count: four layers on 30% of
+  characters is far heavier than ten on one word each, and a preset knows that number before it
+  renders a frame.
+- **`flicker` stays a treatment**, authored identically to the rest even though it works
+  differently underneath: applying it sets the `anim` channel and CSS runs the animation, so
+  the engine writes one attribute and does nothing per frame. Its rate is in bars — a flicker
+  on every eighth sits in the track, one at a fixed 12Hz drifts against it and reads as a
+  broken monitor.
+- **Per-element motion stays out.** Moving a block is one transform; making individual words
+  drift is one per element, and at a few thousand elements that is where the frame rate goes.
+  `swell` is not an exception — a transform applied once and left to decay is not per-frame
+  animation.
+- **The built-ins are ported as they are**, then adjusted from the UI. Redesigning them blind
+  is guessing twice, and it keeps the port honest: if a rebuilt preset looks different from the
+  current one, the layer engine is wrong, and that is much easier to find while there is still
+  something to compare against.
+
+#### Rejected
+
+**Region targets** — `{ slice, where: 'left-half' }`, selecting elements by where they sit in
+the frame. Dropped in favour of §11.6, which controls where text *appears* rather than sorting
+words by where they landed. Regions needed a layout measurement pass, a position cache with an
+invalidation rule, and motion-offset tracking to survive the conveyor; the spawn grid needs
+none of that and was what was actually wanted.
+
+---
+
+### 11.6 Placement: the spawn grid
+
+Supersedes §12.4 and §12.4.1.
+
+Placement today is already a grid — a 3x3 with the middle cell removed (`BLOCK_CELLS` in
+`Typesetter.ts`). "Avoid the centre" is not a rule in the code; it is one cell missing from a
+list. So this is not a new mechanism. It is a finer grid, and letting each preset carry its own
+list.
+
+#### The mask
+
+A **7x7 grid**, written as rows of characters so the file shows you the shape:
+
+```
+spawn: [           spawn: [           spawn: [
+  "#######",         "#######",         "..###..",
+  "#######",         "#.....#",         "..###..",
+  "##...##",         "#.....#",         "..###..",
+  "##...##",         "#.....#",         "..###..",
+  "##...##",         "#.....#",         "..###..",
+  "#######",         "#.....#",         "..###..",
+  "#######",         "#######",         "..###..",
+]                  ]                  ]
+  keep the middle    edges only         a centre column
+  clear — as now                        — not possible today
+```
+
+Readable without a tool and it diffs sensibly in git, neither of which is true of coordinates
+or a packed bitfield.
+
+**7x7 rather than 5x5.** Odd is required either way — an even grid has no centre cell, and
+"keep off the middle" is the one thing this must express well. At 5x5, excluding the middle 3x3
+leaves text only on the outermost ring, hard against the frame edge with nowhere else to go. At
+7x7 the same exclusion leaves two rings, so you can be clear of the middle *and* off the very
+edge, which is the arrangement that actually looks composed.
+
+The cells are not square — on a 16:9 canvas a 7x7 cell is about 2.3 times wider than tall. That
+is the right grain: text blocks are wider than they are tall too, so a one-cell-tall strip is a
+sensible line of text where a square cell would be an awkward box.
+
+#### A cell is an anchor, not a container
+
+At 3x3 a cell was a third of the stage, so a block could simply be given one. At 7x7 a cell is
+14% and text in it would be unreadably cramped — so a block is **anchored** at a cell and sized
+separately. The mask says where blocks may start; `blockSize` says how big they are.
+
+**A block may extend past the mask, and that is deliberate.** The alternative — requiring the
+whole block to fit inside allowed cells — means the app searches for somewhere it will fit,
+silently shrinks it, or refuses to place it. All three are the app second-guessing a decision
+already made. If a block anchored next to the centre is sized large enough to cover the centre,
+that is an authoring choice with a visible result, and the fix is to change the number.
+
+It is also much less machinery: pick an allowed cell, place a block of the stated size. No
+rectangle search, no fit test, no fallback path — which is worth something on its own, because
+those are exactly the paths that go wrong at 1am.
+
+**Position clamps to the canvas; size never does.** Overflowing into the middle of the frame is
+a look you chose. Overflowing off the *edge* is different — text nobody can see reads as a
+fault rather than a decision. So a block that would run off the edge is shifted back until it
+fits, keeping every pixel of the size it was given.
+
+#### Two masks, intersected
+
+```
+effective = globalMask & presetMask
+```
+
+The **global mask** is the VJ's, set once at the start of the night in the canvas tab and
+applying to everything — tonight there is a logo bottom-right and nothing should start there.
+The **preset mask** is the preset's own composition. A preset can only ever be *more* restricted
+than the global rule, never less, so a preset built weeks ago and forgotten cannot start
+somewhere ruled out.
+
+**It restricts anchors, so it is a strong default rather than a guarantee.** With anchor
+semantics a large enough block can still reach into an excluded cell. That is the right trade
+for an authoring tool, but if a hard "never draw here" is ever needed, this is not it — it
+would have to be a clip.
+
+**If the intersection is empty the preset is skipped for that cycle, and says so.** That is the
+one case with no judgement in it: no allowed cell means nowhere to anchor, and §14 says it must
+be visible rather than silent.
+
+#### The layout table is deleted
+
+`LAYOUT_SETS`, `LayoutSetName` and the numbers `0..17` all go. Not migrated, not partly kept.
+They are eighteen fixed combinations inherited from Acid, and each one welds together things
+this section exists to pull apart: layout 4 is *320% type, tight tracking and line-height 0.82*
+as a single indivisible unit; layout 6 is *a six-column outlined grid at 84%*. You cannot have
+the grid at a different size, or the tracking without the size. Same fault as `glitchWords`,
+same answer.
+
+| Old layouts | What they were | Where that lives now |
+|---|---|---|
+| 1, 2, 3, 4, 8 | Font size 82–320%, tracking, line-height, italic, alignment | Base size (§11.5) plus `align` |
+| 10, 11, 13, 14, 15, 16, 17 | Bands, rails, and the 3x3 block grids | The spawn grid — anchor plus size |
+| 5, 6, 7 | Flex-wrap, six-column outlined grid, paragraphs run together | `flow` — the one genuinely new piece |
+| 12 | One text flowing through two rails | `flow: 'columns'` on a full-width block |
+
+```ts
+block: {
+  anchor: /* a cell from the mask */,
+  size:   { cols: 3, rows: 2 },
+  align:  'left' | 'centre' | 'right' | 'justify',
+  flow:   'stack' | 'run-on' | 'grid' | 'wrapped' | 'columns',
+}
+```
+
+**Four independent settings replace eighteen fixed ones, and they multiply instead of listing.**
+Nothing has to be added to a table to get the six-column grid at 300% type in a corner, because
+there is no table.
+
+*Lost:* layout 16's alternating alignment — `.block:nth-child(odd) { text-align: right }`, so
+corner blocks face outward. That is a relationship between blocks and nothing here stores it.
+Small, and worth losing rather than distorting the model; per-block `align` means two blocks can
+be given opposite values by hand if it turns out to matter.
+
+**§12.4.2's size floor survives unchanged.** Nothing renders below about 76% of the base size,
+for the reasons given there — it is a legibility rule, not a layout one.
+
+---
+
+### 11.7 Text assigned per preset
+
+A preset currently renders whatever the text menu has selected. But some looks are written for
+particular words — a preset built around the Prologue is not the same preset with a different
+message poured into it. So a preset carries **a list** of texts it may draw from:
+
+```ts
+texts: ['default']                             // follows the text menu — as now
+texts: ['prologue']                            // always the Prologue
+texts: ['prologue', 'tractatus', 'ampersand']  // one of these, per typeset
+texts: ['default', 'prologue']                 // the selection, or the Prologue
+```
+
+`'default'` is not a filename — it is a *reference to the selection*, so it keeps following the
+menu as it changes mid-set. Every preset that exists takes `['default']` and behaves as it does
+now; an empty list means the same thing.
+
+Mixing `'default'` with named texts falls out for free and is more useful than it looks:
+`['default', 'prologue']` means a preset mostly shows the current selection but drops into the
+Prologue every other typeset — recurring words threaded through changing ones, which is a
+structural effect rather than a visual one.
+
+#### Names, not content
+
+Storage size is not the concern. The Prologue is 58 lines, about 2KB; twenty presets each naming
+five texts is a few kilobytes of JSON, which next to a single icon is nothing.
+
+**The reason to store names rather than copy the words in is staleness.** If a preset embeds the
+Prologue and a typo is then fixed in the text tab, the preset keeps the old copy — and that gets
+discovered during a set, staring at a mistake known to be corrected. A name is a live reference:
+edit once, everything using it follows.
+
+The one case for embedding is sharing, and it is an export concern rather than a storage one. A
+preset sent to someone else is useless if it names texts they do not have, so the saved format
+references by name and an export can inline what it needs.
+
+#### A referenced text cannot be deleted
+
+Deleting a text that presets refer to is refused, with the reason:
+
+```
+Cannot delete "prologue" — contained in preset: swarm, drift
+```
+
+**Decided in preference to a dangling-reference fallback.** The alternative was to allow the
+delete and let presets degrade gracefully, but that is a worse trade: the failure would surface
+mid-set, in the dark, as a preset quietly showing the wrong words. Refusing at the point of
+deletion puts the problem where there is time to think about it, and the message says exactly
+which presets to fix.
+
+Rename is the same class of problem and should follow references rather than break them —
+renaming a text updates every preset that names it, since the intent is obviously to keep the
+association.
+
+#### Still required, since references can rot anyway
+
+A saved preset can name a text that no longer exists — a preset imported from elsewhere, or a
+file removed outside the app. So loading still has to cope: drop unresolvable names, use the
+rest, and say so in the status line. If nothing in the list resolves, fall back to the
+selection. Nothing should vanish because a file was renamed in October.
+
+#### Three rules
+
+- **An override must be visible.** Changing the text and seeing nothing happen is
+  indistinguishable from a broken Apply. The readout shows the text actually on stage and marks
+  it as the preset's choice rather than the user's — the value is already in
+  `EngineState.liveText`, it needs a flag beside it.
+- **It lands on a phrase boundary.** Text changes are already queued rather than applied
+  instantly (§11.2), because swapping mid-phrase reads as a fault. A preset carrying its own
+  texts makes a preset change *also* a text change, and both already go through that boundary.
+- **The pin is applied on top of the selection, never written into it.** Otherwise cycling
+  through a pinned preset would permanently swallow the user's choice. When the preset cycles
+  away, the menu selection is still there because it was never changed.
+
+With several blocks on stage the list feeds **variety, not composition**: each block draws from
+the list independently, which is the existing behaviour extended rather than a new rule. Three
+blocks and three named texts will sometimes give one each, and that is the way to find out
+whether one-each is worth making explicit.
+
+
+---
+
 ## 12. Effect vocabulary
 
 Taken from Acid, which is the agreed basis for the MVP.
@@ -927,17 +1407,25 @@ that `glitch="3"` is blue and underlined, or yellow on blue, or a dingbat substi
 So wildly different presets need no new JavaScript at all. They redefine the slots. All the
 engine does is decide *which elements* get *which slot*, and when.
 
-### 12.2 Element effects
+### 12.2 Element effects — **being split by §11.5**
 
-| Effect | Behaviour |
-|---|---|
-| `glitchChars` | Picks a character — every "e" — and slots every instance at once. Reads as systematic corruption rather than noise. |
-| `glitchWords` | Slots a proportion of words. |
-| `glitchParagraphs` | Slots whole paragraphs together. |
-| `removeGlitches` | Decays slots back to 0 over time. Runs continuously; rate is a preset parameter. |
-| `decor` | Second slot, for underlines and accents, independent of `glitch`. |
-| `invertBlock` | The `.selected` inversion — black block, white text. |
-| `swell` | Animates `min-width` / `min-height` with a CSS transition so elements grow and shove the layout around. |
+As built. Each row is a target and a treatment fused together, which is precisely what §11.5
+separates — the left column becomes a *combination* a preset can express rather than a function
+that has to exist.
+
+| Effect | Behaviour | Becomes |
+|---|---|---|
+| `glitchChars` | Picks a character — every "e" — and slots every instance at once | target `{ match: 'e' }` |
+| `glitchWords` | Slots a proportion of words | target `{ word: '5%' }` |
+| `glitchParagraphs` | Slots whole paragraphs together | target `{ paragraph: 1 }` |
+| `decor` | Second slot, for underlines and accents, independent of `glitch` | treatments `underline` / `strike` / `outline` |
+| `invertBlock` | The `.selected` inversion — black block, white text | treatment `invert` |
+| `swell` | Animates `min-width` / `min-height` so elements grow and shove the layout around | treatment `swell`, bounded and using `transform` (§11.5) |
+| `removeGlitches` | Decays slots back to 0 over time, at one rate for everything | **deleted** — decay is per-layer and measured in bars |
+
+Three targets by seven treatments is what the four rows above cannot reach: there is no way to
+say "invert every instance of the letter e", because *every instance of a character* is trapped
+in `glitchChars` and *invert* is trapped in `invertBlock`.
 
 Dropped from Acid: `addLink`, which turned words into Google search links. Unclickable on a
 projector.
@@ -975,8 +1463,13 @@ functions that is five lines; as classes it needs a `CompositeEffect` type and a
 
 **This stops working the moment effects need to be data.** A closure cannot report its own
 name or parameters, so no UI can be generated for it and no preset containing one can be
-written to a file. §11.4 sets out what replaces this, and why the migration is a layer in
-front rather than a rewrite: the bodies stay, they gain a definition describing them.
+written to a file. §11.4 sets out what replaces this.
+
+**It stops working a second time for a different reason**, and that one is not about
+serialisation: a closure that picks its own targets cannot have those targets changed. `glitchWords`
+is 5% of words *and* a glitch, permanently. §11.5 splits that into a target and a treatment, which
+is why the element effects below become a shorter list of treatments rather than a longer list of
+functions — the combinations move out of the vocabulary and into the preset.
 
 ### 12.3 Text selection modes
 
@@ -1004,40 +1497,42 @@ rather than truncation, because nothing is obviously missing.
 Plus `splitChars`, deciding whether each glyph is its own element — which governs whether
 character-level effects are even possible, and has real performance consequences (§14).
 
-### 12.4 Layout effects
+### 12.4 Layout effects — **superseded by §11.6**
+
+The `layout` slot, `LAYOUT_SETS`, `LayoutSetName` and the numbers `0..17` are replaced by the
+spawn grid. What each layout actually did, and where that behaviour lives now, is tabulated in
+§11.6; the short version is that most of the table was typography wearing a placement name.
+
+These stage effects survive unchanged, because they were never coupled to placement:
 
 | Effect | Behaviour |
 |---|---|
-| `newLayout` | Changes the `layout` slot on the stage — the main look switch |
 | `columns` | CSS multi-column, 1–6 |
-| `cellGrid` | Grid of bordered cells |
-| `flexWrap` | Wrapped paragraphs with animated widths |
-| `fontScale` | 25% to 800% |
 | `borders` | `borders` slot, 0–4 |
 | `scroll` | Auto-scroll at variable speed |
 | `background` | Stage background colour change |
 | `colourWave` | Rotates the colour-slot variables so colour moves through the text (§12.5) |
 
-### 12.4.1 Text blocks
+**Deleted with the table:** `newLayout`, which picked from it, and `fontScale`, which is now a
+text setting with a min and max rather than a stage effect (§11.5).
 
-Up to **two** independent text regions at once, each with its own selection, so they show
-different text rather than repeating.
+### 12.4.1 Text blocks — **superseded by §11.6**
 
-**`count` is a total across blocks, not per block.** Passing the full count to each was a
-bug: two blocks asking for four sentences produced eight, crammed into cells a third of the
-stage wide, where the surplus was silently clipped and simply looked like missing text.
+Blocks themselves stay; where they go changes. Two things stated here are still true and are
+carried forward rather than replaced:
 
-Blocks are assigned **distinct cells of a 3x3 grid**, which makes non-overlap true by
-construction. Positioning them freely and checking for collisions would fail exactly when
-the text is longest, which is when it matters.
+**`count` is a total across blocks, not per block.** Passing the full count to each was a bug:
+two blocks asking for four sentences produced eight, crammed into cells a third of the stage
+wide, where the surplus was silently clipped and simply looked like missing text.
 
-**The centre cell is never used.** Composited output usually has its subject there — a logo,
-a visualiser's focal point — and text landing on it is the fastest way to spoil the frame.
-The middle row and column are also the *smallest*: the centre only needs to stay clear,
-whereas the edge cells need room for text.
+**Blocks must clip.** §14 says nothing should be lost silently, so the count of clipped blocks
+is reported to the control window.
 
-In non-grid layouts the grid placement is simply ignored and blocks stack, so the feature
-costs nothing where it does not apply.
+*No longer true:* that blocks occupy distinct cells of a 3x3 grid, and therefore that non-overlap
+is guaranteed by construction. Anchor semantics (§11.6) allow two blocks to overlap if they are
+anchored close together and sized large. That is the accepted cost of the VJ choosing the size:
+the guarantee was a consequence of one-block-per-cell, and one-block-per-cell is what a 7x7 grid
+gives up.
 
 ### 12.4.2 Size floor
 
@@ -1352,46 +1847,60 @@ works, and Increment 2 is where it gets good.
 Removed two workarounds that only existed because the windows were welded together: the
 transparent gap, and the fixed window height. OBS no longer needs a crop at all.
 
-### Increment 2 — detection hardening
+### Increment 2 — modular presets
+
+Branch `modular-presets`. The change that makes the tool configurable rather than merely
+usable, and a prerequisite for mapping MIDI to anything finer than a whole preset.
+
+Larger than it first looked, because the set did not ask for sliders on the existing effects —
+it asked for effects that were worth having sliders on. §11.5 to §11.7 are the design.
+
+Staged so each step is usable on its own:
+
+- **2a — the layer engine.** Targets, treatments, triggers and channels (§11.5). Built-ins
+  ported unchanged so the port can be checked against what they look like now. Decay moves to
+  per-layer and to bars, which fixes the frame-rate dependence.
+- **2b — the spawn grid.** 7x7 mask, anchor plus size, global mask in the canvas tab
+  (§11.6). Deletes `LAYOUT_SETS` and the layout slot.
+- **2c — live editing.** The Effects tab generates a control per parameter; layers added,
+  removed and reordered. No serialisation needed yet, and this is the point where the tool
+  starts paying for itself.
+- **2d — saving.** Presets become JSON alongside the texts, with validation on load, plus
+  per-preset text lists and delete protection (§11.7).
+
+### Increment 3 — detection hardening
 
 Confidence scoring, octave correction, faster re-lock on track change, downbeat and phrase
 heuristics, behaviour through breakdowns and silence.
 
-### Increment 3 — palettes
+### Increment 4 — palettes
 
 Palette presets with roles (text, background, accent), selectable, optionally shifting with
 energy.
 
-### Increment 4 — energy and structure
+### Increment 5 — energy and structure
 
 Breakdown, drop and build detection from low-band energy (§10.1), driving preset changes and
 intensity so the visual responds to arrangement rather than just pulse. Activates the `energy`
 tags already present on presets.
 
-### Increment 5 — MIDI pads
+### Increment 6 — MIDI pads
 
 Web MIDI for preset switching from a controller — the only control surface that works while
 the window is unfocused.
 
-### Increment 6 — Spout output — **done**
+### Spout output — **done**
 
 Achieved with an OBS per-source Spout filter rather than a native sender (§13.4). No code
 was needed. The native route is documented with its costs in case the plugin path ever
 proves insufficient; it has not.
 
-### Increment 7 — editable presets
-
-Effects become classes with declared parameters; presets become JSON, edited in the HUD with
-a slider per parameter and saved alongside the texts (§11.4). This is the change that makes
-the tool configurable rather than merely usable, and it is a prerequisite for mapping MIDI to
-anything finer than a whole preset.
-
-### Increment 8 — three.js layer
+### Increment 7 — three.js layer
 
 WebGL background plus the per-glyph sampler: a live shader colouring text, generalising
 Acid's video-sampling trick.
 
-### Increment 9+ — ongoing
+### Increment 8+ — ongoing
 
 Text preset manager, effect library expansion, transparent output, perf work, and possibly
 Ableton Link via a native module for exact sync on rekordbox and Serato.
@@ -1421,6 +1930,15 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Per-glyph colour via inline styles | **Dropped** | It's the §14 layout-thrash bug. Colour slots + CSS variables instead |
 | Legacy `chromeMediaSource: 'desktop'` capture | **Dropped** | Audio-only form is a malformed IPC; terminates the renderer (§8.1) |
 | Requesting a video track for loopback audio | **Dropped** | WGC fails `E_ACCESSDENIED` and takes the audio with it (§8.1) |
+| Effects that pick their own targets | **Dropped** | `glitchWords` is a target welded to a treatment; the pairings, not the knobs, were what limited the presets (§11.5) |
+| `Number.isInteger` to tell a proportion from a count | **Dropped** | One number type: `1.0` *is* `1`, and the collision lands on "all of them". Percentage strings instead (§11.5) |
+| One `data-glitch` attribute per element | **Dropped** | Last layer wins, so effects cannot stack. Channels named after CSS properties instead (§11.5) |
+| Decay as a single ambient effect | **Dropped** | One rate for everything; also frame-rate dependent. Per-layer, measured in bars (§11.5) |
+| Region targets — select elements by where they sit | **Dropped** | Needs a layout pass, a position cache and motion-offset tracking. The spawn grid controls where text *appears* instead (§11.6) |
+| Spawn mask as permitted area — block must fit inside | **Dropped** | Forces the app to search, shrink or refuse; all three second-guess a size the VJ chose. Anchors, and overflow is on the author (§11.6) |
+| `LAYOUT_SETS` and the layout numbers `0..17` | **Dropped** | Eighteen fixed combinations from Acid, each welding typography to placement. Four independent settings that multiply (§11.6) |
+| Embedding text content inside preset files | **Dropped** | Not a size problem — a staleness one. Editing a text would leave stale copies in presets. Reference by name; inline only on export (§11.7) |
+| Letting a referenced text be deleted, with graceful fallback | **Dropped** | Moves the failure into a live set. Refuse the delete and name the presets instead (§11.7) |
 | Letterboxed, scaled stage | **Dropped** | Resamples text; 1:1 top-left also makes the OBS crop trivial (§13.1) |
 | Onset threshold as `mean × k` | **Dropped** | Cleared constantly by steady-state signal. Use `mean + k × stddev` (§9.2.1) |
 | 0.7s flux history window | **Dropped** | Spans a beat, not a bar; collapses in breakdowns (§9.2.1) |
@@ -1455,20 +1973,33 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 |---|---|---|
 | Q1 | Auto-reconnect to a returning audio device, or wait for the user? | §8 |
 | Q2 | How aggressively should auto-detect resume after a tap? Worth a "hold manual" toggle? | §9.4 |
-| Q4 | Text presets: bundled fixed set, or a user folder the app scans? | §11.3 |
+| ~~Q4~~ | ~~Bundled set or a user folder?~~ **Answered: a folder the app scans**, in writable app data, seeded on first run. Built with create, import, edit, revert and delete | §11.3 |
 | Q7 | What is the app actually called? "Symphony in Olib" is a placeholder. | — |
 | ~~Q8~~ | ~~Three visual presets in the MVP?~~ **Answered: four.** `still` (sparse, one large sentence, almost motionless), `scatter` (mid, two blocks, the workhorse), `swarm` (peak, dense and character-level), `drift` (mid, long sentences, scrolling) | §11 |
 | Q9 | Are the snare (2.0) and hat (2.2) sensitivity defaults as eager as kick was? If they also want ~4, that is a systematic scaling error, not three numbers | §9.2.1 |
 | Q10 | Tempo reads a few percent low and the cause is not yet found. Deferred as good enough for visuals — revisit with a correlation-curve plot before changing the algorithm again | §9.2.3 |
-| Q11 | Block count is currently random 1–2 per re-typeset. Should it correlate with something — energy, or the layout in use — rather than being arbitrary? | §12.4.1 |
+| Q11 | Block count is currently random 1–2 per re-typeset. Should it correlate with something — energy, for instance — rather than being arbitrary? | §11.6 |
 | Q12 | Are `longSentences` (up to 27 words) too dense at the new size floor, especially two blocks at once? | §12.4.2 |
 | Q13 | Pulse amounts are guesses (0.012–0.022). Worth tuning against a projector rather than a monitor — apparent scale changes with viewing distance | §12.2.1 |
 | ~~Q14~~ | ~~Fork on editing a built-in?~~ **Answered: no fork.** Built-ins are editable directly; "Restore defaults" re-seeds them | §11.4 |
 | ~~Q15~~ | ~~Do built-ins stay compiled?~~ **Answered: no.** Everything becomes data, for consistency. Type safety comes from `as const` definitions plus validation on load | §11.4 |
+| ~~Q16~~ | ~~How do two layers on one element resolve?~~ **Answered: fine-grained channels** named after CSS properties. Different properties compose; same property, later wins | §11.5 |
+| ~~Q17~~ | ~~Cap the number of layers?~~ **Answered: soft limit and a warning**, keyed to elements-touched-per-second rather than layer count. Never a hard cap | §11.5 |
+| ~~Q18~~ | ~~Does `flicker` belong with the treatments given it is continuous?~~ **Answered: yes** — same authoring, CSS runs the animation | §11.5 |
+| ~~Q19~~ | ~~Region targets?~~ **Answered: no** — replaced by the spawn grid, which was the actual intent | §11.6 |
+| Q20 | Does `flow: 'columns'` need a tunable gap, or is one number enough to recover layout 12's look? | §11.6 |
+| Q21 | With three blocks and three named texts, the list feeds variety (each block draws independently). Should one-each composition be an explicit option, or is random enough? | §11.7 |
+| Q22 | Layout 16 aligned alternate blocks outward. Dropped as a between-blocks relationship the model does not store — does it turn out to matter? | §11.6 |
 
 **Answered:** stage defaults to 1280×720 (Q5). Black on white (Q6). Preset cycling is a
 randomised 16–32 bars on phrase boundaries, with structure overrides deferred to Increment 4
 (Q3).
 
-**Needs verification:** whether OBS window capture preserves the alpha channel from a
-transparent Electron window (§13.3).
+**Verified 2026-08-21:** OBS window capture **does** preserve the alpha channel from a
+transparent Electron window. Tested with a colour source beneath the canvas source in the
+scene — the colour shows through where the stage is transparent. This is what justifies the
+canvas window being frameless, since Windows requires frameless for transparency (§13.3).
+
+Note the test has to be a layer *below it in the OBS scene*, not a window physically behind
+it on the desktop: window capture grabs the window's own pixels, so what is behind it on
+screen is never part of the capture either way.
