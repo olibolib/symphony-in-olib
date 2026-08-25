@@ -291,6 +291,7 @@ function typesetNext(): void {
     shapes: preset.blockShapes,
     align: preset.align,
     flow: preset.flow,
+    avoidOverlap: preset.avoidOverlap,
     size: preset.text.size,
     ...(preset.text.varyBy ? { varyBy: preset.text.varyBy } : {}),
   });

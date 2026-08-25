@@ -1340,6 +1340,35 @@ will overflow, and §12.4.1's rule still applies — the block clips and the cou
 rather than text quietly going missing. Worth pairing narrow shapes with a smaller `count` in
 the preset's text settings.
 
+#### Overlap is allowed, and avoided anyway
+
+Anchor semantics permit two blocks to collide: the VJ picks the anchor and the size, and the
+app is not going to second-guess either. But permitting it and *choosing* it are different
+things, and the shapes in a preset are **authored** rather than arbitrary — so a
+non-overlapping arrangement nearly always exists, and finding it costs nothing at typeset
+time.
+
+So `avoidOverlap` is a preset setting, **on by default**. Placement walks every anchor
+against every shape in random order and takes the first arrangement that does not collide.
+Bounded at 49 × shapes and reached only on a re-typeset, so exhaustive is affordable — and
+exhaustive is what makes "no arrangement exists" mean it, rather than meaning the random
+attempts ran out.
+
+Measured over 4000 typesets with the built-in shapes, this is not a marginal fix:
+
+| Preset | Overlapping typesets, off | On |
+|---|---|---|
+| `scatter`, 2 blocks | 46.0% | 0.0% |
+| `swarm`, 2 blocks | 69.3% | 0.7% |
+| `scatter`, 3 blocks | — | 0.1% |
+
+**It changes which placement is chosen, never whether one happens.** If nothing fits — the
+mask is tight, the shapes are large, or there are simply too many blocks — the block is
+placed anyway and overlaps. A colliding block is a visible compromise; a missing one is
+indistinguishable from text that failed to render (§14).
+
+Turn it off for a preset where blocks piling up *is* the look.
+
 **A block may extend past the mask, and that is deliberate.** The alternative — requiring the
 whole block to fit inside allowed cells — means the app searches for somewhere it will fit,
 silently shrinks it, or refuses to place it. All three are the app second-guessing a decision
@@ -1631,11 +1660,10 @@ wide, where the surplus was silently clipped and simply looked like missing text
 **Blocks must clip.** §14 says nothing should be lost silently, so the count of clipped blocks
 is reported to the control window.
 
-*No longer true:* that blocks occupy distinct cells of a 3x3 grid, and therefore that non-overlap
-is guaranteed by construction. Anchor semantics (§11.6) allow two blocks to overlap if they are
-anchored close together and sized large. That is the accepted cost of the VJ choosing the size:
-the guarantee was a consequence of one-block-per-cell, and one-block-per-cell is what a 7x7 grid
-gives up.
+*No longer a guarantee:* that blocks occupy distinct cells and therefore cannot overlap. That
+followed from one-block-per-cell, which a 7x7 grid gives up. `avoidOverlap` (§11.6) searches for
+a non-colliding arrangement instead and is on by default — a preference rather than a
+construction, and one that can be turned off where collisions are the look.
 
 ### 12.4.2 Size floor
 
@@ -1986,9 +2014,14 @@ Staged so each step is usable on its own:
   gets its own grid in the Effects tab in 2c; until then a preset's `spawn` is authored in
   TypeScript and the global mask is what is adjustable live.
 
-  **Two guarantees were deliberately given up**, both consequences of anchors: a block may
-  extend past the mask, and two blocks may overlap. §12.4.1 previously promised non-overlap
-  "by construction", which was true only because each block took a distinct cell of a 3x3.
+  **One guarantee was deliberately given up:** a block may extend past the mask, since the
+  mask constrains where it starts rather than where it ends.
+
+  Overlap was given up too and then largely won back. §12.4.1 promised non-overlap "by
+  construction", which held only because each block took a distinct cell of a 3x3. Anchors
+  cannot promise that — but `avoidOverlap`, on by default, searches for an arrangement that
+  does not collide and finds one nearly always. Measured at 46% of `scatter` typesets and
+  69% of `swarm` typesets overlapping without it, which was too high to leave.
 - **2c — live editing.** The Effects tab generates a control per parameter; layers added,
   removed and reordered. No serialisation needed yet, and this is the point where the tool
   starts paying for itself.

@@ -1,5 +1,5 @@
 import type { Stage } from '../render/Stage';
-import { anchors, normalise, place, type Cell, type Mask } from '../show/mask';
+import { anchors, normalise, placeBlocks, type BlockShape, type Mask } from '../show/mask';
 import { pick, randomInt, randomRange } from '../util/random';
 import { sentenceLength, type Sentence, type TextPreset } from './TextSource';
 
@@ -41,18 +41,27 @@ export interface TypesetOptions {
    *
    * Each block gets its own selection, so they show different text rather than repeating.
    *
-   * They may now **overlap**. Under the 3x3 grid every block took a distinct cell, so
-   * non-overlap was true by construction; anchors plus a VJ-chosen size gives that up
-   * deliberately (§11.6). Two blocks anchored close together and sized large will collide,
-   * and that is the author's call rather than the app's to prevent.
+   * They *can* overlap — anchors plus a VJ-chosen size gives up the guarantee the 3x3 grid
+   * had by construction — but `avoidOverlap` asks placement to find an arrangement that does
+   * not, which with authored shapes it almost always can (§11.6).
    */
   readonly blocks?: number;
+
+  /**
+   * Prefer placements where blocks do not overlap. Defaults to on.
+   *
+   * Changes *which* allowed placement is chosen, never whether a placement happens: if no
+   * arrangement avoids overlap, the block is placed anyway. An overlapping block is a
+   * visible compromise; a missing one looks like text that failed to render (§14).
+   */
+  readonly avoidOverlap?: boolean;
 
   /** Which cells a block may anchor at (§11.6). Already intersected with the global mask. */
   readonly mask?: Mask;
 
   /** Candidate shapes in cells; one is chosen per block, then rolled within its ranges. */
   readonly shapes?: readonly BlockShape[];
+
 
   readonly align?: Align;
   readonly flow?: Flow;
@@ -86,16 +95,6 @@ export type Align = 'left' | 'centre' | 'right' | 'justify';
  * As a setting they combine with any anchor and any size, which none of them could before.
  */
 export type Flow = 'stack' | 'run-on' | 'grid' | 'wrapped' | 'columns';
-
-export interface Range {
-  readonly min: number;
-  readonly max: number;
-}
-
-export interface BlockShape {
-  readonly cols: Range;
-  readonly rows: Range;
-}
 
 /** A shape that fills most of the frame. Used when a preset declares none. */
 const DEFAULT_SHAPES: readonly BlockShape[] = [
@@ -170,20 +169,17 @@ export class Typesetter {
     // of the stage wide, where the surplus was silently clipped.
     const perBlock = Math.max(1, Math.round((options.count ?? 1) / blocks));
 
+    // All blocks are positioned together rather than one at a time, because avoiding
+    // overlap needs to see the boxes already placed.
+    const boxes = placeBlocks(cells, shapes, blocks, options.avoidOverlap !== false);
+
     for (let index = 0; index < blocks; index++) {
       // Each block selects independently, so they show different text.
       const lines = this.select(preset, { ...options, count: perBlock });
 
-      // Anchor and shape are rolled per block, independently. That is what puts a tall
-      // column beside a wide band — a composition the 3x3 grid could not produce, since
-      // every cell there was the same size (§11.6).
-      const anchor = pick(cells) as Cell;
-      const shape = pick(shapes) ?? DEFAULT_SHAPES[0]!;
-      const box = place(
-        anchor,
-        randomRange(shape.cols.min, shape.cols.max),
-        randomRange(shape.rows.min, shape.rows.max),
-      );
+      // Rolled per block, so a tall column can sit beside a wide band — a composition the
+      // 3x3 grid could not produce, since every cell there was the same size (§11.6).
+      const box = boxes[index] ?? boxes[0]!;
 
       const style =
         `left:${box.left.toFixed(3)}%;top:${box.top.toFixed(3)}%;` +

@@ -1,9 +1,9 @@
 import { colourShift, pulse, retext, scroll, stopScroll } from '../effects';
 import type { EffectRef } from '../effects/types';
-import type { Align, BlockShape, Flow, TextMode } from '../text/Typesetter';
+import type { Align, Flow, TextMode } from '../text/Typesetter';
 import type { Bindings } from './Conductor';
 import type { LayerSpec } from './Layer';
-import { KEEP_CENTRE_CLEAR, type Mask } from './mask';
+import { KEEP_CENTRE_CLEAR, type BlockShape, type Mask } from './mask';
 
 /**
  * Visual presets. DESIGN.md §11.1 and §11.5.
@@ -88,6 +88,15 @@ export interface VisualPreset {
   readonly flow: Flow;
 
   /**
+   * Keep blocks off each other. Defaults to on for every built-in.
+   *
+   * Anchors allow overlap by design — the VJ chooses the anchor and the size. But the shapes
+   * in a preset are *authored*, so a non-overlapping arrangement nearly always exists, and
+   * preferring it is free. Turn it off for a preset where blocks colliding is the look.
+   */
+  readonly avoidOverlap: boolean;
+
+  /**
    * The Lego. Order matters: a later layer contending for the same channel sits on top.
    *
    * **A layer's slice must match `text.splitChars`.** A `char` target against text that was
@@ -149,6 +158,7 @@ export const PRESETS: readonly VisualPreset[] = [
     blockShapes: [{ cols: { min: 4, max: 6 }, rows: { min: 2, max: 3 } }],
     align: 'centre',
     flow: 'stack',
+    avoidOverlap: true,
     layers: [
       // Was `invertBlock({ count: 1 })` — one character, black block behind it.
       {
@@ -192,6 +202,7 @@ export const PRESETS: readonly VisualPreset[] = [
     ],
     align: 'left',
     flow: 'stack',
+    avoidOverlap: true,
     layers: [
       { treatment: 'invert', target: { slice: 'word', count: 1 }, triggers: { hat: true }, decayBars: FADE.fast },
       { treatment: 'invert', target: { slice: 'word', proportion: 0.05 }, triggers: { kick: true }, decayBars: FADE.fast },
@@ -236,6 +247,7 @@ export const PRESETS: readonly VisualPreset[] = [
     ],
     align: 'left',
     flow: 'wrapped',
+    avoidOverlap: true,
     layers: [
       { treatment: 'invert', target: { slice: 'word', count: 1 }, triggers: { hat: true }, decayBars: FADE.instant },
       { treatment: 'underline', target: { slice: 'char', count: 1 }, triggers: { hat: true }, decayBars: FADE.instant },
@@ -280,6 +292,7 @@ export const PRESETS: readonly VisualPreset[] = [
     // Paragraphs run together into a single justified slab. Was layout 7, and it suits long
     // sentences better than anything else in the old table did.
     flow: 'run-on',
+    avoidOverlap: true,
     // Whole words, not characters — `splitChars` is false, so `char` targets would find
     // nothing here.
     layers: [

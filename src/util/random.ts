@@ -26,6 +26,21 @@ export function pick<T>(items: readonly T[]): T | undefined {
 }
 
 /** Up to `count` distinct members, for narrowing a palette (§12.5). */
+/**
+ * A shuffled copy. Fisher–Yates, so every ordering is equally likely.
+ *
+ * For searching a space in random order without bias — block placement walks anchors this
+ * way, and a biased shuffle would quietly favour one corner of the frame.
+ */
+export function shuffled<T>(items: readonly T[]): T[] {
+  const out = items.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [out[i], out[j]] = [out[j] as T, out[i] as T];
+  }
+  return out;
+}
+
 export function pickSome<T>(items: readonly T[], count: number): T[] {
   const pool = Array.from(items);
   const out: T[] = [];

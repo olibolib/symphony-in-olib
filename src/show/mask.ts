@@ -25,6 +25,8 @@
  * nowhere else to go. At 7x7 the same exclusion leaves two rings.
  */
 
+import { pick, randomRange, shuffled } from '../util/random';
+
 export const GRID = 7;
 
 const ON = '#';
@@ -36,6 +38,31 @@ export type Mask = readonly string[];
 export interface Cell {
   readonly row: number;
   readonly col: number;
+}
+
+/** A placed block, as percentages of the stage. */
+export interface Box {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface Range {
+  readonly min: number;
+  readonly max: number;
+}
+
+/**
+ * A candidate block size in cells.
+ *
+ * A list of these rather than one pair of ranges, because width and height are *related*:
+ * rolling them independently keeps landing on the square blob between the tall column and
+ * the wide band that were actually wanted (§11.6).
+ */
+export interface BlockShape {
+  readonly cols: Range;
+  readonly rows: Range;
 }
 
 /** Every cell allowed. The default for a preset that has not been given a shape. */
@@ -126,11 +153,7 @@ export function anchors(mask: Mask): readonly Cell[] {
  * read reads as a fault rather than a decision. So a block that would run off is shifted
  * back until it fits, keeping every pixel of the size it was given.
  */
-export function place(
-  anchor: Cell,
-  cols: number,
-  rows: number,
-): { left: number; top: number; width: number; height: number } {
+export function place(anchor: Cell, cols: number, rows: number): Box {
   const w = clampSpan(cols);
   const h = clampSpan(rows);
 
@@ -163,4 +186,76 @@ export function toggle(mask: Mask, row: number, col: number): Mask {
   // A mask with nothing allowed has no failure mode worth having: every preset would be
   // skipped and the stage would simply go empty with no indication why. Refuse the last one.
   return anchors(rows).length === 0 ? normalise(mask) : rows;
+}
+
+/**
+ * Place every block for one typeset, optionally keeping them apart.
+ *
+ * Blocks *can* overlap under anchor semantics — the VJ picks the anchor and the size, and
+ * the app second-guessing that is worse than the occasional collision. But when the shapes
+ * are authored rather than arbitrary, a non-overlapping arrangement almost always exists,
+ * and finding it is cheap: this runs once per typeset, a few times a minute.
+ *
+ * So `avoidOverlap` is a preset setting, on by default. It changes *which* of the allowed
+ * placements is chosen, never whether a placement happens.
+ */
+export function placeBlocks(
+  cells: readonly Cell[],
+  shapes: readonly BlockShape[],
+  count: number,
+  avoidOverlap: boolean,
+): readonly Box[] {
+  const placed: Box[] = [];
+
+  for (let i = 0; i < count; i++) {
+    placed.push(placeOne(cells, shapes, placed, avoidOverlap));
+  }
+  return placed;
+}
+
+function placeOne(
+  cells: readonly Cell[],
+  shapes: readonly BlockShape[],
+  placed: readonly Box[],
+  avoidOverlap: boolean,
+): Box {
+  const roll = (): Box => {
+    const anchor = pick(cells) ?? { row: 0, col: 0 };
+    const shape = pick(shapes);
+    const cols = shape ? randomRange(shape.cols.min, shape.cols.max) : 1;
+    const rows = shape ? randomRange(shape.rows.min, shape.rows.max) : 1;
+    return place(anchor, cols, rows);
+  };
+
+  if (!avoidOverlap || placed.length === 0) return roll();
+
+  // Every anchor against every shape, in random order, taking the first that fits. Bounded
+  // at 49 x shapes and only reached on a re-typeset, so exhaustive is affordable — and
+  // exhaustive is what makes "no arrangement exists" mean it, rather than meaning the
+  // random attempts ran out.
+  for (const anchor of shuffled(cells)) {
+    for (const shape of shuffled(shapes)) {
+      const box = place(
+        anchor,
+        randomRange(shape.cols.min, shape.cols.max),
+        randomRange(shape.rows.min, shape.rows.max),
+      );
+      if (!placed.some((other) => overlaps(box, other))) return box;
+    }
+  }
+
+  // Nothing fits: the mask is tight, the shapes are large, or there are simply too many
+  // blocks. Place it anyway. An overlapping block is a visible compromise; a missing one is
+  // indistinguishable from text that failed to render (§14).
+  return roll();
+}
+
+/** Touching edges do not count — blocks carry their own padding, so abutting reads fine. */
+function overlaps(a: Box, b: Box): boolean {
+  return (
+    a.left < b.left + b.width &&
+    b.left < a.left + a.width &&
+    a.top < b.top + b.height &&
+    b.top < a.top + a.height
+  );
 }
