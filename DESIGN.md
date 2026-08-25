@@ -864,7 +864,11 @@ interface PresetData {
 
   /** Where blocks may anchor, and how big they are (§11.6). */
   spawn: string[];
-  blockSize: { cols: number; rows: number };
+  /** In cells. Rolled per block, per typeset. min === max for a fixed shape. */
+  blockSize: {
+    cols: { min: number; max: number };
+    rows: { min: number; max: number };
+  };
   align: 'left' | 'centre' | 'right' | 'justify';
   flow: 'stack' | 'run-on' | 'grid' | 'wrapped' | 'columns';
 
@@ -922,8 +926,8 @@ Inside the Effects tab, per preset:
 ```
 scatter                                          [live]  [→]
   text     prologue, default                            [edit]
-  spawn    ▓▓▓▓▓▓▓   block 3x2   align left   flow stack
-           ▓▓▓▓▓▓▓
+  spawn    ▓▓▓▓▓▓▓   cols 1 ●──● 3   align left
+           ▓▓▓▓▓▓▓   rows 2 ●────● 5   flow stack
            ▓▓···▓▓
            ▓▓···▓▓
            ▓▓···▓▓
@@ -1236,6 +1240,38 @@ sensible line of text where a square cell would be an awkward box.
 At 3x3 a cell was a third of the stage, so a block could simply be given one. At 7x7 a cell is
 14% and text in it would be unreadably cramped — so a block is **anchored** at a cell and sized
 separately. The mask says where blocks may start; `blockSize` says how big they are.
+
+#### Width and height are ranges, not numbers
+
+Both are given as a min and a max in cells, and rolled per block on every typeset — the same
+treatment base size gets (§11.5), for the same reason: a shape that varies within bounds you
+set is a look, where a fixed one is a setting.
+
+```ts
+blockSize: { cols: { min: 1, max: 1 }, rows: { min: 4, max: 7 } }   // a tall column
+blockSize: { cols: { min: 5, max: 7 }, rows: { min: 1, max: 2 } }   // a wide band
+blockSize: { cols: { min: 2, max: 4 }, rows: { min: 2, max: 4 } }   // varies, roughly square
+blockSize: { cols: { min: 3, max: 3 }, rows: { min: 2, max: 2 } }   // fixed
+```
+
+The non-square cells matter here and work in our favour. A one-column block seven rows tall is
+about **14% of the frame wide and the full height** — a genuinely narrow vertical column of
+text. A seven-column block one row tall is full width and 14% high — a band. Both are shapes
+the 3x3 grid could not produce at all, because a third of the stage is neither narrow nor
+short.
+
+**Rolled independently, which is a limitation worth naming.** Wide ranges on both axes give a
+rectangle anywhere in the bounding box, so a preset asking for `cols 1–7, rows 1–7` will
+sometimes produce a square blob rather than the column or band that was wanted. "Either tall or
+wide, never square" is a constraint independent ranges cannot express.
+
+That is deliberate rather than an oversight: the fix is two presets, or a tight range on one
+axis, and both are clearer than an `orientation` mode that would need explaining every time it
+is read. Reconsider only if the blob turns out to be common in practice.
+
+**Clamped to 1–7, and clipping stays visible.** A tall narrow column holding three sentences
+will overflow, and §12.4.1's rule still applies — the block clips and the count is reported,
+rather than text quietly going missing.
 
 **A block may extend past the mask, and that is deliberate.** The alternative — requiring the
 whole block to fit inside allowed cells — means the app searches for somewhere it will fit,
@@ -1988,6 +2024,7 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | ~~Q18~~ | ~~Does `flicker` belong with the treatments given it is continuous?~~ **Answered: yes** — same authoring, CSS runs the animation | §11.5 |
 | ~~Q19~~ | ~~Region targets?~~ **Answered: no** — replaced by the spawn grid, which was the actual intent | §11.6 |
 | Q20 | Does `flow: 'columns'` need a tunable gap, or is one number enough to recover layout 12's look? | §11.6 |
+| Q23 | Independent width and height ranges cannot say "tall or wide, never square". Does that shape come up often enough to want an orientation setting, or do two presets cover it? | §11.6 |
 | Q21 | With three blocks and three named texts, the list feeds variety (each block draws independently). Should one-each composition be an explicit option, or is random enough? | §11.7 |
 | Q22 | Layout 16 aligned alternate blocks outward. Dropped as a between-blocks relationship the model does not store — does it turn out to matter? | §11.6 |
 
