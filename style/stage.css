@@ -23,14 +23,25 @@ w {
   padding: 0 0.18em 0 0.04em;
 }
 
+/* Plain inline, not inline-block. An inline-block is atomic: `text-decoration` set on the
+   parent word does not cross into it, so an underline on a `<w>` drew nothing at all when
+   the text had been split into characters. Anything that genuinely needs a box — only
+   `swell`, for its transform — declares `inline-block` for itself in the size channel. */
 c {
-  display: inline-block;
+  display: inline;
 }
 
 /* --- colour slots (§12.5) ---------------------------------------------------------
    Each element gets a slot at typeset time. Animating colour then means changing eight
    variables, not writing inline styles to thousands of elements — which is the layout
-   thrash the whole design is built to avoid. */
+   thrash the whole design is built to avoid.
+
+   `:not([data-fg])` is load-bearing. A slot rule is `w[data-slot]` — a type selector plus an
+   attribute, so it outranks the bare `[data-fg]` a channel writes and silently wins. That
+   made `accent` do nothing on a word, and made a word-level `invert` render black text on a
+   black block: an invisible word inside a visible rectangle. The exclusion says what is
+   actually meant — the slot is the *base* colour, and a layer taking the fg channel replaces
+   it. */
 
 #stage {
   --c0: #000000;
@@ -43,14 +54,14 @@ c {
   --c7: #000000;
 }
 
-w[data-slot='0'] { color: var(--c0); }
-w[data-slot='1'] { color: var(--c1); }
-w[data-slot='2'] { color: var(--c2); }
-w[data-slot='3'] { color: var(--c3); }
-w[data-slot='4'] { color: var(--c4); }
-w[data-slot='5'] { color: var(--c5); }
-w[data-slot='6'] { color: var(--c6); }
-w[data-slot='7'] { color: var(--c7); }
+w[data-slot='0']:not([data-fg]) { color: var(--c0); }
+w[data-slot='1']:not([data-fg]) { color: var(--c1); }
+w[data-slot='2']:not([data-fg]) { color: var(--c2); }
+w[data-slot='3']:not([data-fg]) { color: var(--c3); }
+w[data-slot='4']:not([data-fg]) { color: var(--c4); }
+w[data-slot='5']:not([data-fg]) { color: var(--c5); }
+w[data-slot='6']:not([data-fg]) { color: var(--c6); }
+w[data-slot='7']:not([data-fg]) { color: var(--c7); }
 
 /* --- channels (§11.5) -----------------------------------------------------------------
    One attribute per CSS property being contended for, rather than one shared `glitch`.
@@ -80,7 +91,12 @@ w[data-slot='7'] { color: var(--c7); }
 [data-fg='5'] { color: #ff3300; }
 [data-fg='6'] { color: #00a05a; }
 
-[data-font='1'] { font-family: 'Dingbats', 'Segoe UI Symbol', serif; }
+/* Wingdings and Webdings remap the Latin alphabet to symbols, which is the whole effect —
+   the word becomes glyphs while keeping its shape and length. `Dingbats` was named here and
+   does not exist on Windows, so this fell through to `Segoe UI Symbol`, which has ordinary
+   Latin glyphs: the text stayed readable and only its metrics shifted, which read as a
+   faint pulse rather than as corruption. */
+[data-font='1'] { font-family: 'Wingdings', 'Webdings', 'Segoe UI Symbol', fantasy; }
 
 [data-deco='1'] { text-decoration: underline; }
 [data-deco='2'] { text-decoration: line-through; }
