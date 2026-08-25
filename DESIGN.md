@@ -202,7 +202,7 @@ App
 
 ### 7.1 Two windows
 
-**Planned — branch `two-window-hud`.**
+**Built.** Branch `two-window-hud`.
 
 The HUD is currently welded to the canvas in one window. That worked, and produced two
 workarounds it should not have needed: a transparent gap so an OBS crop had margin for error,
@@ -227,12 +227,40 @@ process boundary those become messages, and at 60fps there are far too many.
 
 So **the HUD stops being a bag of setters and becomes a function of a state snapshot**: one
 batched message per tick, meters throttled to about 20Hz because nobody reads a bar chart
-sixty times a second, with beats and preset changes sent as discrete events. That is a better
-design than the current one, but it is most of `Hud` rewritten.
+sixty times a second, with beats and preset changes sent as discrete events.
+
+> **Divergence from the plan.** `Hud` was *not* rewritten. The control window keeps it and
+> adapts the snapshot into the existing setters, because rewriting it at the same time as
+> introducing a process boundary would have meant debugging two new things at once. The
+> snapshot arrives batched and throttled as intended; only the last step is still imperative.
+> The panel system (§7.2) replaces `Hud` entirely, so this is a way-station rather than a
+> decision.
 
 The message protocol is a discriminated union shared by both windows — commands one way,
 state and events the other. One of the clearer places TypeScript earns its keep, since both
 ends are checked against the same definition.
+
+#### What was built
+
+| Piece | Where |
+|---|---|
+| `src/ipc/protocol.ts` | The contract. `EngineState`, `EngineEvent`, `ControlCommand` — both windows are checked against it |
+| `src/ipc/EngineBridge.ts` | The engine's side. Mirrors the old `Hud` method names, so forty call sites changed by one identifier rather than being rewritten |
+| `src/control.ts` | The control window's entry point |
+| `control.html` | Its document. `index.html` is now the canvas and nothing else |
+
+**Ownership moved with the split.** `TextBank` lives in the *control* window now: drafts, one
+level of undo and the file list never need to cross the boundary, and the engine only ever
+receives finished content via `applyText`. That is the split falling out naturally — editing
+is a control concern, rendering is an engine one.
+
+**The canvas window ignores the mouse.** A frameless transparent window otherwise swallows
+every pointer event over its rectangle, making it an invisible hole in the desktop. It has no
+interactive content now that the HUD has left.
+
+**Placement is typed, not dragged** (§13.5). Frameless means no title bar, so the Canvas tab
+carries width, height, x, y, presets and centre-on-screen. Exact numbers also reproduce on
+every launch, which matters when OBS is pointed at the window.
 
 #### Decisions taken
 
@@ -245,6 +273,7 @@ ends are checked against the same definition.
 | Single-window mode | Not kept. Two modes means two layouts and two sets of bugs |
 | Catching up | The control window requests a full state snapshot on open, rather than only listening for changes. Retrofitting that is much worse than designing it in |
 | Stale window positions | Restored bounds are clamped to the displays currently attached. Saving a position on a second monitor, unplugging it, and finding the window unreachable is a bug worth never shipping |
+| Tray | Built. Show control window, always-on-top toggle, centre canvas, quit. Icon copied via `extraResources`, since `build/` is build resources and is not inside the installed app |
 
 ### 7.2 The panel system
 
@@ -1168,6 +1197,21 @@ has not.
 
 **Alpha survives Spout**, so a transparent background carries through to the receiver.
 
+### 13.5 Canvas placement
+
+The canvas window is frameless, because Windows requires it for a transparent window and
+transparency is worth having. Frameless means no title bar to drag it by, so placement is set
+from the control window's Canvas tab: width, height, x, y, 720p/1080p presets, centre on
+screen.
+
+Better than dragging, as it turns out — exact numbers reproduce on every launch, which is
+what you want when OBS is pointed at the window.
+
+Two safeguards: requested bounds are clamped to an attached display, and the fields are **read
+back after applying** rather than trusting the request, so what is shown is what happened. The
+stage follows the window's content size, so changing resolution re-renders rather than
+clipping.
+
 ---
 
 ## 14. Performance and reliability
@@ -1296,14 +1340,17 @@ works, and Increment 2 is where it gets good.
 
 ### Increment 1.2 — two windows and the panel system
 
-*Branch `two-window-hud`.*
+*Branch `two-window-hud`. In progress.*
 
-Canvas and HUD become separate windows (§7.1); everything in the control window becomes a
-floating, dockable panel (§7.2); scattered `localStorage` keys consolidate into one config
-file (§7.3).
+- ~~Canvas and HUD as separate windows, with a typed message protocol~~ **done** (§7.1)
+- ~~Text editing moved to the control window~~ **done**
+- ~~Tray, always-on-top, canvas placement~~ **done**
+- ~~Per-application audio capture~~ **done** (§8.2, not originally scoped here)
+- Saved window positions and the config file — **still to do** (§7.3)
+- The floating panel system — **still to do** (§7.2)
 
-Removes two workarounds that only existed because the windows were welded together: the
-transparent gap, and the fixed window height. OBS stops needing a crop entirely.
+Removed two workarounds that only existed because the windows were welded together: the
+transparent gap, and the fixed window height. OBS no longer needs a crop at all.
 
 ### Increment 2 — detection hardening
 
