@@ -2,7 +2,7 @@ import './types';
 import { Hud } from './hud/Hud';
 import { TextBank } from './text/TextBank';
 import prologueRaw from '../presets/text/prologue.txt?raw';
-import type { EngineState } from './ipc/protocol';
+import { APP_PREFIX, type EngineState } from './ipc/protocol';
 
 /**
  * The control window. DESIGN.md §7.1.
@@ -58,6 +58,7 @@ function render(state: EngineState): void {
   hud.setDevices(
     state.devices.map((d) => ({ id: d.id, label: d.label, isSystem: false })),
     state.device,
+    state.apps,
   );
 
   for (const band of ['kick', 'snare', 'hat'] as const) {
@@ -207,7 +208,18 @@ hud.onTextImport = () => {
 
 // --- commands out --------------------------------------------------------------------------
 
-hud.onDeviceChange = (id) => window.olib.sendCommand({ type: 'setDevice', id });
+hud.onDeviceChange = (id) => {
+  if (id.startsWith(APP_PREFIX)) {
+    const [processId, ...rest] = id.slice(APP_PREFIX.length).split('|');
+    window.olib.sendCommand({
+      type: 'setAppSource',
+      processId: processId ?? '',
+      title: rest.join('|'),
+    });
+    return;
+  }
+  window.olib.sendCommand({ type: 'setDevice', id });
+};
 hud.onSensitivityChange = (band, value) =>
   window.olib.sendCommand({ type: 'setSensitivity', band, value });
 hud.onPaletteChange = (name) => window.olib.sendCommand({ type: 'setPalette', name });

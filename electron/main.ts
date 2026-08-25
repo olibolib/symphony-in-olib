@@ -2,7 +2,13 @@ import { app, BrowserWindow, dialog, ipcMain, screen, session } from 'electron';
 import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { COMMAND_CHANNEL, EVENT_CHANNEL } from '../src/ipc/protocol';
+import { COMMAND_CHANNEL, EVENT_CHANNEL, PCM_CHANNEL } from '../src/ipc/protocol';
+import {
+  getActiveWindowProcessIds,
+  setExecutablesRoot,
+  startAudioCapture,
+  stopAudioCapture,
+} from 'application-loopback';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -325,6 +331,66 @@ ipcMain.on(
   },
 );
 
+/**
+ * Per-application audio capture. DESIGN.md §8.2.
+ *
+ * Windows process loopback, via a helper executable the package ships — no native module and
+ * no toolchain. Captures one application's output regardless of which device it is using,
+ * which is the only way to get a DJ mix without also getting notification pings.
+ *
+ * The helper streams 16-bit stereo 48kHz PCM. It is forwarded straight to the output window,
+ * where the engine lives; main does not look at it.
+ */
+let capturingPid: string | null = null;
+
+ipcMain.handle('olib:apps-list', async () => {
+  const windows = await getActiveWindowProcessIds();
+
+  // One entry per process. Applications routinely have several windows, and a list with
+  // "Traktor Pro 4" three times is worse than useless.
+  const seen = new Map<string, { processId: string; title: string }>();
+  for (const w of windows) {
+    const id = String(w.processId);
+    if (!seen.has(id) && w.title.trim().length > 0) {
+      seen.set(id, { processId: id, title: w.title });
+    }
+  }
+  return [...seen.values()];
+});
+
+ipcMain.handle('olib:app-capture-start', (_event, processId: string) => {
+  stopAppCapture();
+
+  try {
+    startAudioCapture(processId, {
+      onData: (data) => {
+        if (!outputWindow || outputWindow.isDestroyed()) return;
+        // Copy: the helper reuses its buffer, and the structured clone happens later.
+        outputWindow.webContents.send(PCM_CHANNEL, new Uint8Array(data).buffer);
+      },
+    });
+    capturingPid = processId;
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, message };
+  }
+});
+
+ipcMain.on('olib:app-capture-stop', () => stopAppCapture());
+
+function stopAppCapture(): void {
+  if (capturingPid === null) return;
+  try {
+    stopAudioCapture(capturingPid);
+  } catch {
+    // Already gone. Nothing to do, and nothing worth reporting.
+  }
+  capturingPid = null;
+}
+
+app.on('before-quit', stopAppCapture);
+
 ipcMain.on('olib:centre-output', () => {
   if (!outputWindow || outputWindow.isDestroyed()) return;
   const [width, height] = outputWindow.getContentSize();
@@ -334,6 +400,20 @@ ipcMain.on('olib:centre-output', () => {
     area.y + Math.round((area.height - (height ?? 0)) / 2),
   );
 });
+
+/**
+ * The capture helpers resolve relative to their own module, which in a packaged build is
+ * inside app.asar — and an executable cannot be spawned from an archive. electron-builder
+ * unpacks them (see asarUnpack); this points the package at where they actually landed.
+ *
+ * Without it, per-application capture works perfectly in development and fails only in the
+ * installed build, which is the worst place to discover it.
+ */
+if (app.isPackaged) {
+  setExecutablesRoot(
+    join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'application-loopback', 'bin'),
+  );
+}
 
 void app.whenReady().then(() => {
   // DESIGN.md §5: no permission dialogs mid-set. In a browser the user would get a prompt

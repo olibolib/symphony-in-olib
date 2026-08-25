@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { COMMAND_CHANNEL, EVENT_CHANNEL } from '../src/ipc/protocol';
+import { COMMAND_CHANNEL, EVENT_CHANNEL, PCM_CHANNEL } from '../src/ipc/protocol';
 import type { ControlCommand, EngineEvent } from '../src/ipc/protocol';
 
 // A preload script runs in the renderer, but with access to Node. It exists so the web page
@@ -40,6 +40,21 @@ const api = {
 
   setAlwaysOnTop(value: boolean): void {
     ipcRenderer.send('olib:always-on-top', value);
+  },
+
+  /**
+   * Per-application audio capture. Windows process loopback via a helper executable — works
+   * whatever output device the application is using, and cannot pick up anything else.
+   */
+  apps: {
+    list: (): Promise<{ processId: string; title: string }[]> =>
+      ipcRenderer.invoke('olib:apps-list'),
+    start: (processId: string): Promise<{ ok: boolean; message?: string }> =>
+      ipcRenderer.invoke('olib:app-capture-start', processId),
+    stop: (): void => ipcRenderer.send('olib:app-capture-stop'),
+    onPcm: (handler: (chunk: ArrayBuffer) => void): void => {
+      ipcRenderer.on(PCM_CHANNEL, (_event, chunk: ArrayBuffer) => handler(chunk));
+    },
   },
 
   /** The canvas window is frameless, so its placement is set rather than dragged. */

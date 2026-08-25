@@ -34,6 +34,8 @@ import { Stage } from './render/Stage';
 import { EngineBridge } from './ipc/EngineBridge';
 import { AudioInput, SYSTEM_SOURCE_ID } from './audio/AudioInput';
 import { Analyser } from './audio/Analyser';
+import { AppCapture } from './audio/AppCapture';
+import { APP_PREFIX } from './ipc/protocol';
 import { BANDS, type BandName } from './audio/bands';
 import { BeatTracker } from './time/BeatTracker';
 import { Clock } from './time/Clock';
@@ -76,6 +78,61 @@ const bank = new PresetBank(PRESETS);
 let textAge = 0;
 
 let analyser: Analyser | null = null;
+const appCapture = new AppCapture();
+
+/**
+ * What is actually being captured, in the dropdown's own vocabulary.
+ *
+ * A device id, or `app:<pid>|<title>`. Kept here because `refreshDevices` republishes the
+ * source list periodically and would otherwise report the last *device* as active even while
+ * an application is being captured — which made the selection appear to revert.
+ */
+let activeSourceId: string | null = null;
+
+// PCM from per-application capture. Straight through to the worklet; nothing inspects it.
+window.olib.apps.onPcm((chunk) => appCapture.accept(chunk));
+
+/**
+ * Capture one application rather than a device.
+ *
+ * Works whatever output device the application is using, and cannot pick up anything else —
+ * no notification pings in the club PA. The catch is ASIO: an application driving its
+ * interface directly bypasses the Windows audio engine, and there is nothing to capture. We
+ * detect that by seeing no frames arrive at all, which is a different thing from silence.
+ */
+async function startAppCapture(processId: string, title: string): Promise<void> {
+  try {
+    hud.setStatus(`Opening ${title}…`);
+    analyser?.close();
+    analyser = null;
+    input.close();
+
+    const node = await appCapture.start(processId, title);
+    const next = new Analyser(node);
+    await next.resume();
+    for (const band of BANDS) next.setSensitivity(band.name, sensitivityFor(band.name));
+    analyser = next;
+
+    activeSourceId = `${APP_PREFIX}${processId}|${title}`;
+    captureLabel = title;
+    hud.setStatus(`Capturing ${title}`);
+    await refreshDevices();
+
+    // If nothing at all has arrived after a few seconds, say why rather than showing a dead
+    // meter and letting it look like the app is broken.
+    window.setTimeout(() => {
+      if (appCapture.framesReceived === 0) {
+        hud.setStatus(
+          `No audio from ${title} — it may be using ASIO, which bypasses Windows audio capture`,
+          true,
+        );
+      }
+    }, 4000);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    hud.setStatus(`Could not capture ${title} — ${message}`, true);
+  }
+}
 let captureLabel = '';
 let lastStatusAt = 0;
 
@@ -280,10 +337,13 @@ window.addEventListener('unhandledrejection', (event) => {
 // --- audio ---------------------------------------------------------------------------
 
 async function refreshDevices(): Promise<void> {
+  hud.setApps(await window.olib.apps.list());
   const options = await input.list();
   hud.setDevices(
     options.map((o) => ({ id: o.id, label: o.label })),
-    input.activeId ?? AudioInput.remembered() ?? SYSTEM_SOURCE_ID,
+    // The tracked source, not `input.activeId` — that only knows about devices, so it would
+    // report the previous device as active while an application is being captured.
+    activeSourceId ?? AudioInput.remembered() ?? SYSTEM_SOURCE_ID,
   );
 }
 
@@ -293,12 +353,14 @@ async function startCapture(id: string): Promise<void> {
     analyser?.close();
     analyser = null;
 
+    appCapture.stop();
     const stream = await input.open(id);
     const next = new Analyser(stream);
     await next.resume();
     for (const band of BANDS) next.setSensitivity(band.name, sensitivityFor(band.name));
     analyser = next;
 
+    activeSourceId = id;
     captureLabel = `${input.activeTrackLabel ?? 'unknown source'} · ${next.sampleRate / 1000} kHz`;
     hud.setStatus(`Capturing · ${captureLabel}`);
     await refreshDevices();
@@ -348,6 +410,10 @@ hud.onCommand = (command) => {
 
     case 'setDevice':
       void startCapture(command.id);
+      break;
+
+    case 'setAppSource':
+      void startAppCapture(command.processId, command.title);
       break;
 
     case 'setSensitivity':

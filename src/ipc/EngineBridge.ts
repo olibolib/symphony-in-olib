@@ -42,6 +42,7 @@ export class EngineBridge {
     },
     device: null,
     devices: [],
+    apps: [],
     sensitivities: { kick: 0, snare: 0, hat: 0 },
     palette: 'acid',
     layoutSet: 'centre',
@@ -111,6 +112,11 @@ export class EngineBridge {
   setDevices(devices: readonly { id: string; label: string }[], active: string | null): void {
     this.state.devices = devices;
     this.state.device = active;
+  }
+
+  /** Capturable applications, refreshed when the source list is rebuilt. */
+  setApps(apps: readonly { processId: string; title: string }[]): void {
+    this.state.apps = apps;
   }
 
   setSensitivity(band: BandName, value: number): void {

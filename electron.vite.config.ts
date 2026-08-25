@@ -22,6 +22,11 @@ export default defineConfig({
     root: '.',
     build: {
       outDir: 'out/renderer',
+      // Emit assets as real files rather than inlining small ones. The audio worklet is
+      // ~2.5KB, so it was being turned into a `data:` URL — and `audioWorklet.addModule`
+      // is inconsistent about accepting those, which would fail at runtime and only for
+      // per-application capture.
+      assetsInlineLimit: 0,
       // Two windows, two entry points: index.html is the canvas OBS captures, control.html
       // is the HUD. DESIGN.md §7.1.
       rollupOptions: {

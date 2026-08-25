@@ -19,7 +19,7 @@
     "electron": "^43.4.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
-    "typescript": "^7.0.2",
+    "typescript": "^5.9.3",
     "vite": "^7.3.6"
   },
   "allowScripts": {
@@ -29,5 +29,8 @@
     "electron-winstaller@5.4.0": true
   },
   "productName": "Symphony in Olib",
-  "author": "olibolib"
+  "author": "olibolib",
+  "dependencies": {
+    "application-loopback": "^1.2.7"
+  }
 }

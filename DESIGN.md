@@ -389,6 +389,77 @@ Two consequences beyond the fixes themselves, both now implemented:
 master over ASIO straight to an interface bypasses that entirely, and there will be nothing to
 capture. In that case the answer is a device-level loopback input, not code.
 
+### 8.2 Per-application capture
+
+**Working.** Verified 2026-08-25 against Traktor Pro 4: 186 KB/s, peak -0.1 dB, first data
+156ms after start.
+
+#### The problem it solves
+
+Capturing a *named* output device — the S4's Main/Booth, say — is impossible through web
+APIs. `getUserMedia` only reaches input endpoints; `getDisplayMedia` loopback taps only the
+Windows **default** playback device.
+
+Which leaves "make your booth output the Windows default", and that is not acceptable for a
+DJ: every notification ping would go through the PA.
+
+#### What it does instead
+
+Windows **process loopback** (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`, Windows 10
+2004+) captures one application's output. You pick *Traktor*, not a device — which is how you
+think about it anyway, and it means the capture follows the application whatever device it is
+routed to, with nothing else mixed in.
+
+**No native module.** The `application-loopback` package ships helper executables and talks to
+them over stdout, so there is no C++ toolchain, no node-gyp, and no ABI matching against
+Electron. This was the deciding factor; a native addon would have been the same cost as the
+Spout sender we deferred for exactly that reason.
+
+#### The audio path
+
+```
+helper.exe → stdout → main → IPC → AudioWorkletNode → the existing AnalyserNode
+```
+
+The helper emits 16-bit stereo 48kHz PCM. A worklet stands in for the missing `MediaStream`,
+and `Analyser` was widened to accept either a stream or a node — so bands, flux, onsets, the
+tracker and the clock are **completely unchanged**. Only the source differs.
+
+The context runs at 48kHz to match the helper, so nothing is resampled on the way in and the
+FFT bin arithmetic stays honest.
+
+#### The limitation
+
+**Process loopback goes through the Windows audio engine. ASIO bypasses it entirely.**
+
+An application driving its interface over ASIO produces no capturable stream at all. Traktor
+here is on WDM, which is why it works; a rekordbox user on a Pioneer controller may well be on
+ASIO and would need one of the other sources.
+
+So this is one option among several, not a replacement:
+
+| Source | Works when |
+|---|---|
+| **Application** | The application uses the Windows audio engine |
+| System output | Your mix is the Windows default device |
+| Input device | A loopback input, Stereo Mix, or a virtual cable exists |
+
+**No audio for four seconds is reported as a likely ASIO problem**, not left as a dead meter.
+"Capturing silence" and "capturing nothing" look identical otherwise, and they have completely
+different causes.
+
+#### Two traps, both pre-empted
+
+- **The worklet was being inlined as a `data:` URL** by Vite, being under the 4KB threshold.
+  `audioWorklet.addModule` is inconsistent about accepting those. Inlining is off.
+- **Executables cannot be spawned from inside `app.asar`.** `asarUnpack` plus
+  `setExecutablesRoot` handle it. Without them this works in development and fails only in the
+  installed build.
+
+`scripts/spike-loopback.mjs` is kept as a diagnostic: it lists capturable windows and reports
+whether real audio arrives from one, which answers the ASIO question for any machine in about
+ten seconds.
+
 ---
 
 ## 9. Tempo and beat detection
@@ -1146,8 +1217,10 @@ Two hours unattended, sharing a machine with DJ software and OBS. Reliability is
 
 Built on Electron 43, Vite 7, TypeScript 7, via `electron-vite`. Two notes on that:
 
-- **TypeScript 7** (the Go-based compiler) is what npm resolved as latest, not a considered
-  choice. It typechecks the project fine. Pin back to 5.x if it becomes a problem.
+- **TypeScript 5.9**, pinned. 7 was never a decision — npm resolved it on day one and it
+  became a problem the moment a dependency declared a `typescript@^5` peer. It is the same
+  language and the same type system; the port is only faster to compile, and measured on this
+  project that is 1.7s versus 3.0s. Not worth fighting the ecosystem over.
 - **`npm` 11 blocks install scripts by default.** `electron` and `esbuild` both download a
   platform binary in `postinstall`, so nothing works until they are approved. The approval
   is recorded in `package.json` under `allowScripts`.
@@ -1323,6 +1396,9 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Global keyboard shortcuts | **Dropped** | Would steal keys from the DJ software. Control window focus only (§7.1) |
 | A docking library | **Dropped** | Preference for owning the code unless the problem is excessive. The fiddly parts are named in §7.2 so they are planned for rather than discovered |
 | Settings scattered across localStorage | **Dropped** | One config file, consistent with texts and presets (§7.3) |
+| Requiring the booth output to be the Windows default | **Dropped** | Every notification would go through the PA. Per-application capture instead (§8.2) |
+| A native addon for audio capture | **Not needed** | `application-loopback` ships helper executables, so no toolchain and no ABI matching (§8.2) |
+| TypeScript 7 | **Dropped** | Never a decision — npm resolved it on day one. Same language, ~1.2s faster on 5k lines, and peers across the ecosystem still target `^5` |
 
 ---
 

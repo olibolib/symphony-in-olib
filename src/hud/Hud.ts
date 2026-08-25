@@ -4,6 +4,7 @@ import type { InputOption } from '../audio/AudioInput';
 
 import type { PaletteName } from '../render/palette';
 import type { LayoutSetName } from '../show/layouts';
+import { APP_PREFIX } from '../ipc/protocol';
 
 export type BackgroundMode = 'white' | 'black' | 'transparent';
 
@@ -139,18 +140,60 @@ export class Hud {
     }
   }
 
-  /** Populate the source dropdown, preserving the current selection where possible. */
-  setDevices(options: InputOption[], selectedId: string | null): void {
-    this.deviceSelect.replaceChildren(
-      ...options.map((option) => {
-        const el = document.createElement('option');
-        el.value = option.id;
-        el.textContent = option.label;
-        el.selected = option.id === selectedId;
-        return el;
-      }),
-    );
+  /**
+   * Populate the source dropdown.
+   *
+   * Applications are listed alongside devices because that is how you actually think about
+   * it — you want to capture Traktor, not reason about which endpoint Traktor happens to be
+   * using. Their values are prefixed so the handler can tell the two apart.
+   */
+  setDevices(
+    options: InputOption[],
+    selectedId: string | null,
+    apps: readonly { processId: string; title: string }[] = [],
+  ): void {
+    const build = (value: string, label: string): HTMLOptionElement => {
+      const el = document.createElement('option');
+      el.value = value;
+      el.textContent = label;
+      el.selected = value === selectedId;
+      return el;
+    };
+
+    const deviceGroup = document.createElement('optgroup');
+    deviceGroup.label = 'Devices';
+    deviceGroup.append(...options.map((o) => build(o.id, o.label)));
+
+    const children: HTMLElement[] = [deviceGroup];
+
+    if (apps.length > 0) {
+      const appGroup = document.createElement('optgroup');
+      appGroup.label = 'Applications';
+      appGroup.append(
+        ...apps.map((a) => build(`${APP_PREFIX}${a.processId}|${a.title}`, a.title)),
+      );
+      children.push(appGroup);
+    }
+
+    // Rebuilding a <select> on every state snapshot fights the pointer — you cannot keep it
+    // open long enough to choose anything. Only rebuild when the options actually change.
+    const signature = [
+      ...options.map((o) => o.id),
+      '|',
+      ...apps.map((a) => a.processId),
+    ].join(',');
+
+    if (signature !== this.deviceSignature) {
+      this.deviceSignature = signature;
+      this.deviceSelect.replaceChildren(...children);
+    }
+
+    if (selectedId !== null && this.deviceSelect.value !== selectedId) {
+      this.deviceSelect.value = selectedId;
+    }
   }
+
+  private deviceSignature = '';
 
   /** Push a sensitivity value into its slider without firing the change callback. */
   setSensitivity(band: BandName, value: number): void {

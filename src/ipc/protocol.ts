@@ -50,6 +50,7 @@ export interface EngineState {
 
   readonly device: string | null;
   readonly devices: readonly { id: string; label: string }[];
+  readonly apps: readonly { processId: string; title: string }[];
   readonly sensitivities: Readonly<Record<BandName, number>>;
 
   readonly palette: PaletteName;
@@ -82,6 +83,8 @@ export type ControlCommand =
    */
   | { readonly type: 'requestState' }
   | { readonly type: 'setDevice'; readonly id: string }
+  /** Capture one application's audio rather than a device. */
+  | { readonly type: 'setAppSource'; readonly processId: string; readonly title: string }
   | { readonly type: 'setSensitivity'; readonly band: BandName; readonly value: number }
   | { readonly type: 'setPalette'; readonly name: PaletteName }
   | { readonly type: 'setLayoutSet'; readonly name: LayoutSetName }
@@ -100,6 +103,26 @@ export type ControlCommand =
 // --- channels ----------------------------------------------------------------------------
 
 export const COMMAND_CHANNEL = 'olib:command';
+
+/**
+ * Raw PCM from per-application capture, main to the output window.
+ *
+ * Its own channel because it is high-rate — about 46 chunks a second — and has nothing to do
+ * with the command/event protocol above.
+ */
+export const PCM_CHANNEL = 'olib:pcm';
+
+/**
+ * Marks a source as an application rather than an audio device.
+ *
+ * Both windows construct and parse these, so the format lives with the protocol rather than
+ * in the UI: `app:<processId>|<title>`.
+ */
+export const APP_PREFIX = 'app:';
+
+/** What the capture helper emits. */
+export const PCM_SAMPLE_RATE = 48_000;
+export const PCM_CHANNELS = 2;
 export const EVENT_CHANNEL = 'olib:event';
 
 /**
