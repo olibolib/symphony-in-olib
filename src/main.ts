@@ -651,6 +651,9 @@ let lastFrameAt = performance.now();
  */
 let frameDelta = 0;
 
+/** Last published bar length, so `--bar` is only written when the tempo actually moves. */
+let lastBarSeconds = 0;
+
 function frame(now: number): void {
   // Clamped: after a stall, a huge delta would teleport the scroll rather than continuing
   // it, and would clear a layer in one step rather than fading it.
@@ -663,6 +666,15 @@ function frame(now: number): void {
   // below mutates text age.
   const beat = clock.update(now);
   if (beat?.isPhraseStart === true) textAge++;
+
+  // Publish the bar length for anything CSS times in bars — flicker today (§11.5). Written
+  // only when it actually changes: it is one style write, but it would otherwise be one per
+  // frame on an element the whole stage inherits from.
+  const barSeconds = clock.bpm === null ? 2 : (60 / clock.bpm) * 4;
+  if (barSeconds !== lastBarSeconds) {
+    lastBarSeconds = barSeconds;
+    stage.setBarSeconds(barSeconds);
+  }
 
   const ctx = effectContext();
 

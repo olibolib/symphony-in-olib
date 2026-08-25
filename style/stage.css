@@ -96,9 +96,14 @@ w[data-slot='7'] { color: var(--c7); }
 }
 
 /* Applied once; CSS does the repeating, so the engine does no per-frame work — which makes
-   flicker the cheapest treatment rather than the awkward one. */
-[data-anim='1'] {
-  animation: olib-flicker var(--flicker-period, 0.5s) steps(2, jump-none) infinite;
+   flicker the cheapest treatment rather than the awkward one.
+
+   The period is a multiple of `--bar`, which the engine keeps in step with the tempo. So a
+   flicker set to 0.25 is one beat at 128 and one beat at 174, and it re-times itself the
+   moment a new track locks — a flicker running at a fixed wall-clock rate beats against the
+   music and reads as a broken monitor rather than as an effect (§11.5). */
+[data-anim] {
+  animation: olib-flicker calc(var(--bar, 2s) * var(--anim, 0.25)) steps(2, jump-none) infinite;
 }
 
 @keyframes olib-flicker {

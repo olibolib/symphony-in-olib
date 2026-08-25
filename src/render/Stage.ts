@@ -88,6 +88,19 @@ export class Stage {
     this.container.style.transform = `translateY(${-this.scrollOffset}px) scale(${scale})`;
   }
 
+  /**
+   * Publish the length of four beats, so CSS animations can be timed in bars.
+   *
+   * A CSS variable rather than a duration written per element: an animation whose duration
+   * is `calc(var(--bar) * 0.25)` **re-times itself** the moment the tempo changes, for every
+   * element at once and with no JavaScript touching them. Writing seconds at the point a
+   * treatment fires would freeze each element at whatever the tempo was when it was lit, and
+   * a flickering word from before a track change would beat against the one next to it.
+   */
+  setBarSeconds(seconds: number): void {
+    this.el.style.setProperty('--bar', `${seconds.toFixed(4)}s`);
+  }
+
   /** Sets the base font size all preset sizing is relative to. Mirrors Acid's `--fs`. */
   setFontScale(px: number): void {
     this.el.style.setProperty('--fs', `${px}px`);

@@ -78,7 +78,11 @@ const DECO_STRIKE = 2;
  */
 export function write(
   treatment: Treatment,
-  options: { readonly amount: number; readonly size?: { min: number; max: number } },
+  options: {
+    readonly amount: number;
+    readonly size?: { min: number; max: number };
+    readonly rateBars?: number;
+  },
 ): readonly Written[] {
   switch (treatment) {
     case 'invert': {
@@ -117,7 +121,9 @@ export function write(
     }
 
     case 'flicker':
-      return [{ channel: 'anim', value: '1' }];
+      // A multiplier of a bar, not a duration. CSS multiplies it by the live bar length, so
+      // the blink stays on the grid through a tempo change without the engine touching it.
+      return [{ channel: 'anim', value: String(options.rateBars ?? 0.25) }];
 
     case 'blank':
       return [{ channel: 'vis', value: '1' }];
@@ -127,10 +133,11 @@ export function write(
 /**
  * Whether a channel carries a free value rather than a slot number.
  *
- * `size` is a scale factor written to a custom property, because a slider producing 1.37
- * cannot be expressed as one of five numbered rules. Everything else is a slot, and stays a
- * slot — that is what keeps the appearance in CSS where a preset can restyle it.
+ * `size` is a scale factor and `anim` is a period in bars: both are continuous quantities a
+ * slider produces, and 1.37 cannot be expressed as one of five numbered rules. Everything
+ * else is a slot and stays one — that is what keeps the appearance in CSS where a preset can
+ * restyle it without touching any JavaScript.
  */
 export function isScalar(channel: Channel): boolean {
-  return channel === 'size';
+  return channel === 'size' || channel === 'anim';
 }

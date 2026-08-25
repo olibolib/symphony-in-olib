@@ -31,6 +31,14 @@ export interface LayerSpec {
 
   /** Only read by size treatments. Rolled within these bounds each time it fires. */
   readonly size?: { readonly min: number; readonly max: number };
+
+  /**
+   * Period of one cycle, in bars. Only read by periodic treatments — `flicker` today.
+   *
+   * 0.25 is one beat, 0.125 an eighth, 1 a whole bar. It is not a duration in seconds
+   * precisely so that it stays on the grid when the tempo changes (§11.5).
+   */
+  readonly rateBars?: number;
 }
 
 /**
@@ -86,6 +94,7 @@ export class Layer {
       const written = write(this.spec.treatment, {
         amount,
         ...(this.spec.size ? { size: this.spec.size } : {}),
+        ...(this.spec.rateBars !== undefined ? { rateBars: this.spec.rateBars } : {}),
       });
 
       for (const { channel, value } of written) {
