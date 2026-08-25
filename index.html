@@ -5,6 +5,25 @@
     <title>Symphony in Olib</title>
     <link rel="stylesheet" href="/style/base.css" />
     <link rel="stylesheet" href="/style/stage.css" />
+
+    <!--
+      Apply the saved background before the first paint.
+
+      `main.ts` is a module, so it is deferred: it runs after the document is parsed, and the
+      stage paints once with the default white background before it gets a chance. On a black
+      or transparent setup that is a white flash on the captured output — brief on a warm
+      start, much less brief while the presets folder and the device list are being read.
+
+      The key is duplicated from `BG_KEY` in main.ts deliberately: nothing this early can
+      import, and the alternative is a flash on every launch.
+    -->
+    <script>
+      try {
+        document.documentElement.dataset.bg = localStorage.getItem('olib.background') || 'white';
+      } catch (error) {
+        document.documentElement.dataset.bg = 'white';
+      }
+    </script>
   </head>
   <body>
     <!--

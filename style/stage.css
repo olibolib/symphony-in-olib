@@ -43,15 +43,21 @@ c {
    actually meant — the slot is the *base* colour, and a layer taking the fg channel replaces
    it. */
 
+/* Every slot starts as the stage foreground, not as black.
+   `colourShift` resets them to exactly this before scattering accents, so the two agree —
+   but it only runs on a phrase, and only two of the four built-ins bind it. Hardcoding black
+   here meant that on a black or transparent background the text was black on black until
+   some preset happened to reseat the slots, which needs a locked clock and up to 32 bars.
+   The stage looked empty and nothing was wrong with it. */
 #stage {
-  --c0: #000000;
-  --c1: #000000;
-  --c2: #000000;
-  --c3: #000000;
-  --c4: #000000;
-  --c5: #000000;
-  --c6: #000000;
-  --c7: #000000;
+  --c0: var(--stage-fg);
+  --c1: var(--stage-fg);
+  --c2: var(--stage-fg);
+  --c3: var(--stage-fg);
+  --c4: var(--stage-fg);
+  --c5: var(--stage-fg);
+  --c6: var(--stage-fg);
+  --c7: var(--stage-fg);
 }
 
 w[data-slot='0']:not([data-fg]) { color: var(--c0); }

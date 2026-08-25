@@ -177,6 +177,10 @@ function setSensitivity(band: BandName, value: number): void {
  * Stage background. Transparent is for compositing over other layers in OBS (§13.3) — the
  * text colour flips to white with it, since black type over arbitrary video is unreadable.
  */
+/**
+ * Also read by an inline script in `index.html`, which applies the mode before the first
+ * paint. Change one and change the other, or launching flashes white.
+ */
 const BG_KEY = 'olib.background';
 
 function applyBackground(mode: BackgroundMode): void {
