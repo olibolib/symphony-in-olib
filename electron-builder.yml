@@ -17,6 +17,12 @@ files:
 # The capture helpers are executables, and an executable cannot be spawned from inside
 # app.asar — it has to exist as a real file on disk. Without this the app works perfectly in
 # development and per-application capture fails only in the installed build.
+# The tray icon is read at runtime, so it has to exist inside the installed app. `build/` is
+# build resources only and is not packaged.
+extraResources:
+  - from: build/tray.png
+    to: tray.png
+
 asarUnpack:
   - node_modules/application-loopback/bin/**/*
 

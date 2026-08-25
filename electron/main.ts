@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, screen, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, session, Tray } from 'electron';
 import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -14,6 +14,57 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Stage size — DESIGN.md §13.1. The window is sized to fit this at 1:1. */
 const STAGE = { width: 1280, height: 720 } as const;
+
+/**
+ * The tray icon.
+ *
+ * Packaged, `build/` is only build resources and is not inside the app — so the file is
+ * copied to the resources directory (see extraResources) and read from there. In development
+ * it is read straight from the source tree.
+ */
+function trayIconPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'tray.png')
+    : join(__dirname, '..', '..', 'build', 'tray.png');
+}
+
+let tray: Tray | null = null;
+
+/**
+ * Closing the control window hides it rather than quitting — the show carries on. The tray
+ * is how it comes back, and the only place a menu can live: the canvas window is on the
+ * stream, and even an auto-hidden menu bar appears on Alt. DESIGN.md §7.1.
+ */
+function createTray(): void {
+  const image = nativeImage.createFromPath(trayIconPath());
+  tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
+  tray.setToolTip('Symphony in Olib');
+
+  const showControl = (): void => {
+    if (!controlWindow || controlWindow.isDestroyed()) return;
+    controlWindow.show();
+    controlWindow.focus();
+  };
+
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Show control window', click: showControl },
+      {
+        label: 'Control window always on top',
+        type: 'checkbox',
+        checked: false,
+        click: (item) => controlWindow?.setAlwaysOnTop(item.checked),
+      },
+      { type: 'separator' },
+      { label: 'Centre canvas on screen', click: () => centreOutput() },
+      { type: 'separator' },
+      { label: 'Quit', click: () => outputWindow?.close() },
+    ]),
+  );
+
+  // Double-click is the habit everyone already has for a tray icon.
+  tray.on('double-click', showControl);
+}
 
 /** Default size of the control window. Resizable, and its bounds are remembered. */
 const CONTROL_DEFAULT = { width: 980, height: 560 } as const;
@@ -391,7 +442,7 @@ function stopAppCapture(): void {
 
 app.on('before-quit', stopAppCapture);
 
-ipcMain.on('olib:centre-output', () => {
+function centreOutput(): void {
   if (!outputWindow || outputWindow.isDestroyed()) return;
   const [width, height] = outputWindow.getContentSize();
   const area = screen.getDisplayNearestPoint(outputWindow.getBounds()).workArea;
@@ -399,7 +450,9 @@ ipcMain.on('olib:centre-output', () => {
     area.x + Math.round((area.width - (width ?? 0)) / 2),
     area.y + Math.round((area.height - (height ?? 0)) / 2),
   );
-});
+}
+
+ipcMain.on('olib:centre-output', centreOutput);
 
 /**
  * The capture helpers resolve relative to their own module, which in a packaged build is
@@ -440,6 +493,7 @@ void app.whenReady().then(() => {
 
   createOutputWindow();
   createControlWindow();
+  createTray();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
