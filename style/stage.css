@@ -125,10 +125,16 @@ w[data-slot='7'] { color: var(--c7); }
   overflow: hidden;
 
   /* Vertically centred within its own box, which is what the table-cell used to do for the
-     whole stage — now per block, so a short passage sits in the middle of its band. */
+     whole stage — now per block, so a short passage sits in the middle of its band.
+
+     `safe` is what makes that survive overflow. Plain `center` distributes the excess to
+     *both* ends, so a passage taller than its block loses its opening line as well as its
+     last — and the beginning is the half you cannot do without. With `safe`, centring
+     applies while the text fits and gives way to top-aligned the moment it does not, so a
+     block that is too small clips its end rather than its start. */
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: safe center;
 }
 
 /* --- align (§11.6) --------------------------------------------------------------------
@@ -159,7 +165,7 @@ w[data-slot='7'] { color: var(--c7); }
 #container[data-flow='grid'] .block {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(6em, 1fr));
-  align-content: center;
+  align-content: safe center;
   gap: 0.06em;
 }
 #container[data-flow='grid'] .block > p {
@@ -171,7 +177,7 @@ w[data-slot='7'] { color: var(--c7); }
 #container[data-flow='wrapped'] .block {
   flex-direction: row;
   flex-wrap: wrap;
-  align-content: center;
+  align-content: safe center;
   gap: 0 0.4em;
 }
 #container[data-flow='wrapped'] .block > p {
