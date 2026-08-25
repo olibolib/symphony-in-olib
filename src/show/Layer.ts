@@ -42,10 +42,24 @@ export interface LayerSpec {
  */
 export class Layer {
   readonly id: number;
-  readonly spec: LayerSpec;
+
+  /**
+   * Mutable, so a live edit can retune a running layer without rebuilding the stack.
+   *
+   * The id is what `Channels` records as the owner of every value this layer has lit, so
+   * constructing a replacement orphans all of them and the stage flashes. Editing the spec
+   * in place keeps the id — and therefore keeps the ownership — which is what lets a slider
+   * be dragged rather than nudged (§11.4).
+   */
+  spec: LayerSpec;
 
   constructor(id: number, spec: LayerSpec) {
     this.id = id;
+    this.spec = spec;
+  }
+
+  /** Retune without disturbing what this layer already owns. */
+  update(spec: LayerSpec): void {
     this.spec = spec;
   }
 

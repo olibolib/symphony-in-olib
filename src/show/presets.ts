@@ -3,6 +3,7 @@ import type { EffectRef } from '../effects/types';
 import type { Align, Flow, TextMode } from '../text/Typesetter';
 import type { Bindings } from './Conductor';
 import type { LayerSpec } from './Layer';
+import type { PresetDoc } from '../ipc/protocol';
 import { KEEP_CENTRE_CLEAR, type BlockShape, type Mask } from './mask';
 
 /**
@@ -55,7 +56,7 @@ export interface VisualPreset {
     readonly mode: TextMode;
     readonly count: number;
     readonly splitChars: boolean;
-    readonly blocks: 1 | 2;
+    readonly blocks: 1 | 2 | 3;
 
     /**
      * Base size in px, rolled once per typeset (§11.5).
@@ -139,6 +140,34 @@ const FADE = {
   fast: 0.4,
   instant: 0.25,
 } as const;
+
+/**
+ * Strip a preset down to its editable document (§11.4).
+ *
+ * The inverse lives in `PresetStore.resolve`. Explicit field-by-field rather than a spread
+ * with deletions, so adding a field to `VisualPreset` that should *not* be editable does not
+ * silently start being sent to the control window.
+ */
+export function toDoc(preset: VisualPreset): PresetDoc {
+  return {
+    name: preset.name,
+    energy: preset.energy,
+    text: {
+      mode: preset.text.mode,
+      count: preset.text.count,
+      splitChars: preset.text.splitChars,
+      blocks: preset.text.blocks,
+      size: preset.text.size,
+      ...(preset.text.varyBy ? { varyBy: preset.text.varyBy } : {}),
+    },
+    spawn: preset.spawn,
+    blockShapes: preset.blockShapes,
+    align: preset.align,
+    flow: preset.flow,
+    avoidOverlap: preset.avoidOverlap,
+    layers: preset.layers,
+  };
+}
 
 export const PRESETS: readonly VisualPreset[] = [
   /**

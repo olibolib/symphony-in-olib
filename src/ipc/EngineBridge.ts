@@ -7,6 +7,7 @@ import {
   STATE_INTERVAL_MS,
   type ControlCommand,
   type EngineState,
+  type PresetDoc,
   type PresetSnapshot,
 } from './protocol';
 
@@ -31,6 +32,7 @@ export class EngineBridge {
     source: 'none',
     confidence: null,
     presets: [],
+    docs: [],
     livePreset: '',
     queuedPreset: null,
     liveText: '',
@@ -101,6 +103,11 @@ export class EngineBridge {
 
   setPresets(presets: readonly PresetSnapshot[]): void {
     this.state.presets = presets;
+  }
+
+  /** The editable documents behind those presets (§11.4). */
+  setPresetDocs(docs: readonly PresetDoc[]): void {
+    this.state.docs = docs;
   }
 
   /** What is on the stage and what is waiting. The list itself lives in the control window. */

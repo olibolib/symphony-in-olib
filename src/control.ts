@@ -54,6 +54,7 @@ function render(state: EngineState): void {
   hud.setCrop(state.crop);
   hud.setPalette(state.palette);
   hud.setMask(state.mask);
+  hud.setPresetDocs(state.docs);
   hud.setBackgroundMode(state.background);
   hud.setDevices(
     state.devices.map((d) => ({ id: d.id, label: d.label, isSystem: false })),
@@ -224,6 +225,13 @@ hud.onSensitivityChange = (band, value) =>
   window.olib.sendCommand({ type: 'setSensitivity', band, value });
 hud.onPaletteChange = (name) => window.olib.sendCommand({ type: 'setPalette', name });
 hud.onMaskChange = (mask) => window.olib.sendCommand({ type: 'setMask', mask });
+
+// The Presets tab edits documents and sends them whole; the engine decides whether a change
+// lands now or at the next phrase (§11.4).
+hud.editor.onChange = (doc) => window.olib.sendCommand({ type: 'updatePreset', doc });
+hud.editor.onCreate = (from) => window.olib.sendCommand({ type: 'createPreset', from });
+hud.editor.onDelete = (name) => window.olib.sendCommand({ type: 'deletePreset', name });
+hud.editor.onRename = (from, to) => window.olib.sendCommand({ type: 'renamePreset', from, to });
 hud.onBackgroundChange = (mode) => window.olib.sendCommand({ type: 'setBackground', mode });
 hud.onPresetGo = (name) => window.olib.sendCommand({ type: 'queuePreset', name });
 hud.onPresetToggle = (name, enabled) =>

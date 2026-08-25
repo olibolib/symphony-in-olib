@@ -1,6 +1,9 @@
 import type { BandName } from '../audio/bands';
 import type { PaletteName } from '../render/palette';
-import type { Mask } from '../show/mask';
+import type { BlockShape, Mask } from '../show/mask';
+import type { LayerSpec } from '../show/Layer';
+import type { EnergyTag } from '../show/presets';
+import type { Align, Flow, TextMode } from '../text/Typesetter';
 import type { ClockSource } from '../types';
 
 /**
@@ -18,6 +21,44 @@ import type { ClockSource } from '../types';
 /** Per-band meter values. Sent at a reduced rate — see `STATE_INTERVAL_MS`. */
 export interface BandSnapshot {
   readonly level: number;
+}
+
+/**
+ * The editable half of a preset. DESIGN.md §11.4.
+ *
+ * A preset is two things: **data** — layers, placement, text settings — and **stage
+ * effects**, which are closures (`retext`, `colourShift`, `pulse`) and cannot cross a window
+ * boundary or be written to a file. Only the data half is a document.
+ *
+ * That split is not a workaround. Everything here is what §11.5 pulled apart into
+ * independent choices, and it is exactly the part worth editing during a set; the stage
+ * effects are the part that has no target to separate out and no slider to put on it. They
+ * are held engine-side and merged back by name.
+ *
+ * Sent whole and replaced whole rather than diffed. A preset is a few kilobytes, the editor
+ * always has the current version, and "replace this document" is idempotent in a way that a
+ * patch stream is not — which matters when the thing being edited is also running.
+ */
+export interface PresetDoc {
+  readonly name: string;
+  readonly energy: EnergyTag;
+
+  readonly text: {
+    readonly mode: TextMode;
+    readonly count: number;
+    readonly splitChars: boolean;
+    readonly blocks: 1 | 2 | 3;
+    readonly size: { readonly min: number; readonly max: number };
+    readonly varyBy?: 'word' | 'char';
+  };
+
+  readonly spawn: Mask;
+  readonly blockShapes: readonly BlockShape[];
+  readonly align: Align;
+  readonly flow: Flow;
+  readonly avoidOverlap: boolean;
+
+  readonly layers: readonly LayerSpec[];
 }
 
 export interface PresetSnapshot {
@@ -40,6 +81,9 @@ export interface EngineState {
   readonly confidence: number | null;
 
   readonly presets: readonly PresetSnapshot[];
+
+  /** Every preset's editable document, for the Presets tab (§11.4). */
+  readonly docs: readonly PresetDoc[];
   readonly livePreset: string;
   readonly queuedPreset: string | null;
 
@@ -98,6 +142,20 @@ export type ControlCommand =
   | { readonly type: 'setBackground'; readonly mode: 'white' | 'black' | 'transparent' }
   | { readonly type: 'queuePreset'; readonly name: string }
   | { readonly type: 'setPresetEnabled'; readonly name: string; readonly enabled: boolean }
+
+  /**
+   * Replace one preset's document.
+   *
+   * How it lands depends on what changed, and the rule is §11.4's: a parameter moves
+   * immediately, because waiting for a phrase would make a slider feel broken, while
+   * anything structural waits for the next phrase because it is a decision rather than an
+   * adjustment. The engine works out which this is; the control window just sends the
+   * document it has.
+   */
+  | { readonly type: 'updatePreset'; readonly doc: PresetDoc }
+  | { readonly type: 'createPreset'; readonly from: string | null }
+  | { readonly type: 'deletePreset'; readonly name: string }
+  | { readonly type: 'renamePreset'; readonly from: string; readonly to: string }
   /**
    * Text editing lives in the control window; the engine only ever receives finished
    * content. Drafts, undo and the editor's own state never cross the boundary.

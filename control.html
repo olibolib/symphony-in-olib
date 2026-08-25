@@ -67,6 +67,7 @@
         <button data-tab="audio" class="active">Audio</button>
         <button data-tab="text">Text</button>
         <button data-tab="effects">Effects</button>
+        <button data-tab="presets">Presets</button>
         <button data-tab="canvas">Canvas</button>
         <button data-tab="colours">Colours</button>
         <button data-tab="settings">Settings</button>
@@ -104,6 +105,20 @@
 
         <section class="panel" data-panel="effects" hidden>
           <div class="preset-list" id="opt-presets"></div>
+        </section>
+
+        <section class="panel" data-panel="presets" hidden>
+          <div class="pe" id="opt-editor">
+            <div class="pe-side">
+              <div class="pe-list"></div>
+              <div class="pe-side-actions">
+                <button id="pe-new" type="button">New</button>
+                <button id="pe-duplicate" type="button">Duplicate</button>
+                <button id="pe-delete" type="button">Delete</button>
+              </div>
+            </div>
+            <div class="pe-form"></div>
+          </div>
         </section>
 
         <section class="panel" data-panel="canvas" hidden>

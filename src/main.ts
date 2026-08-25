@@ -44,7 +44,8 @@ import { Typesetter, type TextMode } from './text/Typesetter';
 import { randomRange } from './util/random';
 import prologueRaw from '../presets/text/prologue.txt?raw';
 import { Conductor, type Lane } from './show/Conductor';
-import { PRESETS } from './show/presets';
+import { PresetStore } from './show/PresetStore';
+import type { PresetDoc } from './ipc/protocol';
 import { PresetBank } from './show/PresetBank';
 import { type EffectContext } from './effects/types';
 import { Channels } from './show/Channels';
@@ -74,7 +75,8 @@ const clock = new Clock();
 const typesetter = new Typesetter(stage);
 const conductor = new Conductor();
 const channels = new Channels();
-const bank = new PresetBank(PRESETS);
+const store = new PresetStore();
+const bank = new PresetBank(store.resolve());
 
 /** Phrases the current text has been on screen. Drives `retext` holds and `whenHolding`. */
 let textAge = 0;
@@ -348,8 +350,79 @@ function applyPreset(): void {
 
 function publishPresets(): void {
   hud.setPresets(
-    PRESETS.map((p) => ({ name: p.name, energy: p.energy, enabled: bank.isEnabled(p.name) })),
+    bank.all.map((p) => ({ name: p.name, energy: p.energy, enabled: bank.isEnabled(p.name) })),
   );
+  hud.setPresetDocs(store.all);
+}
+
+/**
+ * Apply an edited document. DESIGN.md §11.4, "two speeds of change".
+ *
+ * A parameter moves **immediately** — waiting a phrase would make a slider feel broken. A
+ * structural change waits for the next phrase, because it is a decision rather than an
+ * adjustment. The control window does not have to know which it sent: the difference is
+ * visible here, by comparing what actually changed.
+ */
+function applyEdit(doc: PresetDoc): void {
+  const before = store.find(doc.name);
+  if (!before || !store.update(doc)) return;
+
+  bank.replace(store.resolve());
+  publishPresets();
+
+  // Only the live preset has anything running to update. Editing one that is not on stage
+  // is already done — it will be built fresh when it goes live.
+  if (bank.current.name !== doc.name) return;
+
+  if (layoutChanged(before, doc)) {
+    // Placement and text settings are only visible in a re-typeset, so there is nothing to
+    // do in place — and doing it now rather than at the phrase is what makes dragging the
+    // block-shape numbers legible.
+    applyPreset();
+    return;
+  }
+
+  retuneLayers(doc);
+}
+
+/** Whether anything that only a re-typeset can show has changed. */
+function layoutChanged(before: PresetDoc, after: PresetDoc): boolean {
+  return (
+    JSON.stringify(before.text) !== JSON.stringify(after.text) ||
+    JSON.stringify(before.spawn) !== JSON.stringify(after.spawn) ||
+    JSON.stringify(before.blockShapes) !== JSON.stringify(after.blockShapes) ||
+    before.align !== after.align ||
+    before.flow !== after.flow ||
+    before.avoidOverlap !== after.avoidOverlap
+  );
+}
+
+/**
+ * Push new layer settings into the running stack.
+ *
+ * Where the shape of the stack is unchanged — same count, same treatments, same order — the
+ * `Layer` objects are updated **in place**. That matters more than it looks: a layer's id is
+ * its ownership token in `Channels`, so rebuilding the stack orphans every value currently
+ * lit and the stage flashes. Dragging a slider would strobe.
+ *
+ * When the shape *has* changed, rebuilding is unavoidable and the orphaned values are
+ * cleared deliberately rather than left to decay against owners that no longer exist.
+ */
+function retuneLayers(doc: PresetDoc): void {
+  const live = conductor.layers;
+  const sameShape =
+    live.length === doc.layers.length &&
+    live.every((layer, i) => layer.spec.treatment === doc.layers[i]?.treatment);
+
+  if (sameShape) {
+    live.forEach((layer, i) => {
+      const spec = doc.layers[i];
+      if (spec) layer.update(spec);
+    });
+    return;
+  }
+
+  applyPreset();
 }
 
 publishPresets();
@@ -486,6 +559,42 @@ hud.onCommand = (command) => {
       bank.queue(command.name);
       hud.setPresetState(bank.current.name, bank.pending);
       break;
+
+    case 'updatePreset':
+      applyEdit(command.doc);
+      break;
+
+    case 'createPreset': {
+      const created = store.create(command.from);
+      bank.replace(store.resolve());
+      bank.setEnabled(created.name, true);
+      publishPresets();
+      // Queued rather than applied: a new preset arriving mid-phrase would read as a fault,
+      // and §11.2 says every preset change goes through the same door.
+      bank.queue(created.name);
+      hud.setPresetState(bank.current.name, bank.pending);
+      break;
+    }
+
+    case 'deletePreset':
+      if (store.remove(command.name)) {
+        bank.replace(store.resolve());
+        publishPresets();
+        hud.setPresetState(bank.current.name, bank.pending);
+      } else {
+        hud.setStatus('Cannot delete the last preset', true);
+      }
+      break;
+
+    case 'renamePreset': {
+      const renamed = store.rename(command.from, command.to);
+      if (renamed !== null) {
+        bank.replace(store.resolve());
+        publishPresets();
+        hud.setPresetState(bank.current.name, bank.pending);
+      }
+      break;
+    }
 
     case 'setPresetEnabled':
       bank.setEnabled(command.name, command.enabled);

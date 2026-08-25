@@ -22,7 +22,7 @@ const MAX_BARS = 32;
 const ENABLED_KEY = 'olib.enabledPresets';
 
 export class PresetBank {
-  private readonly presets: readonly VisualPreset[];
+  private presets: readonly VisualPreset[];
   private index: number;
 
   /** Names the cycle may choose from. Never empty — see `setEnabled`. */
@@ -45,6 +45,38 @@ export class PresetBank {
 
   get all(): readonly VisualPreset[] {
     return this.presets;
+  }
+
+  /**
+   * Swap in a rebuilt set after an edit (§11.4).
+   *
+   * The live preset is followed **by name**, not by index: editing a preset rebuilds the
+   * whole array, and an index would silently point at a different preset the moment one was
+   * added or deleted above it. If the live one has been deleted, the index is clamped rather
+   * than reset to zero, so the stage lands on its neighbour instead of jumping to the top of
+   * the list mid-set.
+   */
+  replace(presets: readonly VisualPreset[]): void {
+    if (presets.length === 0) return;
+
+    const liveName = this.current.name;
+    this.presets = presets;
+
+    const found = presets.findIndex((p) => p.name === liveName);
+    this.index = found >= 0 ? found : Math.min(this.index, presets.length - 1);
+
+    // A queued name that no longer exists would sit there being checked forever.
+    if (this.queued !== null && !presets.some((p) => p.name === this.queued)) {
+      this.queued = null;
+    }
+
+    // Same for the enabled set — and it must never end up empty, since the cycle would then
+    // have nothing to choose from.
+    const names = new Set(presets.map((p) => p.name));
+    for (const name of Array.from(this.enabledNames)) {
+      if (!names.has(name)) this.enabledNames.delete(name);
+    }
+    if (this.enabledNames.size === 0) this.enabledNames.add(this.current.name);
   }
 
   get current(): VisualPreset {
