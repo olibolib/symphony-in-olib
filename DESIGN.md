@@ -2022,11 +2022,20 @@ Staged so each step is usable on its own:
   cannot promise that — but `avoidOverlap`, on by default, searches for an arrangement that
   does not collide and finds one nearly always. Measured at 46% of `scatter` typesets and
   69% of `swarm` typesets overlapping without it, which was too high to leave.
-- **2c — live editing.** The Effects tab generates a control per parameter; layers added,
-  removed and reordered. No serialisation needed yet, and this is the point where the tool
-  starts paying for itself.
-- **2d — saving.** Presets become JSON alongside the texts, with validation on load, plus
-  per-preset text lists and delete protection (§11.7).
+- **2c — live editing — done.** A **Presets** tab rather than the Effects tab: a preset list
+  beside a form for text, placement and layers. A preset splits into a serialisable document
+  and its stage effects, which are closures and stay engine-side, merged back by name.
+- **2d — saving — done.** One JSON file per preset in writable app data, seeded from the
+  compiled built-ins on first run, debounced 600ms and flushed on close. Validation on load
+  reports every correction by name and keeps as much of a preset as can be understood.
+  Per-preset text lists and delete protection landed with it (§11.7).
+
+**Increment 2 is complete.** What it cost that was not planned: four treatment bugs found by
+using the editor for five minutes (a colour-slot selector outranking the channel, so `accent`
+did nothing and word-level `invert` was black-on-black; `text-decoration` not crossing into
+inline-block characters; a dingbat font that does not exist on Windows), a stale-closure bug
+that reverted a layer's triggers whenever its treatment changed, and flicker running at a
+fixed wall-clock rate despite §11.5 having decided otherwise.
 
 ### Increment 3 — detection hardening
 
@@ -2157,6 +2166,8 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | ~~Q19~~ | ~~Region targets?~~ **Answered: no** — replaced by the spawn grid, which was the actual intent | §11.6 |
 | Q20 | Does `flow: 'columns'` need a tunable gap, or is one number enough to recover layout 12's look? | §11.6 |
 | Q24 | Structure detection has lost its intended output now that energy tags drive nothing. What should knowing "this is a breakdown" actually change? | §10.1 |
+| Q28 | Presets are saved but not versioned. A file written by a future build could lose fields on load — worth a version stamp before the format changes again? | §11.4 |
+| Q29 | Text lists roll per block, so a preset with two texts and two blocks shows one each only by chance. Is explicit one-each worth an option? | §11.7 |
 | Q26 | Variety now comes from anchors and shapes rolling per typeset, where `newLayout` changed the whole arrangement every bar. Is a per-typeset roll enough, or does something want to move on the bar again? | §11.6 |
 | Q27 | `flow: 'grid'` and `'columns'` are implemented but no built-in uses them. Worth building a preset around, or do they only make sense once presets are editable? | §11.6 |
 | Q25 | `whenHolding` fired on replacement phrases as well as held ones for the whole of Increment 1. Did the presets get tuned around that? If held layers now look thin, that is why | §11.5 |
