@@ -847,6 +847,7 @@ the dispatch path is affected.
 ```ts
 interface PresetData {
   name: string;
+  /** A free-form label the VJ applies. Drives nothing — see §11.5. */
   energy: EnergyTag;
 
   /** Names, not content — see §11.7. Empty means "follow the text menu". */
@@ -890,8 +891,7 @@ interface LayerData {
   /** Bars to fade. 0 means it stays until re-typeset. */
   decayBars: number;
   amount: number;
-  follow?: 'energy' | 'bass';
-  /** Only read by size treatments. */
+  /** Only read by size treatments. Rolled within these bounds when it fires. */
   size?: { min: number; max: number };
 }
 
@@ -1133,12 +1133,13 @@ an unbounded quantity driven by live audio will eventually find a value that rui
 
 ```ts
 { treatment: 'swell', target: { slice: 'word', proportion: 0.1 },
-  size: { min: 0.7, max: 1.6 }, follow: 'bass' }
+  size: { min: 0.7, max: 1.6 } }
 ```
 
 Both ends earn their place. The maximum stops a word overrunning the block; the minimum stops
-it shrinking past legibility on a projector at the back of the room. The range is also what
-makes `follow` mean anything — quiet sits at `min`, a peak reaches `max`.
+it shrinking past legibility on a projector at the back of the room. The scale is **rolled
+within the range each time the layer fires** — the same rule every other pair of bounds in this
+design follows.
 
 **Base size** is not a layer. It is how big the text is, and it should not need a trigger or a
 decay to set it. It lives on `text`, is rolled once at typeset and never touched again:
@@ -1151,6 +1152,48 @@ size: { min: 28, max: 52 }, varyBy: 'char'    // ransom-note
 
 Without `varyBy` the block picks one size and everything matches; with it, each word or
 character rolls its own.
+
+#### No continuous following: triggers and rolls, nothing else
+
+Every rate and quantity in this design is one of two things — **a trigger fires it**, or **a
+roll within bounds sets it**. Nothing tracks live audio continuously.
+
+That removes `follow: 'energy' | 'bass'`, which scaled how much an effect did by the live
+signal. It had exactly two consumers: `glitchWords` multiplying its amount by
+`0.4 + 0.6 * energy`, and `swell` sizing by `0.5 + bass`.
+
+**It was doubling up on something the triggers already do.** In a breakdown the kick stops, so
+kick-triggered layers stop firing, so the visual thins out on its own. Scaling the amount *as
+well* meant intensity was governed in two places at once — which is exactly why a preset was
+hard to reason about, and why "turn this down a bit" was not a thing you could actually do.
+
+With a per-layer amount and a per-layer decay, the VJ says how much and how long. That is
+finer control than an automatic curve, and it is predictable, which an authoring tool needs
+more than it needs cleverness.
+
+It also makes the design consistent: base size, block shapes and swell bounds are now all the
+same rule — *roll within these bounds* — rather than three superficially similar fields with
+different behaviour.
+
+> `energy` and `bass` stay on `EffectContext`. The analyser computes them for the meters
+> regardless, and structure detection (§10.1) will want them. They are simply no longer wired
+> into what layers do.
+
+#### The energy tag is a label
+
+`EnergyTag` — `'sparse' | 'mid' | 'peak' | 'any'` — stays, and stays **exactly as inert as it
+already is**. `PresetBank.takeNext()` has never read it; it reaches the control window for
+display and nothing else.
+
+Confirmed as the intended design rather than an omission: it is a label the VJ applies to
+organise their own presets. With per-layer control over targets, amounts and decays, an
+automatic energy rating has nothing left to decide that the preset does not already say
+outright.
+
+**This changes what Increment 5 is.** Its premise was "activates the `energy` tags already
+present on presets". Structure detection is still worth having — knowing a breakdown from a
+drop is real information — but it will have to act on something other than a tag-to-preset
+mapping. Left open rather than redesigned here.
 
 #### Which settles reflow
 
@@ -1940,9 +1983,13 @@ energy.
 
 ### Increment 5 — energy and structure
 
-Breakdown, drop and build detection from low-band energy (§10.1), driving preset changes and
-intensity so the visual responds to arrangement rather than just pulse. Activates the `energy`
-tags already present on presets.
+Breakdown, drop and build detection from low-band energy (§10.1), so the visual responds to
+arrangement rather than just pulse.
+
+**Premise needs rethinking.** This was going to activate the `energy` tags on presets. Those
+are now a label the VJ applies and nothing else (§11.5), so structure detection has to act on
+something else — a preset change, a decay multiplier, a mask swap. Worth deciding after the
+layer system has been used, not before.
 
 ### Increment 6 — MIDI pads
 
@@ -2000,6 +2047,8 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Embedding text content inside preset files | **Dropped** | Not a size problem — a staleness one. Editing a text would leave stale copies in presets. Reference by name; inline only on export (§11.7) |
 | Letting a referenced text be deleted, with graceful fallback | **Dropped** | Moves the failure into a live set. Refuse the delete and name the presets instead (§11.7) |
 | Rolling block width and height independently | **Dropped** | Produces square blobs between the column and band that were wanted; the axes are related, so they are chosen together from a shape list (§11.6) |
+| `follow: 'energy' \| 'bass'` — continuous audio scaling per layer | **Dropped** | Doubles up on the triggers, which already thin out when the kick stops. Governing intensity in two places is why presets were hard to reason about (§11.5) |
+| An energy rating that selects presets automatically | **Dropped** | Superfluous once layers are individually controllable. Stays a label the VJ applies; was never wired up anyway (§11.5) |
 | Letterboxed, scaled stage | **Dropped** | Resamples text; 1:1 top-left also makes the OBS crop trivial (§13.1) |
 | Onset threshold as `mean × k` | **Dropped** | Cleared constantly by steady-state signal. Use `mean + k × stddev` (§9.2.1) |
 | 0.7s flux history window | **Dropped** | Spans a beat, not a bar; collapses in breakdowns (§9.2.1) |
@@ -2049,6 +2098,7 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | ~~Q18~~ | ~~Does `flicker` belong with the treatments given it is continuous?~~ **Answered: yes** — same authoring, CSS runs the animation | §11.5 |
 | ~~Q19~~ | ~~Region targets?~~ **Answered: no** — replaced by the spawn grid, which was the actual intent | §11.6 |
 | Q20 | Does `flow: 'columns'` need a tunable gap, or is one number enough to recover layout 12's look? | §11.6 |
+| Q24 | Structure detection has lost its intended output now that energy tags drive nothing. What should knowing "this is a breakdown" actually change? | §10.1 |
 | ~~Q23~~ | ~~Independent width and height ranges cannot say "tall or wide, never square".~~ **Answered: a list of candidate shapes**, rolled per block, so the two axes are chosen together as an authored pair | §11.6 |
 | Q21 | With three blocks and three named texts, the list feeds variety (each block draws independently). Should one-each composition be an explicit option, or is random enough? | §11.7 |
 | Q22 | Layout 16 aligned alternate blocks outward. Dropped as a between-blocks relationship the model does not store — does it turn out to matter? | §11.6 |
