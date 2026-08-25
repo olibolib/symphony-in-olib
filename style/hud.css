@@ -966,3 +966,12 @@ kbd {
     flex-basis: 100%;
   }
 }
+
+.pe-warn {
+  margin: 0;
+  padding: 6px 9px;
+  border-left: 2px solid #d98a1c;
+  background: #1a150c;
+  color: #d9b070;
+  font-size: 12px;
+}

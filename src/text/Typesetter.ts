@@ -20,6 +20,7 @@ import { sentenceLength, type Sentence, type TextPreset } from './TextSource';
  */
 export type TextMode =
   | 'whole'
+  | 'continuous'
   | 'sentence'
   | 'sentences'
   | 'shortSentences'
@@ -109,6 +110,19 @@ const DEFAULT_MAX_ELEMENTS = 6000;
 export class Typesetter {
   private readonly stage: Stage;
 
+  /**
+   * How far `continuous` has read, in sentences.
+   *
+   * Lives on the typesetter rather than in the preset, because it is a position in a
+   * *reading*, not a property of the preset or of the text. Two presets both set to
+   * `continuous` share the thread through the passage, which is what you want: switching
+   * preset mid-poem should change how it looks, not restart it.
+   */
+  private cursor = 0;
+
+  /** The text the cursor refers to. Changing text starts the reading again. */
+  private cursorText = '';
+
   /** Live registries, refreshed on every render so effects never walk a stale DOM. */
   blocks: readonly HTMLElement[] = [];
 
@@ -173,8 +187,15 @@ export class Typesetter {
     // overlap needs to see the boxes already placed.
     const boxes = placeBlocks(cells, shapes, blocks, options.avoidOverlap !== false);
 
+    if (preset.name !== this.cursorText) {
+      this.cursorText = preset.name;
+      this.cursor = 0;
+    }
+
     for (let index = 0; index < blocks; index++) {
-      // Each block selects independently, so they show different text.
+      // Each block selects independently, so two blocks show different text — except in
+      // `continuous`, where they deliberately show *consecutive* text and read as one
+      // passage split across the frame.
       const lines = this.select(preset, { ...options, count: perBlock });
 
       // Rolled per block, so a tall column can sit beside a wide band — a composition the
@@ -185,8 +206,18 @@ export class Typesetter {
         `left:${box.left.toFixed(3)}%;top:${box.top.toFixed(3)}%;` +
         `width:${box.width.toFixed(3)}%;height:${box.height.toFixed(3)}%;`;
 
+      const built = this.build(lines, options, budgetPerBlock);
+
+      // The cursor advances by what was *rendered*, not by what was selected. The budget
+      // drops whole sentences that will not fit, and advancing past those would skip lines
+      // of the text outright — the reading would have holes in it, which is the one thing a
+      // continuous mode must not do.
+      if (options.mode === 'continuous' && preset.sentences.length > 0) {
+        this.cursor = (this.cursor + built.used) % preset.sentences.length;
+      }
+
       parts.push(`<div class="block" data-block="${index}" style="${style}">`);
-      parts.push(this.build(lines, options, budgetPerBlock));
+      parts.push(built.html);
       parts.push('</div>');
     }
 
@@ -272,6 +303,27 @@ export class Typesetter {
       case 'whole':
         return sentences;
 
+      /**
+       * The next `count` sentences, continuing from wherever the last render stopped.
+       *
+       * Every other mode samples: you see a different part of the text each phrase and the
+       * order means nothing. This one *reads* — the passage arrives in sequence, a few
+       * sentences at a time, and wraps back to the beginning at the end.
+       *
+       * Consecutive rather than random is the entire point, so it does not filter by length
+       * or shuffle. It also wraps mid-selection rather than stopping short, so the last
+       * chunk of the text is followed by the first rather than by a gap.
+       */
+      case 'continuous': {
+        const span = Math.min(count, sentences.length);
+        const out: Sentence[] = [];
+        for (let i = 0; i < span; i++) {
+          const sentence = sentences[(this.cursor + i) % sentences.length];
+          if (sentence) out.push(sentence);
+        }
+        return out;
+      }
+
       case 'sentence': {
         const sentence = pick(sentences);
         return sentence ? [sentence] : [];
@@ -334,10 +386,11 @@ export class Typesetter {
     sentences: readonly Sentence[],
     options: TypesetOptions,
     budget: number,
-  ): string {
+  ): { html: string; used: number } {
     const parts: string[] = [];
     let produced = 0;
     let slot = 0;
+    let used = 0;
 
     for (const sentence of sentences) {
       const cost = sentenceCost(sentence, options.splitChars);
@@ -369,9 +422,10 @@ export class Typesetter {
       }
 
       produced += cost;
+      used++;
     }
 
-    return parts.join('');
+    return { html: parts.join(''), used };
   }
 }
 
