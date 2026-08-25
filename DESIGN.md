@@ -1976,8 +1976,19 @@ Staged so each step is usable on its own:
   Two accepted deviations from the old look: `decor` variant 4 was italic and there is no
   italic treatment, and `swell` was a bass-scaled `min-width` floor where it is now a
   transform rolled within bounds (§11.5).
-- **2b — the spawn grid.** 7x7 mask, anchor plus size, global mask in the canvas tab
-  (§11.6). Deletes `LAYOUT_SETS` and the layout slot.
+- **2b — the spawn grid — done.** 7x7 mask, anchor plus shape list, global mask in the
+  canvas tab (§11.6). `LAYOUT_SETS`, `LayoutSetName`, `layouts.ts`, `newLayout`, the
+  `fontScale` effect and every `[data-layout]` rule are deleted; `align`, `flow` and base
+  size replace them. Base size gained `varyBy`, so §11.5 is complete too.
+
+  The mask editor went into the Canvas tab as a clickable 7x7 grid, aspect-correct at 16:9
+  so it reads as a picture of the frame rather than an abstract matrix. The per-preset mask
+  gets its own grid in the Effects tab in 2c; until then a preset's `spawn` is authored in
+  TypeScript and the global mask is what is adjustable live.
+
+  **Two guarantees were deliberately given up**, both consequences of anchors: a block may
+  extend past the mask, and two blocks may overlap. §12.4.1 previously promised non-overlap
+  "by construction", which was true only because each block took a distinct cell of a 3x3.
 - **2c — live editing.** The Effects tab generates a control per parameter; layers added,
   removed and reordered. No serialisation needed yet, and this is the point where the tool
   starts paying for itself.
@@ -2113,6 +2124,8 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | ~~Q19~~ | ~~Region targets?~~ **Answered: no** — replaced by the spawn grid, which was the actual intent | §11.6 |
 | Q20 | Does `flow: 'columns'` need a tunable gap, or is one number enough to recover layout 12's look? | §11.6 |
 | Q24 | Structure detection has lost its intended output now that energy tags drive nothing. What should knowing "this is a breakdown" actually change? | §10.1 |
+| Q26 | Variety now comes from anchors and shapes rolling per typeset, where `newLayout` changed the whole arrangement every bar. Is a per-typeset roll enough, or does something want to move on the bar again? | §11.6 |
+| Q27 | `flow: 'grid'` and `'columns'` are implemented but no built-in uses them. Worth building a preset around, or do they only make sense once presets are editable? | §11.6 |
 | Q25 | `whenHolding` fired on replacement phrases as well as held ones for the whole of Increment 1. Did the presets get tuned around that? If held layers now look thin, that is why | §11.5 |
 | ~~Q23~~ | ~~Independent width and height ranges cannot say "tall or wide, never square".~~ **Answered: a list of candidate shapes**, rolled per block, so the two axes are chosen together as an authored pair | §11.6 |
 | Q21 | With three blocks and three named texts, the list feeds variety (each block draws independently). Should one-each composition be an explicit option, or is random enough? | §11.7 |
