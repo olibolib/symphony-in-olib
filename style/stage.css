@@ -56,49 +56,64 @@ w[data-slot='5'] { color: var(--c5); }
 w[data-slot='6'] { color: var(--c6); }
 w[data-slot='7'] { color: var(--c7); }
 
-/* --- slots (§12.1) ------------------------------------------------------------------
-   `glitch` and `decor` are abstract numbered states. The engine decides which elements
-   carry which number; what a number *looks* like is decided here, per preset. That is why
-   wildly different presets need no new JavaScript. */
+/* --- channels (§11.5) -----------------------------------------------------------------
+   One attribute per CSS property being contended for, rather than one shared `glitch`.
+   That is what lets several layers land on the same word and all of them show: invert
+   writes bg and fg, a later accent overwrites only fg, and the result is a black block with
+   accent-coloured text — a look the single-attribute scheme could not reach at all.
 
-[data-glitch='1'] {
-  background: #000000;
-  color: #ffffff;
+   The slot mechanism is unchanged. The engine picks a number; what a number *looks* like is
+   decided here, per preset, which is why wildly different presets need no new JavaScript. */
+
+/* bg and fg slot n are authored as a matched pair, so `invert` writing both to the same
+   number gives a coherent block. They remain separate channels, so a later layer can take
+   fg on its own — which is the whole point of naming channels after CSS properties. */
+[data-bg='1'] { background: #000000; }
+[data-bg='2'] { background: #ffff00; }
+[data-bg='3'] { background: #ff3300; }
+[data-bg='4'] { background: #0000ff; }
+
+[data-fg='1'] { color: #ffffff; }
+[data-fg='2'] { color: #0000ff; }
+[data-fg='3'] { color: #ffffff; }
+[data-fg='4'] { color: #ffffff; }
+
+/* Accent slots: fg values chosen to read on their own, with no background behind them.
+   Deliberately not white — an accent that is invisible on the default white stage is a
+   layer that silently does nothing, which is the §14 failure mode. */
+[data-fg='5'] { color: #ff3300; }
+[data-fg='6'] { color: #00a05a; }
+
+[data-font='1'] { font-family: 'Dingbats', 'Segoe UI Symbol', serif; }
+
+[data-deco='1'] { text-decoration: underline; }
+[data-deco='2'] { text-decoration: line-through; }
+
+[data-outline='1'] { outline: 0.06em solid currentColor; }
+
+/* Scale rather than a min-width floor: sizing by width reflows the paragraph, and
+   re-wrapping several times a bar reads as broken rather than as an effect (§11.5).
+   Inline elements need a block display to accept a transform at all. */
+[data-size] {
+  display: inline-block;
+  transform: scale(var(--size, 1));
 }
 
-[data-glitch='2'] {
-  background: #ffff00;
-  color: #0000ff;
+/* Applied once; CSS does the repeating, so the engine does no per-frame work — which makes
+   flicker the cheapest treatment rather than the awkward one. */
+[data-anim='1'] {
+  animation: olib-flicker var(--flicker-period, 0.5s) steps(2, jump-none) infinite;
 }
 
-[data-glitch='3'] {
-  color: #0000ff;
-  text-decoration: underline;
+@keyframes olib-flicker {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.15; }
 }
 
-[data-glitch='4'] {
-  background: #ffffff;
-  color: #000000;
-  font-family: 'Dingbats', 'Segoe UI Symbol', serif;
-}
-
-[data-glitch='5'] {
-  background: #ff3300;
-  color: #ffffff;
-}
-
-[data-decor='1'] { text-decoration: underline; }
-[data-decor='2'] { text-decoration: line-through; }
-[data-decor='3'] { outline: 0.06em solid currentColor; }
-[data-decor='4'] { font-style: italic; }
-
-.selected {
-  background: #000000;
-  color: #ffffff;
-}
+[data-vis='1'] { visibility: hidden; }
 
 /* --- layouts (§12.4) -----------------------------------------------------------------
-   The `layout` slot on #container. Same rule as the glitch slots: the engine picks a
+   The `layout` slot on #container. Same rule as the channels: the engine picks a
    number, this file decides what it means. Adding a layout is a CSS change only. */
 
 #container[data-layout='1'] {

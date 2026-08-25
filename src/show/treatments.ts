@@ -1,0 +1,136 @@
+import { randomRange } from '../util/random';
+
+/**
+ * What visually happens to an element. DESIGN.md §11.5.
+ *
+ * The other half of what an effect used to be. A treatment knows nothing about *which*
+ * elements it is applied to — that is `targets.ts` — so any treatment composes with any
+ * target, which is the whole point of the split.
+ */
+
+export type Treatment =
+  | 'invert'
+  | 'accent'
+  | 'dingbat'
+  | 'underline'
+  | 'strike'
+  | 'outline'
+  | 'swell'
+  | 'flicker'
+  | 'blank';
+
+/**
+ * A CSS property being contended for.
+ *
+ * Named after the property rather than after the treatment, which is what lets `invert` and
+ * `accent` compose: invert writes `bg` and `fg`, a later accent overwrites only `fg`, and
+ * the result is a black block with accent-coloured text. Under the old single `data-glitch`
+ * attribute the later effect simply erased the earlier one.
+ */
+export type Channel = 'bg' | 'fg' | 'font' | 'deco' | 'outline' | 'size' | 'anim' | 'vis';
+
+export const CHANNELS: Readonly<Record<Treatment, readonly Channel[]>> = {
+  invert: ['bg', 'fg'],
+  accent: ['fg'],
+  dingbat: ['font'],
+  underline: ['deco'],
+  strike: ['deco'],
+  outline: ['outline'],
+  swell: ['size'],
+  flicker: ['anim'],
+  blank: ['vis'],
+};
+
+/**
+ * What a treatment writes into each channel it owns.
+ *
+ * Values are **slot numbers**, not colours — §12.1's mechanism, preserved. The engine picks
+ * a number and `stage.css` decides what it looks like, so a wildly different palette needs
+ * no JavaScript. What changed is that there is now one attribute per channel rather than
+ * one shared `data-glitch`.
+ */
+export interface Written {
+  readonly channel: Channel;
+  readonly value: string;
+}
+
+/**
+ * Highest slot defined per channel in `stage.css`. Keep in sync.
+ *
+ * `bg` and `fg` slots 1–4 are authored as matched pairs, so `invert` writing both to the
+ * same number gives a coherent block — a dark ground with light type, or yellow with blue.
+ * They are still separate channels, so a later `accent` can take `fg` alone.
+ *
+ * Accent uses `fg` slots outside that range, because the paired values assume a background
+ * is there: white type is correct over black and invisible on the default white stage. An
+ * accent that cannot be seen is a layer that silently does nothing (§14).
+ */
+const BG_FG_PAIRS = 4;
+const ACCENT_SLOTS = [2, 5, 6] as const;
+const DECO_UNDERLINE = 1;
+const DECO_STRIKE = 2;
+
+/**
+ * Decide what to write for one application of a treatment.
+ *
+ * `amount` is the layer's 0–1 strength. Only `swell` currently reads it, via its bounds —
+ * the rest are switches, and a half-applied inversion is not a thing.
+ */
+export function write(
+  treatment: Treatment,
+  options: { readonly amount: number; readonly size?: { min: number; max: number } },
+): readonly Written[] {
+  switch (treatment) {
+    case 'invert': {
+      // One roll for both channels, so the pair stays coherent.
+      const slot = String(randomRange(1, BG_FG_PAIRS));
+      return [
+        { channel: 'bg', value: slot },
+        { channel: 'fg', value: slot },
+      ];
+    }
+
+    case 'accent': {
+      const slot = ACCENT_SLOTS[Math.floor(Math.random() * ACCENT_SLOTS.length)] ?? 2;
+      return [{ channel: 'fg', value: String(slot) }];
+    }
+
+    case 'dingbat':
+      return [{ channel: 'font', value: '1' }];
+
+    case 'underline':
+      return [{ channel: 'deco', value: String(DECO_UNDERLINE) }];
+
+    case 'strike':
+      return [{ channel: 'deco', value: String(DECO_STRIKE) }];
+
+    case 'outline':
+      return [{ channel: 'outline', value: '1' }];
+
+    case 'swell': {
+      // Rolled within bounds, like every other pair of bounds in the design (§11.5).
+      // Nothing tracks live audio continuously any more — the trigger already decides
+      // whether this fires at all.
+      const bounds = options.size ?? { min: 1, max: 1.4 };
+      const scale = bounds.min + Math.random() * (bounds.max - bounds.min);
+      return [{ channel: 'size', value: scale.toFixed(3) }];
+    }
+
+    case 'flicker':
+      return [{ channel: 'anim', value: '1' }];
+
+    case 'blank':
+      return [{ channel: 'vis', value: '1' }];
+  }
+}
+
+/**
+ * Whether a channel carries a free value rather than a slot number.
+ *
+ * `size` is a scale factor written to a custom property, because a slider producing 1.37
+ * cannot be expressed as one of five numbered rules. Everything else is a slot, and stays a
+ * slot — that is what keeps the appearance in CSS where a preset can restyle it.
+ */
+export function isScalar(channel: Channel): boolean {
+  return channel === 'size';
+}

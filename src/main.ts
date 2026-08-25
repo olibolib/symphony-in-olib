@@ -46,7 +46,9 @@ import prologueRaw from '../presets/text/prologue.txt?raw';
 import { Conductor, type Lane } from './show/Conductor';
 import { PRESETS } from './show/presets';
 import { PresetBank } from './show/PresetBank';
-import { GlitchState, type EffectContext } from './effects/types';
+import { type EffectContext } from './effects/types';
+import { Channels } from './show/Channels';
+import { Layer } from './show/Layer';
 type BackgroundMode = 'white' | 'black' | 'transparent';
 import { PALETTES, type PaletteName } from './render/palette';
 import { LAYOUT_SETS, type LayoutSetName } from './show/layouts';
@@ -71,7 +73,7 @@ const tracker = new BeatTracker();
 const clock = new Clock();
 const typesetter = new Typesetter(stage);
 const conductor = new Conductor();
-const glitches = new GlitchState();
+const channels = new Channels();
 const bank = new PresetBank(PRESETS);
 
 /** Phrases the current text has been on screen. Drives `retext` holds and `whenHolding`. */
@@ -264,7 +266,7 @@ function typesetNext(): void {
   });
 
   // The tracked elements no longer exist after a re-render.
-  glitches.forget();
+  channels.forget();
   textAge = 0;
 
   hud.setClipped(typesetter.clipped);
@@ -279,10 +281,20 @@ function typesetNext(): void {
 function applyPreset(): void {
   const preset = bank.current;
 
+  // Layers are constructed here rather than stored on the preset, because a layer's id is
+  // its ownership token in `Channels` and has to be unique to the *running* stack. Building
+  // them per activation also means an edited preset takes effect on the next cycle without
+  // any invalidation logic.
   conductor.load({
+    layers: preset.layers.map((spec, index) => new Layer(index, spec)),
     bindings: preset.bindings,
     ...(preset.ambient ? { ambient: preset.ambient } : {}),
   });
+
+  // The outgoing preset's layers own values on elements that are about to be re-typeset
+  // anyway, but a preset change that does not re-typeset would otherwise leave them lit
+  // with nothing left to decay them.
+  channels.clearAll();
 
   hud.setPresetState(preset.name, bank.pending);
   stage.setFontScale(preset.fontScale);
@@ -312,13 +324,15 @@ function effectContext(): EffectContext {
   return {
     stage,
     typesetter,
-    glitches,
+    channels,
     energy: analyser?.energy ?? 0,
     bass: analyser?.bass ?? 0,
     palette: PALETTES[paletteName],
     layouts: LAYOUT_SETS[layoutSetName],
     beatPhase: clock.phase(performance.now()),
     textAge,
+    dt: frameDelta,
+    barSeconds: clock.bpm === null ? 2 : (60 / clock.bpm) * 4,
     retext: typesetNext,
   };
 }
@@ -484,10 +498,19 @@ syncStageSize();
 
 let lastFrameAt = performance.now();
 
+/**
+ * Seconds since the previous frame, shared with the effect context.
+ *
+ * Layer decay is derived from elapsed time rather than counted per frame, which is what
+ * stops a fade running twice as fast at 60fps as at 30 (§11.5).
+ */
+let frameDelta = 0;
+
 function frame(now: number): void {
-  // Seconds since the previous frame, clamped: after a stall, a huge delta would teleport
-  // the scroll rather than continuing it.
+  // Clamped: after a stall, a huge delta would teleport the scroll rather than continuing
+  // it, and would clear a layer in one step rather than fading it.
   const dt = Math.min((now - lastFrameAt) / 1000, 0.1);
+  frameDelta = dt;
   lastFrameAt = now;
 
   // Advance the grid before building the context. Anything derived from musical position —
@@ -550,6 +573,18 @@ function frame(now: number): void {
 
     if (beat.isPhraseStart) {
       conductor.fire('phrase', ctx);
+
+      // `held` fires only where the text was *not* replaced this phrase — static text for
+      // two phrases needs more happening to it, or the second phrase reads as a stall.
+      //
+      // It has to be dispatched with a *fresh* context. `ctx` is a snapshot taken at the
+      // top of the frame, so its `textAge` still holds the pre-phrase value; re-reading it
+      // after the phrase bindings is the only way to see whether `retext` fired. This is
+      // what `whenHolding` got wrong: it read the stale snapshot and so fired on the
+      // replacement phrase as well as on held ones, despite a comment insisting that
+      // ordering within the lane prevented exactly that.
+      if (textAge >= 1) conductor.fire('held', effectContext());
+
       bank.countPhrase();
 
       // Preset changes land on a phrase boundary — arriving on the 1 of a new 16 is what
