@@ -1960,9 +1960,22 @@ it asked for effects that were worth having sliders on. §11.5 to §11.7 are the
 
 Staged so each step is usable on its own:
 
-- **2a — the layer engine.** Targets, treatments, triggers and channels (§11.5). Built-ins
-  ported unchanged so the port can be checked against what they look like now. Decay moves to
-  per-layer and to bars, which fixes the frame-rate dependence.
+- **2a — the layer engine — done.** Targets, treatments, triggers and channels (§11.5).
+  Built-ins ported unchanged so the port can be checked against what they look like now.
+  Decay moved to per-layer and to bars, fixing the frame-rate dependence.
+
+  Two live bugs went with it. Decay ran per *frame*, so 2.4% of lit elements survived a
+  second at 60fps against 15.6% at 30 — a six-fold difference in fade speed depending on how
+  busy the machine was. And `whenHolding` fired on the phrase where the text was *replaced*
+  as well as on held ones: its own comment insisted that ordering within the lane prevented
+  this, but the effect context is a snapshot taken at the top of the frame, so ordering could
+  not have mattered. It is now a real `held` trigger dispatched with a fresh context after
+  the phrase bindings — the only point at which a re-typeset is observable — and
+  `whenHolding` is deleted.
+
+  Two accepted deviations from the old look: `decor` variant 4 was italic and there is no
+  italic treatment, and `swell` was a bass-scaled `min-width` floor where it is now a
+  transform rolled within bounds (§11.5).
 - **2b — the spawn grid.** 7x7 mask, anchor plus size, global mask in the canvas tab
   (§11.6). Deletes `LAYOUT_SETS` and the layout slot.
 - **2c — live editing.** The Effects tab generates a control per parameter; layers added,
@@ -2048,6 +2061,7 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Letting a referenced text be deleted, with graceful fallback | **Dropped** | Moves the failure into a live set. Refuse the delete and name the presets instead (§11.7) |
 | Rolling block width and height independently | **Dropped** | Produces square blobs between the column and band that were wanted; the axes are related, so they are chosen together from a shape list (§11.6) |
 | `follow: 'energy' \| 'bass'` — continuous audio scaling per layer | **Dropped** | Doubles up on the triggers, which already thin out when the kick stops. Governing intensity in two places is why presets were hard to reason about (§11.5) |
+| `whenHolding` as a wrapper effect | **Dropped** | It read a stale context snapshot, so it could not tell a held phrase from a replaced one. `held` is a real trigger dispatched after the phrase bindings (§11.5) |
 | An energy rating that selects presets automatically | **Dropped** | Superfluous once layers are individually controllable. Stays a label the VJ applies; was never wired up anyway (§11.5) |
 | Letterboxed, scaled stage | **Dropped** | Resamples text; 1:1 top-left also makes the OBS crop trivial (§13.1) |
 | Onset threshold as `mean × k` | **Dropped** | Cleared constantly by steady-state signal. Use `mean + k × stddev` (§9.2.1) |
@@ -2099,6 +2113,7 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | ~~Q19~~ | ~~Region targets?~~ **Answered: no** — replaced by the spawn grid, which was the actual intent | §11.6 |
 | Q20 | Does `flow: 'columns'` need a tunable gap, or is one number enough to recover layout 12's look? | §11.6 |
 | Q24 | Structure detection has lost its intended output now that energy tags drive nothing. What should knowing "this is a breakdown" actually change? | §10.1 |
+| Q25 | `whenHolding` fired on replacement phrases as well as held ones for the whole of Increment 1. Did the presets get tuned around that? If held layers now look thin, that is why | §11.5 |
 | ~~Q23~~ | ~~Independent width and height ranges cannot say "tall or wide, never square".~~ **Answered: a list of candidate shapes**, rolled per block, so the two axes are chosen together as an authored pair | §11.6 |
 | Q21 | With three blocks and three named texts, the list feeds variety (each block draws independently). Should one-each composition be an explicit option, or is random enough? | §11.7 |
 | Q22 | Layout 16 aligned alternate blocks outward. Dropped as a between-blocks relationship the model does not store — does it turn out to matter? | §11.6 |
