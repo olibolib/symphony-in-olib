@@ -1621,14 +1621,18 @@ semantics a large enough block can still reach into an excluded cell. That is th
 for an authoring tool, but if a hard "never draw here" is ever needed, this is not it — it
 would have to be a clip.
 
-**If the intersection is empty, the global mask alone is used.** Skipping the preset was the
-original decision and it is wrong in practice: a preset with a tight mask — a single cell is a
-perfectly reasonable thing to want — has nothing left the moment the global mask excludes that
-cell, and the result was an empty stage with a message about masks.
+**The global mask is absolute.** It is the VJ's statement about tonight's frame, and a preset
+cannot widen it, work around it, or fall back past it — a preset's mask only ever narrows it
+further. A preset works in the overlap and nowhere else.
 
-Falling back to the global mask honours the only reason a VJ sets one, which is to keep text
-off part of the frame: nothing is ever anchored somewhere ruled out. The preset's own mask is
-its composition, a preference, and the preference is what gives way.
+So an empty overlap means the preset genuinely cannot be placed, and the honest response is to
+say so rather than quietly substitute a placement nobody asked for. Falling back to the global
+mask was tried and rejected for exactly that reason: it put text somewhere the preset had not
+chosen, which is a stranger outcome than showing nothing.
+
+**The message names the global mask, plainly**, and points at the tab that fixes it. The
+preset's own grid is the one open in the editor and the two grids look identical, so anything
+vaguer sends you to widen the mask that was never the problem.
 
 #### The layout table is deleted
 

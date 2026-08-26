@@ -53,7 +53,7 @@ import { Channels } from './show/Channels';
 import { Layer } from './show/Layer';
 type BackgroundMode = 'white' | 'black' | 'transparent';
 import { PALETTES, type PaletteName } from './render/palette';
-import { anchors, FULL, intersect, normalise, type Mask } from './show/mask';
+import { FULL, intersect, normalise, type Mask } from './show/mask';
 
 /**
  * Increment 1 complete.
@@ -376,56 +376,43 @@ function textsForBlocks(preset: VisualPreset, blocks: number): readonly TextPres
 }
 
 /**
- * Where this preset may anchor, once the VJ's global rule is taken into account (§11.6).
+ * Where this preset may anchor (§11.6).
  *
- * Normally the intersection: a preset can be more restricted than the global mask, never
- * less. But a preset with a tight mask — a single cell is a perfectly reasonable thing to
- * want — has nothing left the moment the global mask excludes that one cell, and the design
- * said the preset should then be skipped.
+ * The overlap, and nothing else. **The global mask is absolute** — it is the VJ's statement
+ * about tonight's frame, and a preset cannot widen it, work around it, or fall back past it.
+ * A preset's own mask can only narrow it further.
  *
- * Skipping is the wrong answer in practice. It leaves the stage empty with a message about a
- * mask, which is a poor trade for a constraint the VJ can only have set for one reason: to
- * keep text off part of the frame. Falling back to the **global mask alone** honours that
- * reason exactly — nothing is ever anchored somewhere ruled out — while still putting text on
- * screen. The preset's own composition is the preference, and it is the preference that gives
- * way.
+ * So an empty overlap means the preset genuinely cannot be placed, and the honest response is
+ * to say so rather than to quietly substitute a placement nobody asked for.
  */
-function effectiveMask(name: string, spawn: Mask): Mask {
-  const both = intersect(globalMask, spawn);
-  if (anchors(both).length > 0) {
-    reportMask('');
-    return both;
-  }
-
-  const global = normalise(globalMask);
-  if (anchors(global).length > 0) {
-    // Naming the *global* mask matters. The preset's own grid is the one being looked at in
-    // the editor, so "no space" sends you to widen a mask that was never the problem — and
-    // the two grids look identical, which makes the wrong guess easy.
-    reportMask(
-      `"${name}" can only spawn where the global mask forbids — ` +
-        'using the global mask instead (Canvas tab)',
-    );
-    return global;
-  }
-
-  reportMask('The global mask has no cells enabled — nothing can be placed (Canvas tab)');
-  return FULL;
+function effectiveMask(spawn: Mask): Mask {
+  return intersect(globalMask, spawn);
 }
 
 /**
- * Last mask warning shown, so it is said once rather than on every phrase.
+ * Say when the global mask has left a preset nowhere to go.
  *
- * A sticky error repeating every few bars would bury the capture readout for a situation that
- * has not changed since it was first reported.
+ * Named plainly, and with the tab to fix it in. The preset's own grid is the one open in the
+ * editor and the two grids look identical, so a message that only says "no space" sends you
+ * to widen the mask that was never the problem.
+ *
+ * Said once per preset rather than every phrase: a sticky error repeating every few bars
+ * would bury the capture readout for something that has not changed since it was reported.
  */
-let lastMaskWarning = '';
+let blockedPreset = '';
 
-function reportMask(message: string): void {
-  if (message === lastMaskWarning) return;
-  lastMaskWarning = message;
-  if (message !== '') hud.setStatus(message, true);
-  else hud.clearError();
+function reportBlocked(name: string): void {
+  if (name === blockedPreset) return;
+  blockedPreset = name;
+
+  if (name === '') {
+    hud.clearError();
+    return;
+  }
+  hud.setStatus(
+    `The global mask is blocking "${name}" — allow it some cells in the Canvas tab`,
+    true,
+  );
 }
 
 /** Render the current preset's text selection. */
@@ -438,7 +425,7 @@ function typesetNext(): void {
     count: preset.text.count,
     continuous: preset.text.continuous,
     blocks: preset.text.blocks,
-    mask: effectiveMask(preset.name, preset.spawn),
+    mask: effectiveMask(preset.spawn),
     shapes: preset.blockShapes,
     align: preset.align,
     flow: preset.flow,
@@ -464,14 +451,7 @@ function typesetNext(): void {
 
   hud.setClipped(typesetter.clipped);
 
-  // Now only reachable if the global mask itself is empty, which the editor refuses to
-  // produce. Kept because §14 would rather this be visible than silent.
-  if (typesetter.unplaceable) {
-    hud.setStatus(
-      `"${bank.current.name}" has nowhere to spawn — check the global mask in the Canvas tab`,
-      true,
-    );
-  }
+  reportBlocked(typesetter.unplaceable ? bank.current.name : '');
 }
 
 /**
