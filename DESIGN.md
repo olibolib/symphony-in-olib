@@ -188,21 +188,56 @@ Renderer ever reaches back into the Conductor, both become refactors.
 
 ### Class model
 
+Two roots, one per window. Neither knows about the other's objects.
+
 ```
-App
-├── AudioInput      device enumeration, capture, AudioContext
-├── Analyser        bands, levels, onsets
-├── BeatTracker     tempo/phase estimation, confidence, re-lock
-├── Clock           beat/bar/phrase position; tap override
-├── Conductor       lane dispatch, preset scheduling
-│   ├── PresetBank  visual presets
-│   └── TextBank    text presets
-├── Renderer
-│   ├── Stage       fixed-resolution root; attribute slots live here
-│   └── Typesetter  text → paragraphs → words → chars → DOM
-├── EffectRegistry  named, parameterized visual operations
-└── Hud             readouts, settings, tap, crop values
+main.ts                 the output window's composition root — 94 lines
+└── Engine              the show: one frame, one command switch
+    ├── Sources         two capture paths, the live Analyser, sensitivities
+    │   ├── AudioInput  device enumeration
+    │   ├── AppCapture  one application's output, as PCM over IPC
+    │   └── Analyser    bands, levels, onsets
+    ├── BeatTracker     tempo and phase estimation
+    ├── KickHistory     kick strength, and whether kicks agree with a tempo
+    ├── Clock           beat/bar/phrase position; tap override
+    ├── Conductor       trigger dispatch
+    │   └── Layer       one target, one treatment, its triggers and decay
+    ├── Channels        who owns which property on which element
+    ├── PresetStore     preset documents on disk
+    │   └── PresetBank  which is live, which is queued, when it may change
+    ├── TextPool        the active text, the queued one, the pinned ones
+    ├── Look            background, palette, global mask
+    ├── Stage           fixed-resolution root; the transform's single writer
+    ├── Typesetter      text → paragraphs → words → chars → DOM
+    └── EngineBridge    batches state for the control window
+
+control.ts              the control window's composition root
+├── Hud                 panels, readouts, controls
+├── PresetEditor        the Presets tab
+└── TextBank            drafts, undo, the file list
 ```
+
+#### The engine was a script, and that was a real cost
+
+Every collaborator was a module-level binding — 33 of them, 15 mutable — and every function a
+closure over the module. Module *initialisation order* was acting as an implicit constructor,
+with no way to enforce it and no way to build the thing twice.
+
+The symptom that gave it away: `frameDelta` was declared eight hundred lines from its use site,
+carrying a comment explaining that reading it any earlier threw. `applyPreset` ran during module
+evaluation and built an effect context from it. As a class that cannot happen — the constructor
+finishes, and only then does `start()` run the things that need a finished object.
+
+Four objects came out on the way, each one a cluster that was never the engine's business:
+
+| | |
+|---|---|
+| `Sources` | how an analyser came to exist, and which of a dozen sources it points at |
+| `TextPool` | §7.1's boundary made structural — reading a text is a function passed in, so the engine literally cannot reach a draft |
+| `Look` | the three settings that describe tonight's frame rather than any preset |
+| `show/wiring.ts` | four pure decisions the engine makes, now testable without a DOM |
+
+`main.ts` went from 1,050 lines to 94, and from 15 mutable module bindings to none.
 
 ### 7.1 Two windows
 
@@ -383,8 +418,14 @@ The last two are what makes a restart feel continuous — the show comes back on
 was live, and the editor reopens on the preset you were editing. Both store a *name*, so a
 preset deleted between sessions falls back to the first one instead of erroring.
 
+**Reached through a port, not a global.** `Settings` is two methods, and classes that remember
+something take one rather than calling `localStorage` directly. That is what it costs to make
+`PresetBank` testable: its job is cycle policy, which is pure decision logic, and it could not be
+exercised outside a browser purely because its constructor read a key.
+
 **Still open:** folding those keys into one `config.json` beside the presets. One inspectable,
-backup-able place is the goal; localStorage is what is there now.
+backup-able place is the goal; localStorage is what is there now, and when the file lands it
+implements `Settings` rather than being threaded through every caller again.
 
 ---
 
@@ -2379,10 +2420,35 @@ TypeScript earns its place twice: in the engine, where `Lane`, `EffectRef` and p
 are naturally typed, and in preset definitions, where a mistyped lane name or effect
 parameter should be a red squiggle rather than a visual that silently never happens.
 
+#### Tests
+
+`vitest`, node environment, no DOM. 105 tests across five suites, gating the build.
+
+Everything worth testing here is already DOM-free, and that is not an accident — the clock, the
+kick evidence, the placement grid, the preset validator and the cycle policy are all pure. What
+the suite is *for* is the invariants the comments state, because those are what quietly stop
+being true:
+
+| Suite | What it holds down |
+|---|---|
+| `mask` | a block never runs off the canvas, an intersection can only narrow, blocks are placed as one arrangement |
+| `tempo` | a breakdown cannot move the grid, an intro of hats moves nothing, a pitch nudge drifts rather than snapping |
+| `presetIo` | a corrupt file loads as something usable, decay is frame-rate independent |
+| `wiring` | a layer edit does not re-typeset, the right mask gets blamed |
+| `PresetBank` | the last enabled preset cannot be switched off, a queued choice beats the timer |
+
+Two of those record **deliberate reversals** — a mask may now reach empty, and blocks are placed
+as an arrangement rather than one at a time. Until they were written down, the only record of
+which behaviour was current was the comment beside the code that had just changed.
+
+Cases are named after the behaviour, not the constant they exercise. The tempo numbers have been
+retuned twice and will be again; "a breakdown must not move the grid" is the thing that has to
+stay true.
+
 #### Build guards
 
-`npm run typecheck` runs three things: the compiler, then two scripts that catch mistakes types
-cannot see.
+`npm run typecheck` runs four things: the compiler, two scripts that catch mistakes types cannot
+see, and the tests.
 
 - **`check-ids`** — every element id the renderer looks up exists in the HTML. A renamed id
   otherwise fails silently at runtime.
@@ -2566,6 +2632,31 @@ breakdown re-locking the grid to a shaker, a minute-long intro of hats and snare
 change did not take. A tap now hands control back to detection when the two agree, which is the
 manual way past the same problem.
 
+### Architecture review — **three criticals closed**
+
+An outside review of the branch, against §7 to §16. Twelve findings, three marked critical, and
+they were taken in the order that made the work cheapest rather than the order they were listed.
+
+**Tests first, not the refactor first.** The intuition was that restructuring the engine would
+make it testable — but all six modules worth testing import nothing from `main.ts`; they were
+leaves already. The one that genuinely could not be tested was blocked by `localStorage`, not by
+the engine. And the dependency runs the other way round: the tests are what make it safe to
+restructure a thousand-line file. Doing it in that order meant every step of the refactor was
+checked rather than trusted.
+
+| | Finding | |
+|---|---|---|
+| 01 | A preset is only half a document | **open** — the stage effects are still closures |
+| 02 | `main.ts` is a module-scope singleton | **closed** (§7.1) |
+| 03 | No tests, on a codebase built to be tested | **closed** (§15) |
+| 05 | `ALL_CHANNELS` is a union maintained by hand | **closed** — derived from the treatment table |
+| 10 | Persistence is scattered `localStorage` | **partly** — `PresetBank` has a port; the other keys still call it directly |
+
+04, 06, 07, 08, 09, 11 and 12 are open and none of them is urgent. 01 is the one with a
+dependant: idea 2 in `IDEAS.md`, preset lifespan, needs a per-preset field on the side of the
+line that does not serialise, so the conversion belongs immediately before it rather than as a
+refactor taken up front.
+
 ### Increment 4 — palettes
 
 Palette presets with roles (text, background, accent), selectable, optionally shifting with
@@ -2678,6 +2769,11 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Widening the gaps between conveyor copies | **Dropped** | Cheaper than raising the budget, and not the effect. A conveyor with visible spacing in it is a different thing (§11.5) |
 | Trusting `min`/`max` on a number input | **Dropped** | Advisory only. Every editor field read straight past them, and an empty field read as 0 (§11.4) |
 | Manual holding after detection agrees with it | **Dropped** | Agreement *is* the track change, seen from the other side. Handing back makes a tap the fast way past a big jump (§9.2.4) |
+| The engine as a module-scope script | **Dropped** | Initialisation order was acting as a constructor. Nothing could be built twice, injected into, or tested (§7.1) |
+| Typecheck as the whole quality gate | **Dropped** | The invariants that matter here are stated in comments and are exactly what tests are for (§15) |
+| `localStorage` reached directly | **Dropped** | It made pure decision logic need a browser. A two-method port instead (§7.3) |
+| A hand-written list of every channel | **Dropped** | Adding a ninth compiled cleanly and left `clearAll` skipping it. Derived from the treatment table (§11.5) |
+| Two sets of error handlers | **Dropped** | Not duplicates — one logged, one reported — so every error surfaced twice. One guarded pair (§14) |
 
 ---
 
