@@ -372,6 +372,10 @@ function typesetNext(): void {
   channels.forget();
   textAge = 0;
 
+  // New blocks mean new animations, and they start at the nominal rate rather than the live
+  // one. Cheap: a handful of animations, a few times a minute.
+  stage.syncMotion();
+
   hud.setClipped(typesetter.clipped);
 
   // No allowed cell means the preset cannot be placed at all. §14: say so, rather than

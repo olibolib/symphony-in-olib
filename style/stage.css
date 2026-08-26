@@ -210,8 +210,12 @@ sn {
   top: var(--travel, 100%);
 }
 
+/* Timed against a *nominal* 2s bar and then scaled by `playbackRate` from the live tempo.
+   Rewriting `animation-duration` as the tempo drifts does not preserve position — the browser
+   recomputes progress against the new duration and the animation jumps — which is what made
+   the conveyor stutter. See `Stage.retimeMotion`. Keep 2s in step with NOMINAL_BAR_SECONDS. */
 .block[data-conveyor] .block-content {
-  animation-duration: calc(var(--bar, 2s) * var(--travelr, 1) / var(--content-speed, 0.25));
+  animation-duration: calc(2s * var(--travelr, 1) / var(--content-speed, 0.25));
   animation-timing-function: linear;
 }
 
@@ -264,7 +268,7 @@ sn {
 /* Block motion travels two canvases, entering from off one edge and leaving off the other,
    so the loop restarts while the block is out of frame and the jump is never seen. */
 #container[data-block-motion] .block {
-  animation-duration: calc(var(--bar, 2s) * 2 / var(--block-speed, 0.25));
+  animation-duration: calc(2s * 2 / var(--block-speed, 0.25));
   animation-timing-function: linear;
   animation-iteration-count: infinite;
 }

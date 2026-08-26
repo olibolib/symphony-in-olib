@@ -1166,8 +1166,23 @@ canvas-derived. Measured at 128bpm with speed `0.5`:
 | Full-height column | 720px | 8.0s | **180 px/s** |
 | One-cell strip | 103px | 1.14s | **180 px/s** |
 
-**Both are CSS animations timed against `--bar`**, like flicker: they re-time themselves on a
-tempo change, for every element at once, with nothing running per frame. The block's height
+**Both are CSS animations, and both are re-timed by `playbackRate` rather than by duration.**
+
+That distinction is the difference between smooth and unusable. `animation-duration` does not
+preserve position: the browser keeps the elapsed time and recomputes progress against the new
+duration, so every change jumps. The tempo estimate drifts continuously, so `--bar` was being
+rewritten most frames and the conveyor stuttered — worst exactly when the tracker was working
+hardest. Measured on a 2s→1.5s change a third of the way through: rewriting the duration moved
+the content **157px** in one frame; `updatePlaybackRate` moved it 4px, which is one frame of
+its normal travel.
+
+So the keyframes are written against a *nominal* two-second bar and scaled by rate. There are
+at most a handful of motion animations — one per block — so they are walked on every tempo
+change and after every typeset, since new blocks start at the nominal rate.
+
+Flicker keeps its `--bar` duration: a strobe changing phase is imperceptible, and there can be
+hundreds at once. The tempo write itself is also thresholded, since a live estimate never
+holds still. The block's height
 is written into it as a length *and* as a fraction of the canvas, because `calc` cannot
 divide a length by a length — the duration needs the ratio as a plain number.
 
