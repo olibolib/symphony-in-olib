@@ -448,7 +448,11 @@ function motionOptions(layers: readonly LayerSpec[]): {
         continuous: motion.continuous !== false,
       };
     } else if (layer.treatment === 'travel') {
-      block = { direction: motion.direction, speed: motion.speed };
+      block = {
+        direction: motion.direction,
+        speed: motion.speed,
+        continuous: motion.continuous !== false,
+      };
     }
   }
 

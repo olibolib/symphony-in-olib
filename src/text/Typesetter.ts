@@ -150,6 +150,19 @@ export interface BlockMotion {
   readonly direction: 'up' | 'down' | 'left' | 'right';
   /** Fractions of the canvas per four beats. */
   readonly speed: number;
+
+  /**
+   * Wrap round the frame, or cross it once.
+   *
+   * On, the block re-enters from the opposite edge the instant it leaves — off the right, back
+   * on at the left — so there is never a moment with nothing there. Off, it crosses and is
+   * gone until the next typeset.
+   *
+   * It overlaps with `scroll` in the up and down directions, and deliberately: scrolling moves
+   * text through a stationary window while this carries the window itself, and the two read
+   * completely differently as soon as the block is smaller than the frame.
+   */
+  readonly continuous: boolean;
 }
 
 /**
@@ -181,6 +194,13 @@ function setMotion(
 
   container.dataset[key] = motion.direction;
   container.style.setProperty(`--${kind}-speed`, String(motion.speed));
+
+  // A wrapping block runs a different pair of keyframes — one canvas rather than two, offset
+  // by `--wrap` — so the stylesheet needs to know which it is.
+  if (kind === 'block') {
+    if ((motion as BlockMotion).continuous) container.dataset['blockLoop'] = '';
+    else delete container.dataset['blockLoop'];
+  }
 }
 
 /** Animations that run for ever, and therefore need their position carried across a typeset. */
@@ -385,11 +405,15 @@ export class Typesetter {
     // rolled rather than a second, different roll.
     // Only a looping conveyor needs a second copy. A single pass has nothing to wrap, so it
     // costs no extra elements at all.
+    // One pairing for both kinds of copy, reset here so neither cloner inherits the last
+    // typeset's elements.
+    this.twins = new WeakMap();
+
     const conveyor = options.contentMotion;
     if (conveyor && conveyor.speed > 0) this.measureConveyor(conveyor.continuous);
-    // A preset without a conveyor has no twins; leaving the last set in place would have
-    // channel writes chasing elements that are no longer on the stage.
-    else this.twins = new WeakMap();
+
+    const travel = options.blockMotion;
+    if (travel && travel.speed > 0 && travel.continuous) this.wrapBlocks(travel.direction);
 
     // After the travel is known, since that is what sets the duration.
     this.applyPhases(phases);
@@ -555,7 +579,11 @@ export class Typesetter {
 
       // `hidden` rather than removal: the element stays in the registries, so a layer that
       // targeted it keeps its ownership and the line comes back intact when it fits again.
-      if (line.el.hidden === whole) line.el.hidden = !whole;
+      if (line.el.hidden === whole) {
+        line.el.hidden = !whole;
+        const twin = this.twins.get(line.el);
+        if (twin) twin.hidden = !whole;
+      }
     }
   }
 
@@ -602,6 +630,36 @@ export class Typesetter {
 
       const duration = Number(animation.effect?.getComputedTiming().duration ?? 0);
       if (duration > 0) animation.currentTime = phase * duration;
+    }
+  }
+
+  /**
+   * Give every block a twin one canvas away, so a travelling block wraps rather than leaves.
+   *
+   * The same construction as the seamless conveyor, one level up: the copy sits exactly one
+   * travel behind, and one cycle moves exactly that far, so as the original goes off the right
+   * the copy arrives at the left and at the wrap it lands where the original began.
+   *
+   * The offset is a variable rather than a different position, because the animation owns the
+   * transform — the keyframes add `--wrap` at both ends, so the copy runs the same animation
+   * shifted by a canvas.
+   */
+  private wrapBlocks(direction: 'up' | 'down' | 'left' | 'right'): void {
+    const container = this.stage.container;
+    const axis = direction === 'left' || direction === 'right' ? 'x' : 'y';
+    const size = axis === 'x' ? this.stage.width : this.stage.height;
+
+    // Behind the direction of travel: a block heading right is chased by a copy on its left.
+    const back = direction === 'right' || direction === 'down' ? -size : size;
+
+    for (const block of this.blocks) {
+      const copy = block.cloneNode(true) as HTMLElement;
+      copy.dataset['copy'] = '1';
+      copy.setAttribute('aria-hidden', 'true');
+      copy.style.setProperty('--wrap', `${back.toFixed(2)}px`);
+      container.append(copy);
+
+      pairUp(block, copy, this.twins);
     }
   }
 
@@ -868,8 +926,10 @@ function pairUp(
   copy: HTMLElement,
   twins: WeakMap<HTMLElement, HTMLElement>,
 ): void {
-  const from = original.querySelectorAll<HTMLElement>('w, c');
-  const to = copy.querySelectorAll<HTMLElement>('w, c');
+  // Paragraphs as well as words and characters: line trimming hides `<p>` elements, and a
+  // copy that kept showing a line its twin had hidden would give itself away at once.
+  const from = original.querySelectorAll<HTMLElement>('w, c, p');
+  const to = copy.querySelectorAll<HTMLElement>('w, c, p');
   const count = Math.min(from.length, to.length);
 
   for (let i = 0; i < count; i++) {

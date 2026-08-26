@@ -1190,6 +1190,25 @@ a motion layer that carries no direction or speed rather than leaving it inert.
 
 Where two of a kind exist, the **last wins**, matching the rule channels already follow.
 
+#### Both kinds wrap
+
+`travel` takes the same `continuous` modifier as `scroll`, and by the same construction: a copy
+one canvas behind, and one cycle moving exactly that far, so as the block leaves the right edge
+its copy arrives at the left and at the wrap the copy is standing where the original began.
+Off, it crosses the frame once and is gone until the next typeset.
+
+Measured on a wrapping block: the copy reaches the original's start position to the pixel, and
+across a full cycle there is never a frame with nothing on screen.
+
+`scroll` and `travel` **overlap** in the up and down directions, and that is fine. Scrolling
+moves text through a stationary window; travelling carries the window itself. They coincide
+only when the block already fills the frame — the same observation that made them two settings
+in the first place — and diverge completely as soon as it does not.
+
+The copy needs the same treatment as the conveyor's: it is not in the registries and is never
+targeted, and `Channels` mirrors every write into it. Line trimming mirrors too, since a copy
+still showing a line its twin had hidden would give the trick away.
+
 | Kind | What moves | Directions |
 |---|---|---|
 | **Content motion** | Text slides *through* a block that stays bolted to the frame — the conveyor | `up` · `down` |

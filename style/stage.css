@@ -271,18 +271,36 @@ sn {
   to { transform: translateY(var(--box-h)); }
 }
 
-/* Block motion travels two canvases, entering from off one edge and leaving off the other,
-   so the loop restarts while the block is out of frame and the jump is never seen. */
-#container[data-block-motion] .block {
+/* Crossing once: two canvases, entering from off one edge and leaving off the other, so the
+   restart happens while the block is out of frame and is never seen. */
+#container[data-block-motion]:not([data-block-loop]) .block {
   animation-duration: calc(2s * 2 / var(--block-speed, 0.25));
+}
+
+/* Wrapping: one canvas per cycle, with a copy sitting exactly one canvas behind. As the
+   original leaves the right the copy arrives at the left, and at the wrap the copy is standing
+   where the original began — the same trick the conveyor uses, one level up.
+
+   `--wrap` is nothing on the original and one canvas on the copy, and appears at both ends of
+   the keyframes so the copy runs the same animation shifted along. */
+#container[data-block-motion][data-block-loop] .block {
+  animation-duration: calc(2s / var(--block-speed, 0.25));
+}
+
+#container[data-block-motion] .block {
   animation-timing-function: linear;
   animation-iteration-count: infinite;
 }
 
-#container[data-block-motion='up'] .block { animation-name: olib-block-up; }
-#container[data-block-motion='down'] .block { animation-name: olib-block-down; }
-#container[data-block-motion='left'] .block { animation-name: olib-block-left; }
-#container[data-block-motion='right'] .block { animation-name: olib-block-right; }
+#container[data-block-motion='up']:not([data-block-loop]) .block { animation-name: olib-block-up; }
+#container[data-block-motion='down']:not([data-block-loop]) .block { animation-name: olib-block-down; }
+#container[data-block-motion='left']:not([data-block-loop]) .block { animation-name: olib-block-left; }
+#container[data-block-motion='right']:not([data-block-loop]) .block { animation-name: olib-block-right; }
+
+#container[data-block-motion='up'][data-block-loop] .block { animation-name: olib-wrap-up; }
+#container[data-block-motion='down'][data-block-loop] .block { animation-name: olib-wrap-down; }
+#container[data-block-motion='left'][data-block-loop] .block { animation-name: olib-wrap-left; }
+#container[data-block-motion='right'][data-block-loop] .block { animation-name: olib-wrap-right; }
 
 @keyframes olib-block-up {
   from { transform: translateY(var(--stage-h)); }
@@ -302,6 +320,26 @@ sn {
 @keyframes olib-block-right {
   from { transform: translateX(calc(-1 * var(--stage-w))); }
   to { transform: translateX(var(--stage-w)); }
+}
+
+@keyframes olib-wrap-up {
+  from { transform: translateY(var(--wrap, 0px)); }
+  to { transform: translateY(calc(var(--wrap, 0px) - var(--stage-h))); }
+}
+
+@keyframes olib-wrap-down {
+  from { transform: translateY(var(--wrap, 0px)); }
+  to { transform: translateY(calc(var(--wrap, 0px) + var(--stage-h))); }
+}
+
+@keyframes olib-wrap-left {
+  from { transform: translateX(var(--wrap, 0px)); }
+  to { transform: translateX(calc(var(--wrap, 0px) - var(--stage-w))); }
+}
+
+@keyframes olib-wrap-right {
+  from { transform: translateX(var(--wrap, 0px)); }
+  to { transform: translateX(calc(var(--wrap, 0px) + var(--stage-w))); }
 }
 
 /* --- align (§11.6) --------------------------------------------------------------------

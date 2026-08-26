@@ -282,7 +282,6 @@ function layers(value: unknown, say: Say): readonly LayerSpec[] {
     const motion = readMotion(
       item['motion'],
       treatment === 'scroll' ? CONTENT_DIRECTIONS : BLOCK_DIRECTIONS,
-      treatment === 'scroll',
     );
     // Not `range` — that clamps to grid cells, and a swell bound is a scale factor.
     const size = scaleRange(item['size']);
@@ -333,11 +332,7 @@ const BLOCK_DIRECTIONS = new Set(['up', 'down', 'left', 'right']);
  * dropped rather than replaced with a default. Inventing movement nobody asked for is worse
  * than losing a setting that was already malformed.
  */
-function readMotion(
-  value: unknown,
-  directions: Set<string>,
-  looping = true,
-): LayerSpec['motion'] | null {
+function readMotion(value: unknown, directions: Set<string>): LayerSpec['motion'] | null {
   if (!isRecord(value)) return null;
 
   const direction = value['direction'];
@@ -350,11 +345,10 @@ function readMotion(
     direction: direction as 'up' | 'down' | 'left' | 'right',
     // Faster than four canvases a bar is not a look, it is a strobe of unreadable smear.
     speed: Math.min(4, speed),
-    // Only `scroll` has a loop choice — a travelling block leaves the frame and re-enters from
-    // the far side either way. Omitted rather than stored-and-ignored, so a saved file does not
-    // suggest a setting that does nothing. Defaulting to true keeps a file written before the
-    // modifier existed behaving as it did.
-    ...(looping ? { continuous: bool(value['continuous'], true) } : {}),
+    // Both kinds wrap: `scroll` sends the text round its block, `travel` sends the block round
+    // the frame. Defaulting to true keeps a file written before the modifier existed behaving
+    // as it did.
+    continuous: bool(value['continuous'], true),
   };
 }
 
@@ -368,7 +362,7 @@ function migrateMotion(
 ): LayerSpec[] {
   if (value === undefined) return [];
 
-  const motion = readMotion(value, directions, treatment === 'scroll');
+  const motion = readMotion(value, directions);
   if (!motion) {
     say(`${treatment} motion could not be read, dropped`);
     return [];
