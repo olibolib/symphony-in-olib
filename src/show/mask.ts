@@ -197,9 +197,11 @@ export function toggle(mask: Mask, row: number, col: number): Mask {
     return chars.join('');
   });
 
-  // A mask with nothing allowed has no failure mode worth having: every preset would be
-  // skipped and the stage would simply go empty with no indication why. Refuse the last one.
-  return anchors(rows).length === 0 ? normalise(mask) : rows;
+  // Empty is allowed. It used to refuse the last cell, on the grounds that every preset would
+  // then be skipped with nothing to explain it — but the explanation exists now: an empty mask
+  // is reported by name, and clearing the grid is a reasonable thing to want to do on the way
+  // to selecting somewhere else.
+  return rows;
 }
 
 /**
@@ -219,49 +221,130 @@ export function placeBlocks(
   count: number,
   avoidOverlap: boolean,
 ): readonly Box[] {
-  const placed: Box[] = [];
-
-  for (let i = 0; i < count; i++) {
-    placed.push(placeOne(cells, shapes, placed, avoidOverlap));
-  }
-  return placed;
-}
-
-function placeOne(
-  cells: readonly Cell[],
-  shapes: readonly BlockShape[],
-  placed: readonly Box[],
-  avoidOverlap: boolean,
-): Box {
-  const roll = (): Box => {
-    const anchor = pick(cells) ?? { row: 0, col: 0 };
-    const shape = pick(shapes);
-    const cols = shape ? randomRange(shape.cols.min, shape.cols.max) : 1;
-    const rows = shape ? randomRange(shape.rows.min, shape.rows.max) : 1;
-    return place(anchor, cols, rows);
+  const roll = (): Box[] => {
+    const out: Box[] = [];
+    for (let i = 0; i < count; i++) {
+      const anchor = pick(cells) ?? { row: 0, col: 0 };
+      const shape = pick(shapes);
+      const cols = shape ? randomRange(shape.cols.min, shape.cols.max) : 1;
+      const rows = shape ? randomRange(shape.rows.min, shape.rows.max) : 1;
+      out.push(place(anchor, cols, rows));
+    }
+    return out;
   };
 
-  if (!avoidOverlap || placed.length === 0) return roll();
+  if (!avoidOverlap || count < 2) return roll();
 
-  // Every anchor against every shape, in random order, taking the first that fits. Bounded
-  // at 49 x shapes and only reached on a re-typeset, so exhaustive is affordable — and
-  // exhaustive is what makes "no arrangement exists" mean it, rather than meaning the
-  // random attempts ran out.
-  for (const anchor of shuffled(cells)) {
-    for (const shape of shuffled(shapes)) {
-      const box = place(
-        anchor,
-        randomRange(shape.cols.min, shape.cols.max),
-        randomRange(shape.rows.min, shape.rows.max),
-      );
-      if (!placed.some((other) => overlaps(box, other))) return box;
+  // Random whole arrangements first, which keeps the ordinary case looking exactly as it did:
+  // every block's anchor and size drawn the way they always were, and the set simply rejected
+  // if it collides.
+  for (let attempt = 0; attempt < ARRANGEMENT_ATTEMPTS; attempt++) {
+    const arrangement = roll();
+    if (!collides(arrangement)) return arrangement;
+  }
+
+  const searched = search(cells, shapes, count);
+  if (searched) return searched;
+
+  // Nothing fits: the mask is tight, the shapes are large, or there are simply too many
+  // blocks. Place them anyway. An overlapping block is a visible compromise; a missing one is
+  // indistinguishable from text that failed to render (§14).
+  return roll();
+}
+
+/** Random whole arrangements tried before the exhaustive search is worth its cost. */
+const ARRANGEMENT_ATTEMPTS = 60;
+
+/** Ceiling on search work, so a pathological mask cannot stall a frame. */
+const SEARCH_NODES = 20_000;
+
+/**
+ * Search for an arrangement with no collisions in it, over all the blocks at once.
+ *
+ * Placing them **one at a time was the bug**. The first block took a blind roll and only the
+ * later ones searched, so a first block that landed badly could make a clean arrangement
+ * impossible and nothing ever went back to move it. Two full-height blocks can only sit side
+ * by side; roll the first into a middle column and the second has nowhere to go, however
+ * exhaustively it looks.
+ *
+ * Backtracking fixes that by treating the placement as one decision rather than a sequence of
+ * independent ones. The candidate list is shuffled, so it still finds *an* arrangement rather
+ * than the same one every time, and the first complete set wins.
+ *
+ * Returns null if the budget runs out or no arrangement exists — both mean the caller should
+ * fall back to overlapping.
+ */
+function search(
+  cells: readonly Cell[],
+  shapes: readonly BlockShape[],
+  count: number,
+): Box[] | null {
+  const candidates = shuffled(candidateBoxes(cells, shapes));
+  if (candidates.length === 0) return null;
+
+  const chosen: Box[] = [];
+  let budget = SEARCH_NODES;
+
+  const step = (depth: number): boolean => {
+    if (depth === count) return true;
+
+    for (const box of candidates) {
+      if (budget-- <= 0) return false;
+      if (chosen.some((other) => overlaps(box, other))) continue;
+
+      chosen.push(box);
+      if (step(depth + 1)) return true;
+      chosen.pop();
+    }
+    return false;
+  };
+
+  return step(0) ? chosen.slice() : null;
+}
+
+/**
+ * Every distinct box the mask and shapes allow.
+ *
+ * Every size in a shape's range, not one rolled size, because the search is the fallback for
+ * when the rolled sizes did not fit — refusing to consider a smaller block here would leave it
+ * overlapping instead. Deduplicated because {@link place} clamps an anchor so the box stays on
+ * the grid, which collapses several anchors onto the same box.
+ */
+function candidateBoxes(cells: readonly Cell[], shapes: readonly BlockShape[]): Box[] {
+  const seen = new Set<string>();
+  const out: Box[] = [];
+
+  for (const anchor of cells) {
+    for (const shape of shapes) {
+      const colLo = Math.min(shape.cols.min, shape.cols.max);
+      const colHi = Math.max(shape.cols.min, shape.cols.max);
+      const rowLo = Math.min(shape.rows.min, shape.rows.max);
+      const rowHi = Math.max(shape.rows.min, shape.rows.max);
+
+      for (let cols = colLo; cols <= colHi; cols++) {
+        for (let rows = rowLo; rows <= rowHi; rows++) {
+          const box = place(anchor, cols, rows);
+          const key = `${box.left},${box.top},${box.width},${box.height}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(box);
+        }
+      }
     }
   }
 
-  // Nothing fits: the mask is tight, the shapes are large, or there are simply too many
-  // blocks. Place it anyway. An overlapping block is a visible compromise; a missing one is
-  // indistinguishable from text that failed to render (§14).
-  return roll();
+  return out;
+}
+
+function collides(boxes: readonly Box[]): boolean {
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i];
+      const b = boxes[j];
+      if (a && b && overlaps(a, b)) return true;
+    }
+  }
+  return false;
 }
 
 /** Touching edges do not count — blocks carry their own padding, so abutting reads fine. */

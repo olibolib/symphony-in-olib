@@ -80,16 +80,17 @@ export class MaskGrid {
   }
 
   /**
-   * Flip every cell.
+   * Flip every cell, including all the way to empty.
    *
-   * Refused when it would leave nothing allowed — the one state worth blocking, since every
-   * preset would then be skipped and the stage would empty with no indication why.
+   * Inverting a full grid used to be refused, on the grounds that an empty mask skipped every
+   * preset with nothing to explain it. The explanation exists now — an empty mask is reported
+   * by name — and inverting a full grid should land where it says it will.
    */
   invert(): void {
     const flipped = this.mask.map((line) =>
       Array.from(line, (char) => (char === '#' ? '.' : '#')).join(''),
     );
-    if (flipped.some((line) => line.includes('#'))) this.apply(flipped);
+    this.apply(flipped);
   }
 }
 

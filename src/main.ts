@@ -54,7 +54,7 @@ import { Channels } from './show/Channels';
 import { Layer, type LayerSpec } from './show/Layer';
 type BackgroundMode = 'white' | 'black' | 'transparent';
 import { PALETTES, type PaletteName } from './render/palette';
-import { FULL, intersect, normalise, type Mask } from './show/mask';
+import { anchors, FULL, intersect, normalise, type Mask } from './show/mask';
 
 /**
  * Increment 1 complete.
@@ -392,18 +392,24 @@ function effectiveMask(spawn: Mask): Mask {
 }
 
 /**
- * Say when the global mask has left a preset nowhere to go.
+ * Say which mask has left a preset nowhere to go.
  *
- * Named plainly, and with the tab to fix it in. The preset's own grid is the one open in the
- * editor and the two grids look identical, so a message that only says "no space" sends you
- * to widen the mask that was never the problem.
+ * Named plainly, and with the tab to fix it in. The two grids look identical and sit one tab
+ * apart, so a message that only says "no space" sends you to widen whichever one you happen to
+ * be looking at — which half the time is the one that was never the problem.
  *
- * Said once per preset rather than every phrase: a sticky error repeating every few bars
- * would bury the capture readout for something that has not changed since it was reported.
+ * Three cases, because there are three ways to end up with no cells:
+ *
+ * - the global mask is empty, so nothing at all can be placed;
+ * - the preset's own grid is empty, so only this preset is affected;
+ * - both have cells but they do not overlap, which is the global mask being absolute (§11.6).
+ *
+ * Said once per preset rather than every phrase: a sticky error repeating every few bars would
+ * bury the capture readout for something that has not changed since it was reported.
  */
 let blockedPreset = '';
 
-function reportBlocked(name: string): void {
+function reportBlocked(name: string, spawn: Mask): void {
   if (name === blockedPreset) return;
   blockedPreset = name;
 
@@ -411,6 +417,23 @@ function reportBlocked(name: string): void {
     hud.clearError();
     return;
   }
+
+  if (anchors(globalMask).length === 0) {
+    hud.setStatus(
+      'The global mask has no cells, so nothing can be placed — allow some in the Canvas tab',
+      true,
+    );
+    return;
+  }
+
+  if (anchors(normalise(spawn)).length === 0) {
+    hud.setStatus(
+      `"${name}" has no cells of its own — allow it some in the Presets tab`,
+      true,
+    );
+    return;
+  }
+
   hud.setStatus(
     `The global mask is blocking "${name}" — allow it some cells in the Canvas tab`,
     true,
@@ -501,7 +524,10 @@ function typesetNext(): void {
 
   hud.setClipped(typesetter.clipped);
 
-  reportBlocked(typesetter.unplaceable ? bank.current.name : '');
+  reportBlocked(
+    typesetter.unplaceable ? bank.current.name : '',
+    typesetter.unplaceable ? preset.spawn : FULL,
+  );
 }
 
 /**
