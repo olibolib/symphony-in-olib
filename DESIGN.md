@@ -2092,6 +2092,25 @@ size — which matters a lot when font sizes are viewport-relative.
 **Default 1280×720**, chosen over 1080p because rendering is lighter and the app is sharing a
 machine with DJ software and OBS. The stage size is configurable.
 
+#### Position and size are remembered
+
+OBS captures this window by its rectangle, so where it is and how big it is are part of a
+working setup rather than a convenience. Losing them on every launch means re-cropping the
+source in OBS every time — exactly the setup work this app should be doing once.
+
+Written to `stage-window.json` in app data on every move and resize, debounced so a drag is one
+write rather than a hundred, and flushed synchronously as the window closes: a size typed in
+seconds before quitting is precisely the one worth keeping.
+
+Read back through the same guard that has always protected the control window. A saved position
+is checked against the displays that exist **now**, and a window that would land on a monitor
+that has since been unplugged is recentred on the primary instead. Anything unreadable — a
+half-written file, a hand-edit, a leftover from an older version — falls back to the default
+rather than opening a window at NaN.
+
+Verified all three ways: a restart restores 960x540 at 300,180; a truncated file opens at the
+default; and a position at 99999,99999 comes back centred on the primary display.
+
 ### 13.2 Capture
 
 Window capture in OBS, cropped to the stage. The HUD sits outside the stage and is cropped

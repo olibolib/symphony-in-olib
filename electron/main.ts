@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, session
 import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { COMMAND_CHANNEL, EVENT_CHANNEL, PCM_CHANNEL } from '../src/ipc/protocol';
 import {
   getActiveWindowProcessIds,
@@ -124,13 +125,92 @@ function onVisibleDisplay(bounds: Electron.Rectangle): Electron.Rectangle {
   };
 }
 
+/**
+ * Where the canvas was last left. DESIGN.md §13.1.
+ *
+ * OBS captures this window by its rectangle, so its position and size are part of a working
+ * setup rather than a convenience — losing them on every launch means re-cropping the source
+ * in OBS every time, which is exactly the kind of setup work this app should be doing once.
+ *
+ * Read synchronously because the window is built from it. It is one small file at startup, and
+ * the alternative is creating the window at the default size and moving it a frame later, which
+ * the user would see.
+ */
+function stageStatePath(): string {
+  return join(app.getPath('userData'), 'stage-window.json');
+}
+
+/**
+ * The saved bounds, or null if there are none we can trust.
+ *
+ * Everything is checked rather than assumed: this file can be edited by hand, can be left over
+ * from an older version, and can be half-written if the machine lost power mid-save. A bad one
+ * has to mean "use the default", never a window at NaN or 4 pixels wide.
+ */
+function readStageBounds(): Electron.Rectangle | null {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(stageStatePath(), 'utf8'));
+    if (typeof raw !== 'object' || raw === null) return null;
+
+    const { x, y, width, height } = raw as Record<string, unknown>;
+    if (![x, y, width, height].every((v) => typeof v === 'number' && Number.isFinite(v))) {
+      return null;
+    }
+
+    return onVisibleDisplay({
+      x: Math.round(x as number),
+      y: Math.round(y as number),
+      width: Math.max(160, Math.round(width as number)),
+      height: Math.max(90, Math.round(height as number)),
+    });
+  } catch {
+    // No file yet on a first launch, which is the common case and not an error.
+    return null;
+  }
+}
+
+/** Coalesces the burst of `moved` events a drag produces into one write. */
+let stageSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function rememberStageBounds(): void {
+  if (stageSaveTimer !== null) clearTimeout(stageSaveTimer);
+  stageSaveTimer = setTimeout(writeStageBounds, 400);
+}
+
+/**
+ * Synchronous, so it also works from `before-quit` — an async write there races the process
+ * exiting, and a size you set just before closing is precisely the one worth keeping.
+ */
+function writeStageBounds(): void {
+  if (stageSaveTimer !== null) {
+    clearTimeout(stageSaveTimer);
+    stageSaveTimer = null;
+  }
+  if (!outputWindow || outputWindow.isDestroyed()) return;
+
+  const [x, y] = outputWindow.getPosition();
+  // Content size, matching how the window is created and how the Canvas tab reports it: the
+  // stage is 1280x720 of actual pixels, not 1280x720 including a frame.
+  const [width, height] = outputWindow.getContentSize();
+
+  try {
+    writeFileSync(stageStatePath(), JSON.stringify({ x, y, width, height }), 'utf8');
+  } catch {
+    // A show that cannot write its window position is still a show. Nothing to tell the user
+    // about mid-set, and it will be retried on the next move.
+  }
+}
+
 function createOutputWindow(): void {
+  const saved = readStageBounds();
+
   const win = new BrowserWindow({
+    ...(saved ? { x: saved.x, y: saved.y } : {}),
     // useContentSize means these numbers describe the web page area, excluding the window
     // frame — so the stage really is 1280x720 of actual pixels.
     useContentSize: true,
-    width: STAGE.width,
-    height: STAGE.height,
+    width: saved?.width ?? STAGE.width,
+    height: saved?.height ?? STAGE.height,
     resizable: false,
 
     // Transparency for OBS compositing (DESIGN.md §13.3). Two constraints come with it on
@@ -165,6 +245,16 @@ function createOutputWindow(): void {
   win.setIgnoreMouseEvents(true);
 
   outputWindow = win;
+
+  // Both events, because the window moves two ways: dragged by the HUD, or typed into the
+  // Canvas tab. `moved` fires per pixel through a drag, hence the debounce.
+  win.on('moved', rememberStageBounds);
+  win.on('resize', rememberStageBounds);
+
+  // Flushed while the window still exists. By `closed` it is destroyed and there is nothing
+  // left to read the bounds off — and a size typed in seconds before quitting is exactly the
+  // one worth keeping.
+  win.on('close', writeStageBounds);
 
   // Closing the canvas quits. Closing the control window only hides it (see the tray).
   win.on('closed', () => {
@@ -396,7 +486,8 @@ ipcMain.on('olib:always-on-top', (_event, value: boolean) => {
  * The canvas is frameless — transparency requires it on Windows, and transparency is worth
  * having (verified: alpha does survive OBS window capture). Frameless means no title bar to
  * drag, so position and size are typed rather than dragged. Which is arguably better when
- * OBS is pointed at the window: exact numbers, reproduced on every launch.
+ * OBS is pointed at the window: exact numbers, and they survive a restart — whatever is set
+ * here is written to `stage-window.json` and restored on the next launch.
  */
 ipcMain.handle('olib:output-bounds', () => {
   if (!outputWindow || outputWindow.isDestroyed()) return null;
@@ -540,6 +631,9 @@ void app.whenReady().then(() => {
     }
   });
 });
+
+// Quitting from the tray never closes the canvas window, so the flush above does not run.
+app.on('before-quit', writeStageBounds);
 
 app.on('window-all-closed', () => {
   app.quit();
