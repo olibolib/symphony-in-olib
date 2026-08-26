@@ -29,6 +29,16 @@ import { KEEP_CENTRE_CLEAR, type BlockShape, type Mask } from './mask';
  *   rolled within bounds, because per-element reflow several times a bar reads as broken
  *   and continuous following was dropped (§11.5).
  *
+ * ## Colour belongs to the preset
+ *
+ * `colourShift` is bound to `enter`, not to `phrase`. On `phrase` it reseats the palette
+ * under text that is still on screen — and on a conveyor, where the belt rolls straight
+ * through a re-typeset, the text swap is invisible and the colour change is the only thing
+ * you see. Words nothing is targeting appear to change on their own.
+ *
+ * Once per preset instead: the look holds for as long as the preset does, and colour changes
+ * when everything else does.
+ *
  * ## Placement is not a port
  *
  * The layout table is gone (§11.6), and unlike the layers it was not reproduced. Variety
@@ -270,7 +280,8 @@ export const PRESETS: readonly VisualPreset[] = [
       { treatment: 'underline', target: { slice: 'char', count: 4 }, triggers: { held: true }, decayBars: FADE.fast },
     ],
     bindings: {
-      phrase: [retext({ hold: [1, 2] }), colourShift({ accents: 2 })],
+      enter: [colourShift({ accents: 2 })],
+      phrase: [retext({ hold: [1, 2] })],
     },
     ambient: [pulse({ amount: 0.012 })],
   },
@@ -323,7 +334,8 @@ export const PRESETS: readonly VisualPreset[] = [
       { treatment: 'invert', target: { slice: 'char', count: 8 }, triggers: { held: true }, decayBars: FADE.medium },
     ],
     bindings: {
-      phrase: [retext({ hold: [1, 2] }), colourShift({ accents: 3 })],
+      enter: [colourShift({ accents: 3 })],
+      phrase: [retext({ hold: [1, 2] })],
     },
     // Hard on the beat, falling away fast. Reads as the kick.
     ambient: [pulse({ amount: 0.022 })],

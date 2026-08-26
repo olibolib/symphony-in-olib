@@ -26,10 +26,15 @@ export type Lane = 'kick' | 'snare' | 'hat' | 'beat' | 'bar' | 'phrase';
  * it or the second phrase reads as a stall. `always` fires every frame, for anything that
  * should be continuously present rather than struck.
  *
- * Neither is a real lane: no audio event produces them and no stage effect binds to them.
- * They are dispatched by the frame loop alongside the lanes they shadow.
+ * `enter` fires once, when a preset goes live. It is where anything that should hold for the
+ * preset's whole run belongs — the palette, most obviously. A setting bound to `phrase`
+ * changes under text that is still on screen, and on a conveyor that is text the audience is
+ * still reading.
+ *
+ * None of the three is a real lane: no audio event produces them and they are dispatched by
+ * the engine alongside the lanes they shadow.
  */
-export type LayerTrigger = Lane | 'held' | 'always';
+export type LayerTrigger = Lane | 'held' | 'always' | 'enter';
 
 export type Bindings = Partial<Record<LayerTrigger, readonly EffectRef[]>>;
 

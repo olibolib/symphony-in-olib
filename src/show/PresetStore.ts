@@ -38,7 +38,13 @@ interface StageParts {
  */
 const NEW_PRESET_PARTS: StageParts = {
   bindings: {
-    phrase: [retext({ hold: [1, 2] }), colourShift({ accents: 2 })],
+    // The palette on `enter`, not on `phrase`. Bound to a phrase it reseats the colours of
+    // text still on screen, and a preset with no layers at all — which a new one has almost
+    // none of — then appears to change colour entirely on its own, out of time with the
+    // music. On a looping conveyor it is worse still: the belt rolls straight through the
+    // re-typeset, so the colour change is the only visible event and nothing motivates it.
+    enter: [colourShift({ accents: 2 })],
+    phrase: [retext({ hold: [1, 2] })],
   },
 };
 

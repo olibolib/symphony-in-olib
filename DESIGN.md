@@ -1020,7 +1020,7 @@ text and stage settings.
 | Slice | `char` · `word` · `sentence` · `paragraph` · `block` — a `<p>` is a *line*, so a sentence gets its own wrapper |
 | Text | any mode, plus `continuous` to read it in order rather than sample it |
 | Treatment | `invert` · `accent` · `dingbat` · `underline` · `strike` · `outline` · `swell` · `flicker` · `blank` |
-| Trigger | `kick` · `snare` · `hat` · `beat` · `bar` · `phrase` · `held` · `always` |
+| Trigger | `kick` · `snare` · `hat` · `beat` · `bar` · `phrase` · `held` · `always` · `enter` |
 
 Four targets by nine treatments is thirty-six combinations from thirteen primitives, and most
 of them cannot be expressed today. The point is not that all thirty-six are good — it is that
@@ -1102,11 +1102,22 @@ actually lit.
 
 #### Static means static: colour is decided at typeset
 
+There is an `enter` trigger for this, fired once when a preset goes live and before its first
+typeset. Anything that should hold for a preset's whole run belongs there rather than on
+`phrase` — the palette most of all.
+
+Bound to `phrase`, `colourShift` reseats the colours of text that is **still on screen**. A
+preset with no layers then appears to change colour entirely on its own, out of time with
+anything; and on a looping conveyor it is worse, because the belt rolls straight through the
+re-typeset, so the colour change is the only visible event and nothing motivates it. That is
+what a user-made preset was doing: new presets bound the palette to `phrase`.
+
 A word's base colour behaves the way its base size does — **decided when the text is typeset
 and then left alone unless a layer takes the channel**. It is the same rule §11.5 already
 applies to size, and it was being broken in the one place nobody looked.
 
-`colourShift` used to write `--c0`..`--c7` onto the *stage*, which every word inherits. So it
+The other half was where it was written. `colourShift` used to write `--c0`..`--c7` onto the
+*stage*, which every word inherits. So it
 recoloured **text already on screen**, including words no layer was targeting. Those changed on
 their own, out of time with anything, which reads as a fault rather than as an effect — and it
 is worst on a conveyor, where the same words come round again looking different.

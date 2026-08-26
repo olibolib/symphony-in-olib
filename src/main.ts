@@ -94,6 +94,18 @@ const bank = new PresetBank(store.resolve());
 /** Phrases the current text has been on screen. Drives `retext` holds and `whenHolding`. */
 let textAge = 0;
 
+/**
+ * Seconds since the previous frame, shared with the effect context.
+ *
+ * Layer decay is derived from elapsed time rather than counted per frame, which is what
+ * stops a fade running twice as fast at 60fps as at 30 (§11.5).
+ *
+ * Declared here rather than beside the frame loop because `applyPreset` runs during module
+ * setup and builds an effect context — reading this while it was still in the temporal dead
+ * zone threw before anything was on screen.
+ */
+let frameDelta = 0;
+
 let analyser: Analyser | null = null;
 const appCapture = new AppCapture();
 
@@ -420,6 +432,10 @@ function applyPreset(): void {
   // anyway, but a preset change that does not re-typeset would otherwise leave them lit
   // with nothing left to decay them.
   channels.clearAll();
+
+  // Once, before the first typeset, so whatever it decides is what the first text is built
+  // with rather than arriving a phrase later.
+  conductor.fire('enter', effectContext());
 
   hud.setPresetState(preset.name, bank.pending);
   // Base size is rolled by the typesetter now, from the preset's range (§11.5).
@@ -762,13 +778,6 @@ syncStageSize();
 
 let lastFrameAt = performance.now();
 
-/**
- * Seconds since the previous frame, shared with the effect context.
- *
- * Layer decay is derived from elapsed time rather than counted per frame, which is what
- * stops a fade running twice as fast at 60fps as at 30 (§11.5).
- */
-let frameDelta = 0;
 
 function frame(now: number): void {
   // Clamped: after a stall, a huge delta would teleport the scroll rather than continuing
