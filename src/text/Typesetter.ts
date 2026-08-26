@@ -243,8 +243,35 @@ const DEFAULT_MAX_ELEMENTS = 6000;
  */
 const MAX_LOOP_ELEMENTS = DEFAULT_MAX_ELEMENTS / 2;
 
+/** The type size that budget was measured at. */
+const REFERENCE_SIZE_PX = 28;
+
+/** However small the type gets, the belt may not cost more than this. */
+const LOOP_ELEMENT_CEILING = DEFAULT_MAX_ELEMENTS * 2;
+
+/**
+ * The loop budget for a given type size.
+ *
+ * **Small type raises the cap rather than shortening the belt.** A flat cap ran out of copies
+ * exactly when the text was small: a shorter passage needs more repeats to fill the same box
+ * while costing the same per repeat, so the belt stopped covering the box and a gap crossed
+ * the frame once a cycle. A visible gap is not an acceptable way to save elements.
+ *
+ * Inverse in the size, because the cost that matters is pixels painted, and that falls as the
+ * type shrinks — half-size type is a quarter of the ink per element, so more of them buy the
+ * same frame. Ceilinged all the same, since nothing stops a preset asking for 8px.
+ */
+function loopBudget(fontPx: number): number {
+  if (!Number.isFinite(fontPx) || fontPx <= 0) return MAX_LOOP_ELEMENTS;
+  const scale = Math.max(1, REFERENCE_SIZE_PX / fontPx);
+  return Math.min(LOOP_ELEMENT_CEILING, MAX_LOOP_ELEMENTS * scale);
+}
+
 export class Typesetter {
   private readonly stage: Stage;
+
+  /** The size this typeset was rolled at, so the loop budget can scale with it. */
+  private fontPx = REFERENCE_SIZE_PX;
 
   /**
    * How far `continuous` has read into each text, in sentences.
@@ -411,7 +438,8 @@ export class Typesetter {
     // Base size is rolled once here, not per frame and not per trigger. Nothing decays it
     // and nothing follows the audio with it — it is simply how big the text is (§11.5).
     const size = options.size ?? { min: 28, max: 28 };
-    this.stage.setFontScale(randomRange(size.min, size.max));
+    this.fontPx = randomRange(size.min, size.max);
+    this.stage.setFontScale(this.fontPx);
 
     const container = this.stage.container;
     container.dataset['align'] = options.align ?? 'centre';
@@ -539,7 +567,8 @@ export class Typesetter {
       // Two is the floor — one repeat is what makes it a loop at all — even for a passage so
       // dense that the budget would rather it did not.
       const perCopy = Math.max(1, original.querySelectorAll('w, c').length);
-      const copies = Math.max(2, Math.min(wanted, Math.floor(MAX_LOOP_ELEMENTS / perCopy) + 1));
+      const budget = loopBudget(this.fontPx);
+      const copies = Math.max(2, Math.min(wanted, Math.floor(budget / perCopy) + 1));
 
       for (let i = 1; i < copies; i++) {
         const copy = original.cloneNode(true) as HTMLElement;
