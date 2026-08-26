@@ -213,8 +213,15 @@ function setMotion(
 
 
 
-/** Animations that run for ever, and therefore need their position carried across a typeset. */
-const ENDLESS = /^olib-(loop|block)-/;
+/**
+ * Animations that run for ever, and therefore need their position carried across a typeset.
+ *
+ * Everything that moves except the single-pass sweep, expressed as an exclusion rather than a
+ * list. A list is wrong in the dangerous direction: a motion left out of it silently restarts
+ * on every re-typeset, which is exactly what the wrapping keyframes did until it was noticed.
+ * Left in, the worst a mistake can do is carry a position that did not need carrying.
+ */
+const ENDLESS = /^olib-move-(?!sweep)/;
 
 /** A shape that fills most of the frame. Used when a preset declares none. */
 const DEFAULT_SHAPES: readonly BlockShape[] = [

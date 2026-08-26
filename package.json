@@ -8,7 +8,7 @@
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "preview": "electron-vite preview",
-    "typecheck": "tsc --noEmit && node scripts/check-ids.mjs",
+    "typecheck": "tsc --noEmit && node scripts/check-ids.mjs && node scripts/check-animations.mjs",
     "dist": "npm run build && electron-builder --win",
     "dist:dir": "npm run build && electron-builder --win --dir",
     "check": "node scripts/check-ids.mjs"

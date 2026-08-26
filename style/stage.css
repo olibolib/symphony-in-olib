@@ -165,6 +165,15 @@ sn {
   width: 100%;
 }
 
+/* Every keyframe that moves something is `olib-move-…`, and the engine matches on that
+   prefix. Named that way after a rename left two matchers behind: the wrapping keyframes
+   were called `olib-wrap-…`, matched nothing, and so were never re-timed to the tempo and
+   never had their position carried across a re-typeset — the block teleported back to its
+   anchor every phrase. A shared prefix means a new one is covered by existing code.
+
+   `olib-flicker` deliberately does not have it: flicker is timed by `--bar` rather than by
+   playback rate, and there can be hundreds of them at once. */
+
 /* --- motion (§11.5) -------------------------------------------------------------------
    Two kinds, and they are the same movement with a completely different look: content
    motion slides text through a block bolted to the frame, block motion carries the block
@@ -229,18 +238,18 @@ sn {
 }
 
 #container[data-content-motion='up'] .block[data-conveyor='loop'] .block-content {
-  animation-name: olib-loop-up;
+  animation-name: olib-move-loop-up;
 }
 #container[data-content-motion='down'] .block[data-conveyor='loop'] .block-content {
-  animation-name: olib-loop-down;
+  animation-name: olib-move-loop-down;
 }
 
-@keyframes olib-loop-up {
+@keyframes olib-move-loop-up {
   from { transform: translateY(0); }
   to { transform: translateY(calc(-1 * var(--travel))); }
 }
 
-@keyframes olib-loop-down {
+@keyframes olib-move-loop-down {
   from { transform: translateY(calc(-1 * var(--travel))); }
   to { transform: translateY(0); }
 }
@@ -253,18 +262,18 @@ sn {
 }
 
 #container[data-content-motion='up'] .block[data-conveyor='once'] .block-content {
-  animation-name: olib-sweep-up;
+  animation-name: olib-move-sweep-up;
 }
 #container[data-content-motion='down'] .block[data-conveyor='once'] .block-content {
-  animation-name: olib-sweep-down;
+  animation-name: olib-move-sweep-down;
 }
 
-@keyframes olib-sweep-up {
+@keyframes olib-move-sweep-up {
   from { transform: translateY(var(--box-h)); }
   to { transform: translateY(calc(-1 * var(--text-h))); }
 }
 
-@keyframes olib-sweep-down {
+@keyframes olib-move-sweep-down {
   from { transform: translateY(calc(-1 * var(--text-h))); }
   to { transform: translateY(var(--box-h)); }
 }
@@ -290,52 +299,52 @@ sn {
   animation-iteration-count: infinite;
 }
 
-#container[data-block-motion='up']:not([data-block-loop]) .block { animation-name: olib-block-up; }
-#container[data-block-motion='down']:not([data-block-loop]) .block { animation-name: olib-block-down; }
-#container[data-block-motion='left']:not([data-block-loop]) .block { animation-name: olib-block-left; }
-#container[data-block-motion='right']:not([data-block-loop]) .block { animation-name: olib-block-right; }
+#container[data-block-motion='up']:not([data-block-loop]) .block { animation-name: olib-move-block-up; }
+#container[data-block-motion='down']:not([data-block-loop]) .block { animation-name: olib-move-block-down; }
+#container[data-block-motion='left']:not([data-block-loop]) .block { animation-name: olib-move-block-left; }
+#container[data-block-motion='right']:not([data-block-loop]) .block { animation-name: olib-move-block-right; }
 
-#container[data-block-motion='up'][data-block-loop] .block { animation-name: olib-wrap-up; }
-#container[data-block-motion='down'][data-block-loop] .block { animation-name: olib-wrap-down; }
-#container[data-block-motion='left'][data-block-loop] .block { animation-name: olib-wrap-left; }
-#container[data-block-motion='right'][data-block-loop] .block { animation-name: olib-wrap-right; }
+#container[data-block-motion='up'][data-block-loop] .block { animation-name: olib-move-wrap-up; }
+#container[data-block-motion='down'][data-block-loop] .block { animation-name: olib-move-wrap-down; }
+#container[data-block-motion='left'][data-block-loop] .block { animation-name: olib-move-wrap-left; }
+#container[data-block-motion='right'][data-block-loop] .block { animation-name: olib-move-wrap-right; }
 
-@keyframes olib-block-up {
+@keyframes olib-move-block-up {
   from { transform: translateY(var(--stage-h)); }
   to { transform: translateY(calc(-1 * var(--stage-h))); }
 }
 
-@keyframes olib-block-down {
+@keyframes olib-move-block-down {
   from { transform: translateY(calc(-1 * var(--stage-h))); }
   to { transform: translateY(var(--stage-h)); }
 }
 
-@keyframes olib-block-left {
+@keyframes olib-move-block-left {
   from { transform: translateX(var(--stage-w)); }
   to { transform: translateX(calc(-1 * var(--stage-w))); }
 }
 
-@keyframes olib-block-right {
+@keyframes olib-move-block-right {
   from { transform: translateX(calc(-1 * var(--stage-w))); }
   to { transform: translateX(var(--stage-w)); }
 }
 
-@keyframes olib-wrap-up {
+@keyframes olib-move-wrap-up {
   from { transform: translateY(var(--wrap, 0px)); }
   to { transform: translateY(calc(var(--wrap, 0px) - var(--stage-h))); }
 }
 
-@keyframes olib-wrap-down {
+@keyframes olib-move-wrap-down {
   from { transform: translateY(var(--wrap, 0px)); }
   to { transform: translateY(calc(var(--wrap, 0px) + var(--stage-h))); }
 }
 
-@keyframes olib-wrap-left {
+@keyframes olib-move-wrap-left {
   from { transform: translateX(var(--wrap, 0px)); }
   to { transform: translateX(calc(var(--wrap, 0px) - var(--stage-w))); }
 }
 
-@keyframes olib-wrap-right {
+@keyframes olib-move-wrap-right {
   from { transform: translateX(var(--wrap, 0px)); }
   to { transform: translateX(calc(var(--wrap, 0px) + var(--stage-w))); }
 }

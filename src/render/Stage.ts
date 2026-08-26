@@ -6,8 +6,14 @@
  */
 const NOMINAL_BAR_SECONDS = 2;
 
-/** Only the motion animations are rate-driven. Flicker stays on `--bar`. */
-const MOTION_ANIMATIONS = /^olib-(loop|sweep|block)-/;
+/**
+ * Only the motion animations are rate-driven. Flicker stays on `--bar`.
+ *
+ * Matched on the shared `olib-move-` prefix rather than by listing them. The list version
+ * silently stopped covering the wrapping keyframes the moment they were added, so they ran at
+ * the nominal tempo for as long as nobody looked.
+ */
+const MOTION_ANIMATIONS = /^olib-move-/;
 
 /**
  * Time constant for chasing a new tempo, in seconds.
