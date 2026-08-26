@@ -3,7 +3,13 @@ import type { PaletteName } from '../render/palette';
 import type { BlockShape, Mask } from '../show/mask';
 import type { LayerSpec } from '../show/Layer';
 import type { EnergyTag } from '../show/presets';
-import type { Align, Flow, TextMode } from '../text/Typesetter';
+import type {
+  Align,
+  Flow,
+  TextLength,
+  TextPick,
+  TextSlice,
+} from '../text/Typesetter';
 import type { ClockSource } from '../types';
 
 /**
@@ -44,17 +50,20 @@ export interface PresetDoc {
   readonly energy: EnergyTag;
 
   readonly text: {
-    readonly mode: TextMode;
-    readonly count: number;
+    /** What a piece is: a word, a line, a sentence, or the whole text (§12.3). */
+    readonly slice: TextSlice;
 
-    /**
-     * Read the text in order rather than sampling it (§12.3).
-     *
-     * A modifier on whichever mode is chosen, not a mode of its own — so `sentence` reads a
-     * line at a time, `longSentences` walks the long ones in order, `word` reads word by
-     * word. None of those existed while it was a seventh mode with one fixed pool.
-     */
-    readonly continuous: boolean;
+    /** How many pieces, in total across blocks. */
+    readonly take: number;
+
+    /** Filter the pool by length. Meaningless for single words. */
+    readonly length: TextLength;
+
+    /** Sampled, read in order, or taken from a fixed place. */
+    readonly pick: TextPick;
+
+    /** Where `position` starts, counting from 1. */
+    readonly position: number;
 
     readonly splitChars: boolean;
     readonly blocks: 1 | 2 | 3;

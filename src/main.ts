@@ -40,12 +40,7 @@ import { BANDS, type BandName } from './audio/bands';
 import { BeatTracker } from './time/BeatTracker';
 import { Clock } from './time/Clock';
 import { parseText, type TextPreset } from './text/TextSource';
-import {
-  Typesetter,
-  type BlockMotion,
-  type ContentMotion,
-  type TextMode,
-} from './text/Typesetter';
+import { Typesetter, type BlockMotion, type ContentMotion } from './text/Typesetter';
 import { randomRange } from './util/random';
 import prologueRaw from '../presets/text/prologue.txt?raw';
 import { Conductor, type Lane } from './show/Conductor';
@@ -470,10 +465,12 @@ function typesetNext(): void {
   const preset = bank.current;
 
   typesetter.render(textsForBlocks(preset, preset.text.blocks), {
-    mode: preset.text.mode,
+    slice: preset.text.slice,
     splitChars: preset.text.splitChars,
-    count: preset.text.count,
-    continuous: preset.text.continuous,
+    take: preset.text.take,
+    length: preset.text.length,
+    pick: preset.text.pick,
+    position: preset.text.position,
     blocks: preset.text.blocks,
     mask: effectiveMask(preset.spawn),
     shapes: preset.blockShapes,

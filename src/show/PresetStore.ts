@@ -45,9 +45,11 @@ const NEW_PRESET_PARTS: StageParts = {
 const NEW_PRESET_DOC: Omit<PresetDoc, 'name'> = {
   energy: 'any',
   text: {
-    mode: 'shortSentences',
-    count: 3,
-    continuous: false,
+    slice: 'sentence',
+    take: 3,
+    length: 'short',
+    pick: 'random',
+    position: 1,
     splitChars: true,
     blocks: 1,
     // One size, not a range. The editor opens a range only when you ask for it, and a new

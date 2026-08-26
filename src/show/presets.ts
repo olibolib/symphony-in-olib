@@ -1,6 +1,12 @@
 import { pulse, retext, scroll, stopScroll } from '../effects';
 import type { EffectRef } from '../effects/types';
-import type { Align, Flow, TextMode } from '../text/Typesetter';
+import type {
+  Align,
+  Flow,
+  TextLength,
+  TextPick,
+  TextSlice,
+} from '../text/Typesetter';
 import type { Bindings } from './Conductor';
 import type { LayerSpec } from './Layer';
 import type { PresetDoc } from '../ipc/protocol';
@@ -64,17 +70,20 @@ export interface VisualPreset {
   readonly energy: EnergyTag;
 
   readonly text: {
-    readonly mode: TextMode;
-    readonly count: number;
+    /** What a piece is: a word, a line, a sentence, or the whole text (§12.3). */
+    readonly slice: TextSlice;
 
-    /**
-     * Read the text in order rather than sampling it (§12.3).
-     *
-     * A modifier on whichever mode is chosen, not a mode of its own — so `sentence` reads a
-     * line at a time, `longSentences` walks the long ones in order, `word` reads word by
-     * word. None of those existed while it was a seventh mode with one fixed pool.
-     */
-    readonly continuous: boolean;
+    /** How many pieces, in total across blocks. */
+    readonly take: number;
+
+    /** Filter the pool by length. Meaningless for single words. */
+    readonly length: TextLength;
+
+    /** Sampled, read in order, or taken from a fixed place. */
+    readonly pick: TextPick;
+
+    /** Where `position` starts, counting from 1. */
+    readonly position: number;
 
     readonly splitChars: boolean;
     readonly blocks: 1 | 2 | 3;
@@ -184,9 +193,11 @@ export function toDoc(preset: VisualPreset): PresetDoc {
     name: preset.name,
     energy: preset.energy,
     text: {
-      mode: preset.text.mode,
-      count: preset.text.count,
-      continuous: preset.text.continuous,
+      slice: preset.text.slice,
+      take: preset.text.take,
+      length: preset.text.length,
+      pick: preset.text.pick,
+      position: preset.text.position,
       splitChars: preset.text.splitChars,
       blocks: preset.text.blocks,
       size: preset.text.size,
@@ -215,7 +226,7 @@ export const PRESETS: readonly VisualPreset[] = [
   {
     name: 'still',
     energy: 'sparse',
-    text: { mode: 'sentence', count: 1, continuous: false, splitChars: true, blocks: 1, size: { min: 36, max: 44 } },
+    text: { slice: 'sentence', take: 1, length: 'any', pick: 'random', position: 1, splitChars: true, blocks: 1, size: { min: 36, max: 44 } },
     texts: ['default'],
     spawn: KEEP_CENTRE_CLEAR,
     // One large statement. Wide rather than tall, because a single sentence set big wants
@@ -262,7 +273,7 @@ export const PRESETS: readonly VisualPreset[] = [
   {
     name: 'scatter',
     energy: 'mid',
-    text: { mode: 'shortSentences', count: 5, continuous: false, splitChars: true, blocks: 2, size: { min: 24, max: 32 } },
+    text: { slice: 'sentence', take: 5, length: 'short', pick: 'random', position: 1, splitChars: true, blocks: 2, size: { min: 24, max: 32 } },
     texts: ['default'],
     spawn: KEEP_CENTRE_CLEAR,
     // A column and a band, so two blocks on stage rarely look like the same thing twice.
@@ -309,9 +320,11 @@ export const PRESETS: readonly VisualPreset[] = [
     name: 'swarm',
     energy: 'peak',
     text: {
-      mode: 'sentences',
-      count: 8,
-      continuous: false,
+      slice: 'sentence',
+      take: 8,
+      length: 'any',
+      pick: 'random',
+      position: 1,
       splitChars: true,
       blocks: 2,
       size: { min: 20, max: 30 },
@@ -363,7 +376,7 @@ export const PRESETS: readonly VisualPreset[] = [
   {
     name: 'drift',
     energy: 'mid',
-    text: { mode: 'longSentences', count: 3, continuous: false, splitChars: false, blocks: 1, size: { min: 26, max: 34 } },
+    text: { slice: 'sentence', take: 3, length: 'long', pick: 'random', position: 1, splitChars: false, blocks: 1, size: { min: 26, max: 34 } },
     texts: ['default'],
     spawn: KEEP_CENTRE_CLEAR,
     // A tall column or a wide band, never the square in between — the reason shapes are a

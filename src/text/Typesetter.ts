@@ -18,34 +18,47 @@ import { sentenceLength, type Sentence, type TextPreset } from './TextSource';
  * `count` means a number of sentences, never words or lines. Cutting by word count
  * produced fragments ending mid-thought, which reads as a bug rather than an effect.
  */
-export type TextMode =
-  | 'whole'
-  | 'sentence'
-  | 'sentences'
-  | 'shortSentences'
-  | 'longSentences'
-  | 'word';
+/**
+ * What a piece of text is.
+ *
+ * The same word means the same thing as it does in a layer's target (§11.5): a `paragraph` is
+ * one line of the source, a `sentence` is however many lines it runs to.
+ */
+export type TextSlice = 'word' | 'paragraph' | 'sentence' | 'whole';
+
+/** Filter the pool by how long a piece is, in words. Meaningless for single words. */
+export type TextLength = 'any' | 'short' | 'long';
+
+/**
+ * How pieces are chosen from the pool.
+ *
+ * `random` samples, `order` reads through in sequence, and `position` takes a fixed place in
+ * the text — the seventh sentence, every time. All three work the same way for every slice,
+ * which is the point of pulling them apart from the slice in the first place.
+ */
+export type TextPick = 'random' | 'order' | 'position';
+
+/** Words above this are "long". Acid's threshold, kept. */
+const LONG_WORDS = 12;
 
 export interface TypesetOptions {
-  readonly mode: TextMode;
+  readonly slice: TextSlice;
+
   /** One element per glyph. Required for character effects; costly at scale. */
   readonly splitChars: boolean;
-  /** How many sentences. Never a word or line count. */
-  readonly count?: number;
 
-  /**
-   * Read the text in order rather than sampling it.
-   *
-   * A **modifier on every mode**, not a mode of its own. Each mode decides *what* the pool
-   * is — every sentence, the short ones, the long ones, single words — and this decides
-   * whether the next selection is taken at random from that pool or continues from wherever
-   * the last one stopped.
-   *
-   * That is worth more than a seventh mode was: `sentence` + continuous reads a line at a
-   * time, `longSentences` + continuous walks the long ones in order, `word` + continuous
-   * reads word by word. None of those were reachable before.
-   */
-  readonly continuous?: boolean;
+  /** How many pieces, in total across blocks. Never a partial one. */
+  readonly take?: number;
+
+  /** Filter the pool by length. */
+  readonly length?: TextLength;
+
+  /** How pieces are chosen. */
+  readonly pick?: TextPick;
+
+  /** Where `position` starts, counting from 1. Wraps past the end. */
+  readonly position?: number;
+
   /** Put each line in its own paragraph, rather than running them together. */
   readonly separateLines?: boolean;
   /** Hard ceiling on elements produced. DESIGN.md §14 — presets declare a budget. */
@@ -311,10 +324,10 @@ export class Typesetter {
     }
     this.unplaceable = false;
 
-    // `count` is a total across blocks, not per block. Passing the full count to each was a
+    // `take` is a total across blocks, not per block. Passing the full number to each was a
     // bug: two blocks asking for four sentences produced eight, crammed into cells a third
     // of the stage wide, where the surplus was silently clipped.
-    const perBlock = Math.max(1, Math.round((options.count ?? 1) / blocks));
+    const perBlock = Math.max(1, Math.round((options.take ?? 1) / blocks));
 
     // All blocks are positioned together rather than one at a time, because avoiding
     // overlap needs to see the boxes already placed.
@@ -327,7 +340,7 @@ export class Typesetter {
       // Each block selects independently, so two blocks show different text — except in
       // `continuous` on the same text, where they deliberately show *consecutive* passages
       // and read as one thread split across the frame.
-      const lines = this.select(text, { ...options, count: perBlock });
+      const lines = this.select(text, { ...options, take: perBlock });
 
       // Rolled per block, so a tall column can sit beside a wide band — a composition the
       // 3x3 grid could not produce, since every cell there was the same size (§11.6).
@@ -745,121 +758,64 @@ export class Typesetter {
   }
 
   /**
-   * Pick which sentences to show. DESIGN.md §12.3.
+   * Choose what to show. DESIGN.md §12.3.
    *
-   * Two decisions, deliberately separated: the **mode** says what the pool is, and
-   * `continuous` says whether to sample it or read it in order. Every mode gets both
-   * behaviours for free, where a `continuous` *mode* could only ever have had one pool.
+   * Three decisions, and they used to be one dropdown. `mode` bundled the slice, the quantity
+   * and a length filter together, so `count` was a live setting in three of its six values and
+   * dead in the other three — the same fault as an effect welding a target to a treatment.
+   *
+   * Pulled apart, every control means the same thing whatever the slice: **take** three of
+   * them, **pick**ed at random, in order, or from a fixed position.
    */
   private select(preset: TextPreset, options: TypesetOptions): readonly Sentence[] {
-    const { sentences } = preset;
-    if (sentences.length === 0) return [];
+    if (preset.sentences.length === 0) return [];
 
-    const count = Math.max(1, options.count ?? 1);
-    const continuous = options.continuous === true;
-
-    switch (options.mode) {
-      // The whole text every time. There is nothing to sample and nothing to advance, so
-      // the modifier has no meaning here — which is itself the "repeat the whole" case.
-      case 'whole':
-        return sentences;
-
-      case 'word':
-        return this.selectWord(preset, continuous);
-
-      case 'sentence':
-        return this.take(preset, sentences, 1, continuous, 'sentence');
-
-      case 'sentences':
-        return this.take(preset, sentences, count, continuous, 'sentences');
-
-      case 'shortSentences':
-        return this.take(
-          preset,
-          pool(sentences, (x) => sentenceLength(x) <= 12),
-          count,
-          continuous,
-          'short',
-        );
-
-      case 'longSentences':
-        return this.take(
-          preset,
-          pool(sentences, (x) => sentenceLength(x) > 12),
-          count,
-          continuous,
-          'long',
-        );
-
-      default:
-        return sentences;
+    // The whole text is not a selection — there is nothing to take from and nothing to
+    // advance, so the other three controls have nothing to say about it.
+    if (options.slice === 'whole') {
+      this.pending = null;
+      return preset.sentences;
     }
-  }
 
-  /**
-   * Take `count` from a pool, in order or at random.
-   *
-   * Both paths wrap rather than stopping short, so the end of a text is followed by its
-   * beginning instead of by a gap.
-   *
-   * The cursor is keyed by text **and** by pool: a position among the long sentences means
-   * nothing to a reading of the short ones, so sharing one cursor would make a preset change
-   * jump to an unrelated point. Within the same pool two presets do share the thread, which
-   * is what makes switching preset mid-poem change how it looks rather than where it is.
-   */
-  private take(
-    preset: TextPreset,
-    from: readonly Sentence[],
-    count: number,
-    continuous: boolean,
-    pool: string,
-  ): readonly Sentence[] {
-    if (from.length === 0) return [];
-    const span = Math.min(count, from.length);
+    const pool = filterByLength(slicesOf(preset, options.slice), options.length ?? 'any');
+    if (pool.length === 0) return [];
 
-    const start = continuous
-      ? (this.cursors.get(`${preset.name}|${pool}`) ?? 0) % from.length
-      : randomInt(from.length);
+    const take = Math.max(1, options.take ?? 1);
+    const pick = options.pick ?? 'random';
+    const key = `${preset.name}|${options.slice}|${options.length ?? 'any'}`;
+
+    const start = this.startOf(pick, key, pool.length, options.position ?? 1);
 
     const out: Sentence[] = [];
-    for (let i = 0; i < span; i++) {
-      const sentence = from[(start + i) % from.length];
-      if (sentence) out.push(sentence);
+    for (let i = 0; i < Math.min(take, pool.length); i++) {
+      const piece = pool[(start + i) % pool.length];
+      if (piece) out.push(piece);
     }
 
-    // Where the reading resumes is decided after the build, by how much actually fitted —
-    // see `render`. Recording the pool here is what lets it find the right cursor.
-    this.pending = continuous ? { key: `${preset.name}|${pool}`, size: from.length } : null;
+    // Only a reading advances. Where it resumes is decided after the build, by how much
+    // actually fitted — see `render`.
+    this.pending = pick === 'order' ? { key, size: pool.length } : null;
     return out;
   }
 
   /**
-   * A single word, isolated.
+   * Where in the pool to start.
    *
-   * The one deliberate fragment: it reads as emphasis rather than as truncation, because
-   * there is obviously nothing missing. Continuous walks the text word by word, which is a
-   * different thing again — the passage arrives one word per phrase.
+   * The cursor is keyed by text, slice and filter together: a position among the long
+   * sentences means nothing to a reading of the short ones, so sharing one would make a
+   * change of setting jump to an unrelated point. Within the same pool two presets do share
+   * it, which is what makes switching preset mid-poem change how it looks rather than where
+   * it is.
    */
-  private selectWord(preset: TextPreset, continuous: boolean): readonly Sentence[] {
-    const words: string[] = [];
-    for (const sentence of preset.sentences) {
-      for (const line of sentence) words.push(...line);
-    }
-    if (words.length === 0) return [];
+  private startOf(pick: TextPick, key: string, size: number, position: number): number {
+    if (pick === 'order') return (this.cursors.get(key) ?? 0) % size;
 
-    if (!continuous) {
-      const word = pick(words);
-      this.pending = null;
-      return word ? [[[word]]] : [];
-    }
+    // Counted from 1, because it is a thing you point at rather than an offset. Wrapped
+    // rather than clamped, so a position past the end of a short text lands somewhere real
+    // instead of always on the last piece.
+    if (pick === 'position') return (((Math.round(position) - 1) % size) + size) % size;
 
-    const key = `${preset.name}|word`;
-    const at = (this.cursors.get(key) ?? 0) % words.length;
-    this.cursors.set(key, (at + 1) % words.length);
-    this.pending = null;
-
-    const word = words[at];
-    return word ? [[[word]]] : [];
+    return randomInt(size);
   }
 
   /**
@@ -933,17 +889,50 @@ export class Typesetter {
 }
 
 /**
- * Sentences matching a filter, falling back to all of them.
+ * The pool a slice selects from, each entry rendered as one piece.
  *
- * A text with no long sentences in it should still show something. Returning an empty pool
- * would leave the stage blank with nothing to explain it.
+ * A word arrives wrapped as a one-line, one-word sentence: the builder below only knows how
+ * to render sentences, and the alternative is a second path through it for the sake of one
+ * slice.
  */
-function pool(
-  sentences: readonly Sentence[],
-  matches: (sentence: Sentence) => boolean,
+function slicesOf(preset: TextPreset, slice: TextSlice): readonly Sentence[] {
+  switch (slice) {
+    case 'sentence':
+      return preset.sentences;
+
+    // One line of the source. The same meaning `paragraph` has in a layer's target, where it
+    // is a `<p>` — which is also one line.
+    case 'paragraph':
+      return preset.lines.map((line) => [line]);
+
+    // The one deliberate fragment: a single word reads as emphasis rather than truncation,
+    // because there is obviously nothing missing.
+    case 'word':
+      return preset.lines.flatMap((line) => line.map((word) => [[word]]));
+
+    case 'whole':
+      return preset.sentences;
+  }
+}
+
+/**
+ * Keep the pieces of the wanted length, falling back to all of them.
+ *
+ * A text with no long sentences in it should still show something; an empty pool would leave
+ * the stage blank with nothing to explain it. Length means nothing for single words, so the
+ * filter stands aside rather than emptying the pool.
+ */
+function filterByLength(
+  pieces: readonly Sentence[],
+  length: TextLength,
 ): readonly Sentence[] {
-  const filtered = sentences.filter(matches);
-  return filtered.length > 0 ? filtered : sentences;
+  if (length === 'any') return pieces;
+
+  const matches = pieces.filter((piece) => {
+    const words = sentenceLength(piece);
+    return length === 'short' ? words <= LONG_WORDS : words > LONG_WORDS;
+  });
+  return matches.length > 0 ? matches : pieces;
 }
 
 /**

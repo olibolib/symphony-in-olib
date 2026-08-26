@@ -3,7 +3,13 @@ import type { LayerSpec } from './Layer';
 import type { Target } from './targets';
 import { CHANNELS, type Treatment } from './treatments';
 import { GRID, normalise, type BlockShape, type Mask } from './mask';
-import type { Align, Flow, TextMode } from '../text/Typesetter';
+import type {
+  Align,
+  Flow,
+  TextLength,
+  TextPick,
+  TextSlice,
+} from '../text/Typesetter';
 
 /**
  * Reading a preset off disk. DESIGN.md §11.4.
@@ -39,9 +45,26 @@ export interface ParseResult {
 
 const TREATMENTS = new Set<string>(Object.keys(CHANNELS));
 const SLICES = new Set(['char', 'word', 'sentence', 'paragraph', 'block']);
-const MODES = new Set<string>([
-  'whole', 'sentence', 'sentences', 'shortSentences', 'longSentences', 'word',
-]);
+const SLICES_TEXT = new Set<string>(['word', 'paragraph', 'sentence', 'whole']);
+const LENGTHS = new Set<string>(['any', 'short', 'long']);
+const PICKS = new Set<string>(['random', 'order', 'position']);
+
+/**
+ * What the old `mode` values become.
+ *
+ * `mode` bundled the slice, the quantity and a length filter into one dropdown, which is why
+ * `count` was a live setting in three of its six values and dead in the other three.
+ * Splitting them is the point of the new shape; carrying the old files across is the price.
+ */
+const OLD_MODES: Record<string, { slice: TextSlice; length: TextLength; take?: number }> = {
+  whole: { slice: 'whole', length: 'any' },
+  // Both of these were hardcoded to one piece, whatever `count` said.
+  sentence: { slice: 'sentence', length: 'any', take: 1 },
+  word: { slice: 'word', length: 'any', take: 1 },
+  sentences: { slice: 'sentence', length: 'any' },
+  shortSentences: { slice: 'sentence', length: 'short' },
+  longSentences: { slice: 'sentence', length: 'long' },
+};
 const ALIGNS = new Set<string>(['left', 'centre', 'right', 'justify']);
 const FLOWS = new Set<string>(['stack', 'run-on', 'grid', 'wrapped', 'columns']);
 const ENERGIES = new Set<string>(['sparse', 'mid', 'peak', 'any']);
@@ -83,17 +106,29 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
   const size = isRecord(text['size']) ? text['size'] : {};
   const varyBy = text['varyBy'];
 
-  // `continuous` used to be a seventh mode and is now a modifier on all of them (§12.3).
-  // A preset saved before that would otherwise fail its mode check and silently revert to
-  // random selection — the reading it was written for, quietly gone. Migrated instead, and
-  // said out loud so the file gets rewritten with the current shape on the next edit.
-  let mode = text['mode'];
-  let continuous = bool(text['continuous'], fallback.text.continuous);
-  if (mode === 'continuous') {
-    mode = 'sentences';
-    continuous = true;
-    say('mode "continuous" is now a modifier — migrated to sentences, read in order');
-    migrated = true;
+  // A file written when text selection was a single `mode` dropdown. Carried across rather
+  // than dropped: failing the check would silently revert it to a random sentence, which is
+  // not the text anybody wrote the preset for.
+  let slice = text['slice'];
+  let length = text['length'];
+  let take = text['take'];
+  let pick = text['pick'];
+
+  const oldMode = text['mode'];
+  if (typeof oldMode === 'string' && slice === undefined) {
+    // `continuous` was itself a mode before it was a modifier, so an even older file can
+    // arrive with it here.
+    const reading = oldMode === 'continuous';
+    const mapped = OLD_MODES[reading ? 'sentences' : oldMode];
+
+    if (mapped) {
+      slice = mapped.slice;
+      length = mapped.length;
+      take = mapped.take ?? text['count'];
+      pick = reading || bool(text['continuous'], false) ? 'order' : 'random';
+      migrated = true;
+      say(`text selection is now slice, take and pick — migrated from "${oldMode}"`);
+    }
   }
 
   const doc: PresetDoc = {
@@ -101,9 +136,11 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
     energy: pickFrom(o['energy'], ENERGIES, fallback.energy, 'energy', say) as PresetDoc['energy'],
 
     text: {
-      mode: pickFrom(mode, MODES, fallback.text.mode, 'text.mode', say) as TextMode,
-      count: clampNumber(text['count'], 1, 40, fallback.text.count, 'text.count', say),
-      continuous,
+      slice: pickFrom(slice, SLICES_TEXT, fallback.text.slice, 'text.slice', say) as TextSlice,
+      take: clampNumber(take, 1, 40, fallback.text.take, 'text.take', say),
+      length: pickFrom(length, LENGTHS, fallback.text.length, 'text.length', say) as TextLength,
+      pick: pickFrom(pick, PICKS, fallback.text.pick, 'text.pick', say) as TextPick,
+      position: clampNumber(text['position'], 1, 999, fallback.text.position, 'text.position', say),
       splitChars: bool(text['splitChars'], fallback.text.splitChars),
       blocks: clampNumber(text['blocks'], 1, 3, fallback.text.blocks, 'text.blocks', say) as 1 | 2 | 3,
       size: {

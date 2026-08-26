@@ -1146,31 +1146,42 @@ black or transparent background still makes the text readable. Verified: repaint
 slots leaves existing words untouched, accents survive a background flip, and unaccented words
 still follow it.
 
-#### Continuous is a modifier, not a mode
+#### Text selection: slice, take, pick
 
-`continuous` was added as a seventh selection mode, and that was the wrong shape. It bundled
-*what* the pool is with *how* it is taken from, so reading in order was only available over
-every sentence — never over the short ones, the long ones, or word by word.
+`mode` bundled three separate decisions into one dropdown, and it showed: `count` was a live
+setting in three of its six values and dead in the other three. Same fault as an effect welding
+a target to a treatment — one control doing several jobs, so it means something different
+depending on where you are standing.
 
-It is now a **boolean on every mode**. The mode says what the pool is; `continuous` says
-whether the next selection is sampled from it or continues from where the last one stopped.
+| | |
+|---|---|
+| **Slice** | what one piece is: `word` · `paragraph` · `sentence` · `whole` |
+| **Length** | `any` · `short` · `long`, filtering the pool |
+| **Take** | how many pieces, in total across blocks |
+| **Pick** | `random` · `order` · `position`, and a position when it is one |
 
-| Mode | Sampled | Continuous |
-|---|---|---|
-| `sentence` | a random line | the next line |
-| `sentences` | a random run of N | the next N |
-| `shortSentences` | N short ones at random | the short ones in order |
-| `longSentences` | N long ones at random | the long ones in order |
-| `word` | a random word | the next word |
-| `whole` | the whole text | the whole text — nothing to advance |
+`slice` is deliberately the same word a layer's target uses, and means the same thing: a
+`paragraph` is one line of the source, a `sentence` is however many lines it runs to. The two
+halves of the app finally agree on their vocabulary.
 
-The cursor is keyed by text **and** by pool: a position among the long sentences means
-nothing to a reading of the short ones. Within the same pool two presets share the thread, so
-switching preset mid-poem changes how it looks rather than where it is.
+**Every control now means the same thing whatever the slice.** Take 3 with Pick at position 7
+is three sentences from the seventh; change Slice to `word` and it is three words from the
+seventh. Picking the Nth of something was not reachable at all before — `word` mode chose one
+at random and ignored `count` entirely.
 
-*Migration:* a saved preset with `mode: "continuous"` becomes `sentences` plus the modifier,
-and says so. Without that it would fail its mode check and silently revert to random
-selection — the reading it was written for, quietly gone.
+`pick: order` **replaces the "read in order" checkbox**, which was itself a modifier bolted
+onto a mode. Reading the text is one of three ways of choosing from it, not a flag on top of
+choosing.
+
+The cursor for a reading is keyed by text, slice and filter together: a position among the long
+sentences means nothing to a reading of the short ones. Within the same pool two presets share
+it, so switching preset mid-poem changes how it looks rather than where it is.
+
+*Whole* takes no other settings, and the editor hides them rather than showing controls that do
+nothing — which is the fault this rework exists to remove.
+
+*Migration:* every old `mode` maps across, including the two that were hardcoded to one piece
+regardless of `count`, and both historical forms of `continuous`.
 
 #### Motion, in two kinds — and both are treatments
 
