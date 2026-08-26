@@ -390,13 +390,42 @@ function textsForBlocks(preset: VisualPreset, blocks: number): readonly TextPres
  * screen. The preset's own composition is the preference, and it is the preference that gives
  * way.
  */
-function effectiveMask(spawn: Mask): Mask {
+function effectiveMask(name: string, spawn: Mask): Mask {
   const both = intersect(globalMask, spawn);
-  if (anchors(both).length > 0) return both;
+  if (anchors(both).length > 0) {
+    reportMask('');
+    return both;
+  }
 
-  // Only reachable when the two genuinely have no cell in common.
   const global = normalise(globalMask);
-  return anchors(global).length > 0 ? global : FULL;
+  if (anchors(global).length > 0) {
+    // Naming the *global* mask matters. The preset's own grid is the one being looked at in
+    // the editor, so "no space" sends you to widen a mask that was never the problem — and
+    // the two grids look identical, which makes the wrong guess easy.
+    reportMask(
+      `"${name}" can only spawn where the global mask forbids — ` +
+        'using the global mask instead (Canvas tab)',
+    );
+    return global;
+  }
+
+  reportMask('The global mask has no cells enabled — nothing can be placed (Canvas tab)');
+  return FULL;
+}
+
+/**
+ * Last mask warning shown, so it is said once rather than on every phrase.
+ *
+ * A sticky error repeating every few bars would bury the capture readout for a situation that
+ * has not changed since it was first reported.
+ */
+let lastMaskWarning = '';
+
+function reportMask(message: string): void {
+  if (message === lastMaskWarning) return;
+  lastMaskWarning = message;
+  if (message !== '') hud.setStatus(message, true);
+  else hud.clearError();
 }
 
 /** Render the current preset's text selection. */
@@ -409,7 +438,7 @@ function typesetNext(): void {
     count: preset.text.count,
     continuous: preset.text.continuous,
     blocks: preset.text.blocks,
-    mask: effectiveMask(preset.spawn),
+    mask: effectiveMask(preset.name, preset.spawn),
     shapes: preset.blockShapes,
     align: preset.align,
     flow: preset.flow,
@@ -438,7 +467,10 @@ function typesetNext(): void {
   // Now only reachable if the global mask itself is empty, which the editor refuses to
   // produce. Kept because §14 would rather this be visible than silent.
   if (typesetter.unplaceable) {
-    hud.setStatus(`"${bank.current.name}" has nowhere to spawn — widen the mask`, true);
+    hud.setStatus(
+      `"${bank.current.name}" has nowhere to spawn — check the global mask in the Canvas tab`,
+      true,
+    );
   }
 }
 
