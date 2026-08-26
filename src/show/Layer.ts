@@ -8,8 +8,20 @@ export interface MotionSpec {
   readonly direction: 'up' | 'down' | 'left' | 'right';
   /** Fractions of the canvas per four beats. */
   readonly speed: number;
-  /** `scroll` only: loop for ever, or pass through once. */
+
+  /** `scroll` only: loop the text through its block for ever, or pass it through once. */
   readonly continuous?: boolean;
+
+  /**
+   * `travel` only: which edges the block reappears at.
+   *
+   * Split by axis, and named for the edges rather than borrowing `scroll`'s "loop", because
+   * one control called the same thing in two rows that do different things is a control
+   * nobody can predict. `side` wraps left and right, `top` wraps up and down; the direction
+   * decides which one is doing any work.
+   */
+  readonly wrapSide?: boolean;
+  readonly wrapTop?: boolean;
 }
 
 /**

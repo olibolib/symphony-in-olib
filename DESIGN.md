@@ -1205,9 +1205,21 @@ moves text through a stationary window; travelling carries the window itself. Th
 only when the block already fills the frame — the same observation that made them two settings
 in the first place — and diverge completely as soon as it does not.
 
+`travel`'s wrap is **two toggles, one per axis** — `wrap side` and `wrap top` — rather than
+borrowing `scroll`'s "loop". One control with the same name in two rows that behave differently
+is a control nobody can predict, and the two duly got mistaken for each other. Only the axis
+being travelled along does any work; the other is there for when the direction changes.
+
 The copy needs the same treatment as the conveyor's: it is not in the registries and is never
 targeted, and `Channels` mirrors every write into it. Line trimming mirrors too, since a copy
 still showing a line its twin had hidden would give the trick away.
+
+**An element can have more than one copy**, and missing that was a real bug. A wrapping
+`travel` clones a block whose contents a seamless conveyor has already doubled, so there are
+two levels of duplication and a *copy of a copy*. Pairings were held one-per-element, so the
+second pairing silently replaced the first: with both running, the conveyor's copy stopped
+receiving anything and arrived on screen as plain text. Pairings are now a list, and mirroring
+follows copies of copies — with a depth guard, so a pairing bug cannot become a hang.
 
 | Kind | What moves | Directions |
 |---|---|---|

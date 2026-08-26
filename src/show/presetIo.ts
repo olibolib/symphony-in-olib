@@ -345,10 +345,11 @@ function readMotion(value: unknown, directions: Set<string>): LayerSpec['motion'
     direction: direction as 'up' | 'down' | 'left' | 'right',
     // Faster than four canvases a bar is not a look, it is a strobe of unreadable smear.
     speed: Math.min(4, speed),
-    // Both kinds wrap: `scroll` sends the text round its block, `travel` sends the block round
-    // the frame. Defaulting to true keeps a file written before the modifier existed behaving
-    // as it did.
+    // `scroll` keeps one flag; `travel` has one per axis. A file written when both shared a
+    // single `continuous` seeds both axes from it, so nothing changes behaviour on upgrade.
     continuous: bool(value['continuous'], true),
+    wrapSide: bool(value['wrapSide'], bool(value['continuous'], true)),
+    wrapTop: bool(value['wrapTop'], bool(value['continuous'], true)),
   };
 }
 

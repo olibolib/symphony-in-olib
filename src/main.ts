@@ -92,7 +92,7 @@ const channels = new Channels();
  * replacement arrives plain, so every wrap looks like the colour dropping out. Which is
  * precisely what it was doing.
  */
-channels.setMirror((el) => typesetter.twinOf(el));
+channels.setMirror((el) => typesetter.twinsOf(el));
 const store = new PresetStore();
 const bank = new PresetBank(store.resolve());
 
@@ -448,10 +448,13 @@ function motionOptions(layers: readonly LayerSpec[]): {
         continuous: motion.continuous !== false,
       };
     } else if (layer.treatment === 'travel') {
+      // Only the axis being travelled along can wrap, so the other toggle is simply not
+      // consulted — it is there for when the direction changes.
+      const sideways = motion.direction === 'left' || motion.direction === 'right';
       block = {
         direction: motion.direction,
         speed: motion.speed,
-        continuous: motion.continuous !== false,
+        continuous: (sideways ? motion.wrapSide : motion.wrapTop) !== false,
       };
     }
   }

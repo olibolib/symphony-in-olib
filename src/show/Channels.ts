@@ -33,20 +33,46 @@ export class Channels {
    * Set after every typeset. Without it the copy would scroll into view carrying none of the
    * treatments the original had, and the belt would visibly be two different pieces of text.
    */
-  private mirror: ((el: HTMLElement) => HTMLElement | undefined) | null = null;
+  private mirror: ((el: HTMLElement) => readonly HTMLElement[]) | null = null;
 
-  setMirror(lookup: ((el: HTMLElement) => HTMLElement | undefined) | null): void {
+  setMirror(lookup: ((el: HTMLElement) => readonly HTMLElement[]) | null): void {
     this.mirror = lookup;
+  }
+
+  /**
+   * Every copy of an element, following copies of copies.
+   *
+   * A block can be duplicated after its contents already were — a wrapping `travel` clones a
+   * block that a seamless conveyor has already doubled — so the copy of a copy is a real
+   * thing and has to be reached. Depth is two in practice; the guard is there so a pairing
+   * bug cannot turn into a hang.
+   */
+  private copiesOf(el: HTMLElement): readonly HTMLElement[] {
+    const lookup = this.mirror;
+    if (!lookup) return [];
+
+    const out: HTMLElement[] = [];
+    let frontier = lookup(el);
+
+    for (let depth = 0; depth < 4 && frontier.length > 0; depth++) {
+      const next: HTMLElement[] = [];
+      for (const twin of frontier) {
+        if (out.includes(twin)) continue;
+        out.push(twin);
+        next.push(...lookup(twin));
+      }
+      frontier = next;
+    }
+    return out;
   }
 
   /** Write one channel, recording the owner. */
   set(el: HTMLElement, channel: Channel, value: string, owner: number): void {
     this.write(el, channel, value, owner);
 
-    // The conveyor's second copy takes the same value, so the belt reads as one continuous
-    // piece of text rather than two that happen to say the same words.
-    const twin = this.mirror?.(el);
-    if (twin) this.write(twin, channel, value, owner);
+    // Every copy takes the same value, so a duplicated belt or a wrapped block reads as one
+    // continuous thing rather than several that happen to say the same words.
+    for (const twin of this.copiesOf(el)) this.write(twin, channel, value, owner);
 
     let set = this.owned.get(owner);
     if (!set) {
@@ -80,8 +106,7 @@ export class Channels {
 
     this.wipe(el, channel);
 
-    const twin = this.mirror?.(el);
-    if (twin) this.wipe(twin, channel);
+    for (const twin of this.copiesOf(el)) this.wipe(twin, channel);
     return true;
   }
 

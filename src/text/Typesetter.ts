@@ -152,15 +152,10 @@ export interface BlockMotion {
   readonly speed: number;
 
   /**
-   * Wrap round the frame, or cross it once.
+   * Whether this block reappears at the opposite edge, for the axis it is travelling along.
    *
-   * On, the block re-enters from the opposite edge the instant it leaves — off the right, back
-   * on at the left — so there is never a moment with nothing there. Off, it crosses and is
-   * gone until the next typeset.
-   *
-   * It overlaps with `scroll` in the up and down directions, and deliberately: scrolling moves
-   * text through a stationary window while this carries the window itself, and the two read
-   * completely differently as soon as the block is smaller than the frame.
+   * Resolved from the layer's `wrapSide` / `wrapTop` before it gets here, so the typesetter
+   * only ever has to ask "does this one wrap".
    */
   readonly continuous: boolean;
 }
@@ -463,8 +458,6 @@ export class Typesetter {
    * shorter than its box.
    */
   private measureConveyor(seamless: boolean): void {
-    this.twins = new WeakMap();
-
     for (const block of this.blocks) {
       const content = block.querySelector<HTMLElement>('.block-content');
       const original = content?.querySelector<HTMLElement>('.loop');
@@ -581,8 +574,7 @@ export class Typesetter {
       // targeted it keeps its ownership and the line comes back intact when it fits again.
       if (line.el.hidden === whole) {
         line.el.hidden = !whole;
-        const twin = this.twins.get(line.el);
-        if (twin) twin.hidden = !whole;
+        for (const twin of this.twinsOf(line.el)) twin.hidden = !whole;
       }
     }
   }
@@ -670,11 +662,20 @@ export class Typesetter {
    * a `WeakMap` in particular because the whole DOM is replaced on every re-typeset and the
    * entries should go with it.
    */
-  twinOf(el: HTMLElement): HTMLElement | undefined {
-    return this.twins.get(el);
+  twinsOf(el: HTMLElement): readonly HTMLElement[] {
+    return this.twins.get(el) ?? EMPTY;
   }
 
-  private twins = new WeakMap<HTMLElement, HTMLElement>();
+  /**
+   * Every duplicate of an element, not just one.
+   *
+   * A list because there can be two levels of copying at once: a seamless conveyor duplicates
+   * the text inside a block, and a wrapping `travel` duplicates the whole block — including
+   * the conveyor copy already inside it. A single-twin map let the second pairing overwrite
+   * the first, so with both running the conveyor's copy silently stopped receiving anything
+   * and arrived on screen as plain text.
+   */
+  private twins = new WeakMap<HTMLElement, HTMLElement[]>();
 
   /**
    * Give each word or character its own size within the range.
@@ -924,7 +925,7 @@ function pool(
 function pairUp(
   original: HTMLElement,
   copy: HTMLElement,
-  twins: WeakMap<HTMLElement, HTMLElement>,
+  twins: WeakMap<HTMLElement, HTMLElement[]>,
 ): void {
   // Paragraphs as well as words and characters: line trimming hides `<p>` elements, and a
   // copy that kept showing a line its twin had hidden would give itself away at once.
@@ -935,7 +936,13 @@ function pairUp(
   for (let i = 0; i < count; i++) {
     const a = from[i];
     const b = to[i];
-    if (a && b) twins.set(a, b);
+    if (!a || !b) continue;
+
+    // Appended, never replaced. An element can be duplicated twice over — once by the
+    // conveyor and again by a wrapping block — and each copy has to be fed.
+    const existing = twins.get(a);
+    if (existing) existing.push(b);
+    else twins.set(a, [b]);
   }
 }
 
@@ -952,6 +959,8 @@ function translateY(el: HTMLElement | null): number {
   if (transform === 'none') return 0;
   return parseFloat(transform.split(',')[5] ?? '0') || 0;
 }
+
+const EMPTY: readonly HTMLElement[] = [];
 
 /** Elements a sentence will produce, so the budget can be checked before committing to it. */
 function sentenceCost(sentence: Sentence, splitChars: boolean): number {
