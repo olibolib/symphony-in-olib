@@ -93,8 +93,27 @@ export class Analyser {
 
   private firstFrame = true;
 
-  constructor(stream: MediaStream) {
-    this.ctx = new AudioContext();
+  /**
+   * Whether this Analyser created the AudioContext, and may therefore close it.
+   *
+   * When constructed from a node the context belongs to whoever built that node — closing it
+   * here would be closing someone else's resource, and closing it twice throws.
+   */
+  private readonly ownsContext: boolean;
+
+  /**
+   * Accepts a device stream or a node that is already producing audio.
+   *
+   * Per-application capture arrives as PCM over IPC rather than as a MediaStream, so it
+   * builds its own worklet node and hands it here. Everything downstream — bands, flux,
+   * onsets — is identical either way, which is the point.
+   */
+  constructor(source: MediaStream | AudioNode) {
+    this.ownsContext = source instanceof MediaStream;
+    this.ctx =
+      source instanceof MediaStream
+        ? new AudioContext()
+        : (source.context as AudioContext);
     this.node = this.ctx.createAnalyser();
     this.node.fftSize = FFT_SIZE;
 
@@ -106,7 +125,8 @@ export class Analyser {
     this.previous = new Float32Array(this.node.frequencyBinCount);
     this.waveform = new Float32Array(this.node.fftSize);
 
-    const source = this.ctx.createMediaStreamSource(stream);
+    const input =
+      source instanceof MediaStream ? this.ctx.createMediaStreamSource(source) : source;
 
     // A silent sink. Web Audio only reliably pulls a graph that reaches the destination,
     // but routing captured system audio back to the speakers would be a feedback loop —
@@ -114,7 +134,7 @@ export class Analyser {
     const silence = this.ctx.createGain();
     silence.gain.value = 0;
 
-    source.connect(this.node);
+    input.connect(this.node);
     this.node.connect(silence);
     silence.connect(this.ctx.destination);
 
@@ -150,7 +170,14 @@ export class Analyser {
   }
 
   close(): void {
-    void this.ctx.close();
+    // Only close what we created. With per-application capture the context belongs to
+    // AppCapture, and closing it here left AppCapture.stop() closing an already-closed
+    // context — which throws rather than being a no-op.
+    if (!this.ownsContext) return;
+    if (this.ctx.state === 'closed') return;
+    void this.ctx.close().catch(() => {
+      // Racing with a close from elsewhere is not worth reporting.
+    });
   }
 
   /**

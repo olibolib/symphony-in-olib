@@ -6,13 +6,13 @@
  * event over it, which is what broke the panel when larger areas were draggable.
  */
 
+/* This stylesheet is loaded only by the control window now, so the HUD simply fills it.
+   It used to be positioned below the stage in a shared window — hence the stage-relative
+   offset, which put it 750px down inside a window 560px tall. */
 #hud {
   position: absolute;
-  top: calc(var(--stage-h) + var(--gap-h));
-  left: 0;
-  width: var(--stage-w);
-  height: var(--hud-h);
-  padding: 6px 14px 10px;
+  inset: 0;
+  padding: 10px 14px 12px;
   background: #0b0b0b;
   color: #cfcfcf;
   font: 12px/1.4 ui-monospace, 'Cascadia Mono', Consolas, monospace;
@@ -621,4 +621,424 @@ kbd {
   border-color: #ff4a2b;
   background: #2a0f0a;
   color: #ff8b73;
+}
+
+/* --- canvas panel ------------------------------------------------------------------------ */
+
+.canvas-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.field.num input {
+  background: #161616;
+  color: #e6e6e6;
+  border: 1px solid #333;
+  padding: 4px 6px;
+  font: inherit;
+  width: 82px;
+  font-variant-numeric: tabular-nums;
+}
+
+.field.num input:focus {
+  outline: none;
+  border-color: #6a6a6a;
+}
+
+.canvas-row button {
+  background: #161616;
+  border: 1px solid #333;
+  color: #cfcfcf;
+  padding: 4px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.canvas-row button:hover {
+  border-color: #6a6a6a;
+  color: #f2f2f2;
+}
+
+.canvas-row button.primary {
+  border-color: #4ad07a;
+  color: #7ee6a4;
+}
+
+.canvas-row button.primary:hover {
+  background: #102016;
+}
+
+.canvas-note {
+  width: 100%;
+  color: #6d6d6d;
+  max-width: 62ch;
+}
+
+/* --- spawn mask (§11.6) ---------------------------------------------------------------
+   A 7x7 picture of the frame. Aspect-correct at 16:9, because the whole point is judging
+   where text will land against what is underneath — a square grid would misrepresent it. */
+
+.mask-block {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid #262626;
+}
+
+.mask-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: #9a9a9a;
+}
+
+.mask-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.mask-actions button {
+  background: #161616;
+  border: 1px solid #333;
+  color: #cfcfcf;
+  padding: 3px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.mask-actions button:hover {
+  border-color: #6a6a6a;
+  color: #f2f2f2;
+}
+
+.mask-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--mask-cols, 7), 1fr);
+  gap: 2px;
+  width: 100%;
+  max-width: 420px;
+  aspect-ratio: 16 / 9;
+  background: #262626;
+  padding: 2px;
+}
+
+.mask-cell {
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  background: #101010;
+  transition: background 90ms linear;
+}
+
+/* Lit means "text may start here". Deliberately the brighter state: the mask is normally
+   mostly on, and making the *exclusions* the quiet ones matches how it is read. */
+.mask-cell.on {
+  background: #2f6f48;
+}
+
+.mask-cell:hover {
+  outline: 1px solid #6a6a6a;
+  outline-offset: -1px;
+}
+
+.mask-cell.on:hover {
+  background: #3d8c5b;
+}
+
+.mask-cell:focus-visible {
+  outline: 2px solid #7ee6a4;
+  outline-offset: -2px;
+}
+
+/* --- preset editor (§11.4) ------------------------------------------------------------
+   A list beside a form. The list stays put while the form scrolls, because switching preset
+   is the one thing you do repeatedly here and hunting for the list each time would be the
+   worst part of using it. */
+
+.pe {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 16px;
+  width: 100%;
+  align-items: start;
+}
+
+.pe-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: sticky;
+  top: 0;
+}
+
+.pe-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #262626;
+}
+
+.pe-row {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #1c1c1c;
+  color: #b8b8b8;
+  font: inherit;
+  text-align: left;
+  padding: 6px 9px;
+  cursor: pointer;
+}
+
+.pe-row:last-child { border-bottom: 0; }
+.pe-row:hover { background: #161616; color: #e8e8e8; }
+
+.pe-row.selected {
+  background: #1b2a20;
+  color: #7ee6a4;
+}
+
+.pe-side-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pe-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.pe-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #1e1e1e;
+}
+
+.pe-section h3 {
+  margin: 0;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6d6d6d;
+  font-weight: 600;
+}
+
+.pe-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pe-field > .pe-label:first-child {
+  min-width: 96px;
+}
+
+.pe-label {
+  color: #7d7d7d;
+  font-size: 11.5px;
+}
+
+/* A label and its controls travel together. Left as loose flex children they broke apart at
+   narrow widths, and a label like "rows" ended up on the line above its own numbers. */
+.pe-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.pe-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+/* Opens the second field. Quiet until it is on, since a fixed value is the common case. */
+.pe-vary {
+  padding: 1px 6px;
+  line-height: 1.1;
+  color: #6d6d6d;
+}
+
+.pe-vary.on {
+  border-color: #4ad07a;
+  color: #7ee6a4;
+}
+
+.pe-range [hidden] {
+  display: none;
+}
+
+.pe .mask-grid {
+  max-width: 260px;
+}
+
+.pe-shapes,
+.pe-layers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pe-shape,
+.pe-layer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 5px 7px;
+  background: #131313;
+  border: 1px solid #232323;
+}
+
+/* Triggers are a row of small boxes rather than a dropdown, because several can be on at
+   once and reading which at a glance is the point. */
+.pe-triggers {
+  display: flex;
+  gap: 7px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.pe-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+}
+
+.pe input[type='number'] { width: 62px; }
+.pe input[type='text'] { width: 130px; }
+
+.pe input,
+.pe select {
+  background: #161616;
+  color: #e6e6e6;
+  border: 1px solid #333;
+  padding: 3px 5px;
+  font: inherit;
+}
+
+.pe input[type='checkbox'] {
+  width: auto;
+  padding: 0;
+  accent-color: #4ad07a;
+}
+
+.pe input:focus,
+.pe select:focus {
+  outline: none;
+  border-color: #6a6a6a;
+}
+
+.pe button {
+  background: #161616;
+  border: 1px solid #333;
+  color: #cfcfcf;
+  padding: 3px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pe button:hover {
+  border-color: #6a6a6a;
+  color: #f2f2f2;
+}
+
+/* The control window can be dragged down to 560px wide, where a layer row cannot hold its
+   controls on one line and the list beside the form leaves nothing for the form. Both give
+   way rather than overflowing — a horizontal scrollbar inside a panel is the worst outcome
+   here, because the thing that goes off-screen is whichever control you were reaching for. */
+@media (max-width: 760px) {
+  .pe {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pe-side {
+    position: static;
+  }
+
+  .pe-list {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .pe-row {
+    border-bottom: 0;
+    border-right: 1px solid #1c1c1c;
+  }
+
+  .pe-triggers {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+
+  .pe-field > .pe-label:first-child {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+}
+
+.pe-warn {
+  margin: 0;
+  padding: 6px 9px;
+  border-left: 2px solid #d98a1c;
+  background: #1a150c;
+  color: #d9b070;
+  font-size: 12px;
+}
+
+/* Texts a preset may draw from (§11.7). A checkbox each, because the set is small and
+   already known — seeing which are ticked at a glance beats being able to reorder a list
+   whose order does not matter, since one is rolled per block. */
+.pe-texts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  min-width: 0;
+}
+
+.pe-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+/* Motion, in two rows. Both carry the unit in the label because they share it — the whole
+   point is that the same number means the same velocity for a scroll and for a travelling
+   block, even though the two look nothing alike. */
+.pe-motions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pe-motion {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 5px 7px;
+  background: #131313;
+  border: 1px solid #232323;
+}
+
+.pe-motion > .pe-label:first-child {
+  min-width: 116px;
 }

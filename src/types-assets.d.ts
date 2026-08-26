@@ -5,3 +5,9 @@ declare module '*.txt?raw' {
   const content: string;
   export default content;
 }
+
+/** Vite resolves `?url` to the emitted asset path — used to load the audio worklet. */
+declare module '*?url' {
+  const url: string;
+  export default url;
+}

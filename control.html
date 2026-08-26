@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Symphony in Olib — Control</title>
+    <link rel="stylesheet" href="/style/base.css" />
+    <link rel="stylesheet" href="/style/hud.css" />
+  </head>
+  <body class="control">
+<footer id="hud">
+      <!--
+        Vertical split rather than stacked layers. The readouts sit beside the tabs instead
+        of above them, which roughly doubles the depth available to panel content — the text
+        editor in particular needs to be readable, not a letterbox.
+      -->
+      <div class="hud-split">
+      <!-- Always visible, whichever tab is open. Things you glance at without thinking. -->
+      <div class="strip">
+        <div class="readout">
+          <span class="label">BPM</span>
+          <span class="value" id="r-bpm">—</span>
+          <span class="sub">est <code id="r-est">—</code></span>
+        </div>
+
+        <div class="readout">
+          <span class="label">Source</span>
+          <span class="value small" id="r-source">none</span>
+        </div>
+
+        <div class="readout">
+          <span class="label">Confidence</span>
+          <span class="value small" id="r-conf">—</span>
+        </div>
+
+        <div class="readout">
+          <span class="label">Preset</span>
+          <span class="value" id="r-preset">—</span>
+          <span class="sub" id="r-energy">—</span>
+        </div>
+
+        <div class="readout beat">
+          <span class="label">Beat</span>
+          <span class="dot" id="r-beat"></span>
+        </div>
+
+        <!--
+          Vertical bars. The band name doubles as the onset indicator — it lights on a
+          transient, which removes a separate LED and buys the bars the height back.
+        -->
+        <div class="meters" id="r-meters">
+          <div class="meter" data-band="kick">
+            <span class="name">kick</span><span class="bar"><i></i></span>
+          </div>
+          <div class="meter" data-band="snare">
+            <span class="name">snare</span><span class="bar"><i></i></span>
+          </div>
+          <div class="meter" data-band="hat">
+            <span class="name">hat</span><span class="bar"><i></i></span>
+          </div>
+        </div>
+
+        <span class="status" id="opt-status">Not capturing</span>
+      </div>
+
+      <div class="hud-right">
+      <nav class="tabs" id="hud-tabs">
+        <button data-tab="audio" class="active">Audio</button>
+        <button data-tab="text">Text</button>
+        <button data-tab="effects">Effects</button>
+        <button data-tab="presets">Presets</button>
+        <button data-tab="canvas">Canvas</button>
+        <button data-tab="colours">Colours</button>
+        <button data-tab="settings">Settings</button>
+      </nav>
+
+      <div class="panels">
+        <section class="panel" data-panel="audio">
+          <label class="field">
+            <span>Source</span>
+            <select id="opt-device"><option value="">Loading…</option></select>
+          </label>
+
+          <div class="sens" id="opt-sens">
+            <span class="sens-title">Onset sensitivity</span>
+            <label><span>kick</span><input type="range" data-band="kick" min="0.5" max="6" step="0.1" /><code>—</code></label>
+            <label><span>snare</span><input type="range" data-band="snare" min="0.5" max="6" step="0.1" /><code>—</code></label>
+            <label><span>hat</span><input type="range" data-band="hat" min="0.5" max="6" step="0.1" /><code>—</code></label>
+          </div>
+        </section>
+
+        <section class="panel text-panel" data-panel="text" hidden>
+          <div class="text-tabs" id="opt-text-tabs"></div>
+
+          <textarea id="opt-text-body" spellcheck="false"
+                    placeholder="Loading…"></textarea>
+
+          <div class="text-actions">
+            <span class="text-note" id="opt-text-note"></span>
+            <button id="opt-text-delete" class="danger" title="Delete this text">&#128465;</button>
+            <button id="opt-text-import">Load file…</button>
+            <button id="opt-text-revert" disabled>Revert</button>
+            <button id="opt-text-apply" class="primary">Apply</button>
+          </div>
+        </section>
+
+        <section class="panel" data-panel="effects" hidden>
+          <div class="preset-list" id="opt-presets"></div>
+        </section>
+
+        <section class="panel" data-panel="presets" hidden>
+          <div class="pe" id="opt-editor">
+            <div class="pe-side">
+              <div class="pe-list"></div>
+              <div class="pe-side-actions">
+                <button id="pe-new" type="button">New</button>
+                <button id="pe-duplicate" type="button">Duplicate</button>
+                <button id="pe-delete" type="button">Delete</button>
+                <button id="pe-restore" type="button">Restore defaults</button>
+              </div>
+            </div>
+            <div class="pe-form"></div>
+          </div>
+        </section>
+
+        <section class="panel" data-panel="canvas" hidden>
+          <div class="canvas-row">
+            <label class="field num"><span>Width</span><input id="opt-out-w" type="number" min="160" step="2" /></label>
+            <label class="field num"><span>Height</span><input id="opt-out-h" type="number" min="90" step="2" /></label>
+            <button id="opt-out-preset-720">720p</button>
+            <button id="opt-out-preset-1080">1080p</button>
+          </div>
+
+          <div class="canvas-row">
+            <label class="field num"><span>X</span><input id="opt-out-x" type="number" step="1" /></label>
+            <label class="field num"><span>Y</span><input id="opt-out-y" type="number" step="1" /></label>
+            <button id="opt-out-centre">Centre on screen</button>
+            <button id="opt-out-apply" class="primary">Apply</button>
+          </div>
+
+          <p class="canvas-note">
+            The canvas window is frameless, so transparency works — there is no title bar to
+            drag it by. Set its placement here instead; exact numbers reproduce on every launch.
+          </p>
+
+          <div class="mask-block">
+            <div class="mask-head">
+              <span>Where text may spawn</span>
+              <div class="mask-actions">
+                <button id="opt-mask-all" type="button">All</button>
+                <button id="opt-mask-centre" type="button">Clear middle</button>
+                <button id="opt-mask-invert" type="button">Invert</button>
+              </div>
+            </div>
+
+            <div class="mask-grid" id="opt-mask" role="group" aria-label="Spawn mask"></div>
+
+            <p class="canvas-note">
+              Click a cell to allow or block it. A block <em>anchors</em> at a lit cell and is
+              sized by its preset, so it can extend past the mask — this decides where text
+              starts, not where it ends. Presets can only narrow this further, never widen it.
+            </p>
+          </div>
+        </section>
+
+        <section class="panel" data-panel="colours" hidden>
+          <label class="field">
+            <span>Palette</span>
+            <select id="opt-palette">
+              <option value="acid">Acid</option>
+              <option value="mono">Mono</option>
+              <option value="warm">Warm</option>
+              <option value="cool">Cool</option>
+              <option value="none">None</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Background</span>
+            <select id="opt-bg">
+              <option value="white">White</option>
+              <option value="black">Black</option>
+              <option value="transparent">Transparent</option>
+            </select>
+          </label>
+        </section>
+
+        <section class="panel" data-panel="settings" hidden>
+          <div class="stats">
+            <span>OBS crop <code id="r-crop">—</code></span>
+            <span>FPS <code id="r-fps">—</code></span>
+            <span class="clip">Clipped <code id="r-clip">0</code></span>
+          </div>
+          <p class="keys">
+            <kbd>Tab</kbd> hide HUD &nbsp;·&nbsp; <kbd>Space</kbd> tap tempo &nbsp;·&nbsp;
+            <kbd>Esc</kbd> auto tempo
+          </p>
+        </section>
+      </div>
+      </div>
+      </div>
+    </footer>
+
+    <script type="module" src="/src/control.ts"></script>
+  </body>
+</html>

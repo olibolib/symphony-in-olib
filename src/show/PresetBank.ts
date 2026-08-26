@@ -19,14 +19,40 @@ import type { VisualPreset } from './presets';
 const MIN_BARS = 16;
 const MAX_BARS = 32;
 
-const ENABLED_KEY = 'olib.enabledPresets';
+/**
+ * What is switched **off**, not what is on.
+ *
+ * Storing the enabled list looks equivalent and is not: a preset that did not exist when the
+ * list was written is absent from it, so it comes back disabled and never cycles. Since
+ * presets are created and loaded from disk after the bank is built, that happened to every
+ * preset the user made — it would be saved, reappear in the list, and silently never play.
+ *
+ * Recording the exclusions means anything new is on by default, which is the only sensible
+ * answer for a preset nobody has expressed an opinion about.
+ */
+const DISABLED_KEY = 'olib.disabledPresets';
+
+/** The old enabled-list key, read once to carry a previous session's choices over. */
+const LEGACY_ENABLED_KEY = 'olib.enabledPresets';
+
+/**
+ * Which preset was on stage when the app last closed.
+ *
+ * The enabled set says what *may* play; this says what *was* playing. Without it every
+ * launch starts on whichever preset happens to be first in the list, which is not a choice
+ * anybody made — it is just the order the array is in.
+ */
+const LIVE_KEY = 'olib.livePreset';
 
 export class PresetBank {
-  private readonly presets: readonly VisualPreset[];
+  private presets: readonly VisualPreset[];
   private index: number;
 
-  /** Names the cycle may choose from. Never empty — see `setEnabled`. */
-  private enabledNames: Set<string>;
+  /** Names excluded from the cycle. Everything else plays — see `setEnabled`. */
+  private disabledNames: Set<string>;
+
+  /** Whether the live preset is a remembered choice rather than the head of the list. */
+  private restored: boolean;
 
   /** Chosen but not yet applied. Applied at the next phrase. */
   private queued: string | null = null;
@@ -38,13 +64,59 @@ export class PresetBank {
   constructor(presets: readonly VisualPreset[]) {
     if (presets.length === 0) throw new Error('PresetBank needs at least one preset');
     this.presets = presets;
-    this.index = 0;
+    const saved = presets.findIndex((p) => p.name === localStorage.getItem(LIVE_KEY));
+    this.index = saved >= 0 ? saved : 0;
+    this.restored = saved >= 0;
+
     this.targetBars = randomRange(MIN_BARS, MAX_BARS);
-    this.enabledNames = this.loadEnabled();
+    this.disabledNames = this.loadDisabled();
   }
 
   get all(): readonly VisualPreset[] {
     return this.presets;
+  }
+
+  /**
+   * Swap in a rebuilt set after an edit (§11.4).
+   *
+   * The live preset is followed **by name**, not by index: editing a preset rebuilds the
+   * whole array, and an index would silently point at a different preset the moment one was
+   * added or deleted above it. If the live one has been deleted, the index is clamped rather
+   * than reset to zero, so the stage lands on its neighbour instead of jumping to the top of
+   * the list mid-set.
+   */
+  replace(presets: readonly VisualPreset[]): void {
+    if (presets.length === 0) return;
+
+    const liveName = this.current.name;
+    this.presets = presets;
+
+    if (this.restored) {
+      const found = presets.findIndex((p) => p.name === liveName);
+      this.index = found >= 0 ? found : Math.min(this.index, presets.length - 1);
+    } else {
+      // The bank is built from the compiled presets and only later replaced by what is on
+      // disk, so a preset the user made themselves does not exist yet when the constructor
+      // looks for it. This is the second chance, and the only one it needs.
+      const saved = presets.findIndex((p) => p.name === localStorage.getItem(LIVE_KEY));
+      this.index = saved >= 0 ? saved : Math.min(this.index, presets.length - 1);
+      this.restored = saved >= 0;
+    }
+
+    // A queued name that no longer exists would sit there being checked forever.
+    if (this.queued !== null && !presets.some((p) => p.name === this.queued)) {
+      this.queued = null;
+    }
+
+    // Exclusions for presets that no longer exist would sit there for ever, and would apply
+    // again if a preset were later created with the same name.
+    const names = new Set(presets.map((p) => p.name));
+    for (const name of Array.from(this.disabledNames)) {
+      if (!names.has(name)) this.disabledNames.delete(name);
+    }
+
+    // The cycle must never have nothing to choose from.
+    if (this.enabledCount === 0) this.disabledNames.delete(this.current.name);
   }
 
   get current(): VisualPreset {
@@ -58,7 +130,11 @@ export class PresetBank {
   }
 
   isEnabled(name: string): boolean {
-    return this.enabledNames.has(name);
+    return !this.disabledNames.has(name);
+  }
+
+  private get enabledCount(): number {
+    return this.presets.filter((p) => this.isEnabled(p.name)).length;
   }
 
   /**
@@ -69,14 +145,14 @@ export class PresetBank {
    * failure of exactly the kind §14 rules out. The request is refused instead.
    */
   setEnabled(name: string, enabled: boolean): boolean {
-    if (!enabled && this.enabledNames.size <= 1 && this.enabledNames.has(name)) {
+    if (!enabled && this.enabledCount <= 1 && this.isEnabled(name)) {
       return false;
     }
 
-    if (enabled) this.enabledNames.add(name);
-    else this.enabledNames.delete(name);
+    if (enabled) this.disabledNames.delete(name);
+    else this.disabledNames.add(name);
 
-    this.saveEnabled();
+    this.saveDisabled();
     return true;
   }
 
@@ -119,6 +195,7 @@ export class PresetBank {
       if (target >= 0) {
         this.index = target;
         this.resetCounters();
+        this.saveLive();
         return this.current;
       }
     }
@@ -126,7 +203,7 @@ export class PresetBank {
     if (!this.timerDue) return null;
 
     const others = this.presets.filter(
-      (p) => this.enabledNames.has(p.name) && p.name !== this.current.name,
+      (p) => this.isEnabled(p.name) && p.name !== this.current.name,
     );
     const next = pick(others);
     if (!next) {
@@ -138,6 +215,7 @@ export class PresetBank {
 
     this.index = this.presets.indexOf(next);
     this.resetCounters();
+    this.saveLive();
     return this.current;
   }
 
@@ -158,22 +236,48 @@ export class PresetBank {
     this.targetBars = randomRange(MIN_BARS, MAX_BARS);
   }
 
-  private loadEnabled(): Set<string> {
+  /**
+   * Read the exclusions, migrating a previous session's enabled list if that is all there is.
+   *
+   * The migration cannot be perfect — an enabled list only describes the presets that existed
+   * when it was written — but inverting it against the compiled built-ins carries over the
+   * choice that was actually made about them, which is the part worth keeping.
+   */
+  private loadDisabled(): Set<string> {
     try {
-      const raw = localStorage.getItem(ENABLED_KEY);
-      if (raw) {
-        const names = (JSON.parse(raw) as string[]).filter((n) =>
-          this.presets.some((p) => p.name === n),
-        );
-        if (names.length > 0) return new Set(names);
+      const raw = localStorage.getItem(DISABLED_KEY);
+      if (raw !== null) return new Set(JSON.parse(raw) as string[]);
+
+      const legacy = localStorage.getItem(LEGACY_ENABLED_KEY);
+      if (legacy !== null) {
+        const wasEnabled = new Set(JSON.parse(legacy) as string[]);
+        const disabled = this.presets
+          .map((p) => p.name)
+          .filter((name) => !wasEnabled.has(name));
+
+        localStorage.setItem(DISABLED_KEY, JSON.stringify(disabled));
+        localStorage.removeItem(LEGACY_ENABLED_KEY);
+        return new Set(disabled);
       }
     } catch {
-      // Corrupt or absent — fall through to everything enabled.
+      // Corrupt or absent. Everything plays, which is the safe direction to fail in: a
+      // silent bank is much worse than one preset you have to switch off again.
     }
-    return new Set(this.presets.map((p) => p.name));
+    return new Set();
   }
 
-  private saveEnabled(): void {
-    localStorage.setItem(ENABLED_KEY, JSON.stringify([...this.enabledNames]));
+  /**
+   * Remember what is on stage.
+   *
+   * Written on every change rather than on close: a VJ tool gets killed, not quit, and a
+   * setting that only survives a clean shutdown is a setting that does not survive.
+   */
+  private saveLive(): void {
+    this.restored = true;
+    localStorage.setItem(LIVE_KEY, this.current.name);
+  }
+
+  private saveDisabled(): void {
+    localStorage.setItem(DISABLED_KEY, JSON.stringify([...this.disabledNames]));
   }
 }

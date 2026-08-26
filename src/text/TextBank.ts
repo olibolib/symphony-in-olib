@@ -15,6 +15,11 @@ import { parseText, type TextPreset } from './TextSource';
 const ACTIVE_KEY = 'olib.activeText';
 
 export class TextBank {
+  /** Saved content for a file, as the engine would receive it. */
+  contentOf(name: string): string {
+    return this.saved.get(name) ?? '';
+  }
+
   /** Content as saved on disk. */
   private readonly saved = new Map<string, string>();
 

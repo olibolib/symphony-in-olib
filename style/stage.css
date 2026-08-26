@@ -1,18 +1,14 @@
 /* The typographic vocabulary. Follows Acid: black on white, Helvetica, tight leading,
    words and characters as addressable elements. DESIGN.md §12. */
 
+/* Blocks are positioned from the spawn grid (§11.6), so the container is a plain
+   positioning context rather than the table-cell that used to centre a single flow. */
 #container {
-  display: table-cell;
-  vertical-align: middle;
-  text-align: center;
-  padding: calc(var(--fs) * 0.75);
+  position: relative;
+  width: 100%;
+  height: 100%;
   font-weight: 700;
   letter-spacing: -0.01em;
-}
-
-#stage {
-  display: table;
-  table-layout: fixed;
 }
 
 p {
@@ -27,295 +23,383 @@ w {
   padding: 0 0.18em 0 0.04em;
 }
 
+/* Plain inline, not inline-block. An inline-block is atomic: `text-decoration` set on the
+   parent word does not cross into it, so an underline on a `<w>` drew nothing at all when
+   the text had been split into characters. Anything that genuinely needs a box — only
+   `swell`, for its transform — declares `inline-block` for itself in the size channel. */
 c {
-  display: inline-block;
-}
-
-/* --- colour slots (§12.5) ---------------------------------------------------------
-   Each element gets a slot at typeset time. Animating colour then means changing eight
-   variables, not writing inline styles to thousands of elements — which is the layout
-   thrash the whole design is built to avoid. */
-
-#stage {
-  --c0: #000000;
-  --c1: #000000;
-  --c2: #000000;
-  --c3: #000000;
-  --c4: #000000;
-  --c5: #000000;
-  --c6: #000000;
-  --c7: #000000;
-}
-
-w[data-slot='0'] { color: var(--c0); }
-w[data-slot='1'] { color: var(--c1); }
-w[data-slot='2'] { color: var(--c2); }
-w[data-slot='3'] { color: var(--c3); }
-w[data-slot='4'] { color: var(--c4); }
-w[data-slot='5'] { color: var(--c5); }
-w[data-slot='6'] { color: var(--c6); }
-w[data-slot='7'] { color: var(--c7); }
-
-/* --- slots (§12.1) ------------------------------------------------------------------
-   `glitch` and `decor` are abstract numbered states. The engine decides which elements
-   carry which number; what a number *looks* like is decided here, per preset. That is why
-   wildly different presets need no new JavaScript. */
-
-[data-glitch='1'] {
-  background: #000000;
-  color: #ffffff;
-}
-
-[data-glitch='2'] {
-  background: #ffff00;
-  color: #0000ff;
-}
-
-[data-glitch='3'] {
-  color: #0000ff;
-  text-decoration: underline;
-}
-
-[data-glitch='4'] {
-  background: #ffffff;
-  color: #000000;
-  font-family: 'Dingbats', 'Segoe UI Symbol', serif;
-}
-
-[data-glitch='5'] {
-  background: #ff3300;
-  color: #ffffff;
-}
-
-[data-decor='1'] { text-decoration: underline; }
-[data-decor='2'] { text-decoration: line-through; }
-[data-decor='3'] { outline: 0.06em solid currentColor; }
-[data-decor='4'] { font-style: italic; }
-
-.selected {
-  background: #000000;
-  color: #ffffff;
-}
-
-/* --- layouts (§12.4) -----------------------------------------------------------------
-   The `layout` slot on #container. Same rule as the glitch slots: the engine picks a
-   number, this file decides what it means. Adding a layout is a CSS change only. */
-
-#container[data-layout='1'] {
-  vertical-align: top;
-  text-align: left;
-  font-size: 180%;
-}
-
-#container[data-layout='2'] {
-  vertical-align: bottom;
-  text-align: right;
-  font-size: 140%;
-}
-
-#container[data-layout='3'] {
-  font-size: 82%;
-  line-height: 1.1;
-}
-
-#container[data-layout='4'] {
-  font-size: 320%;
-  letter-spacing: -0.03em;
-  line-height: 0.82;
-}
-
-/* Wrapped blocks with animated widths — the layout shoves itself around. */
-#container[data-layout='5'] {
-  display: flex;
-  flex-wrap: wrap;
-  align-content: center;
-  text-align: left;
-  font-size: 92%;
-}
-#container[data-layout='5'] p {
-  min-width: 25%;
-  transition: width 0.12s ease;
-}
-
-/* Grid of bordered cells. */
-#container[data-layout='6'] {
-  font-size: 84%;
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  align-content: center;
-}
-#container[data-layout='6'] p {
-  outline: 0.08em solid currentColor;
-  padding: 0.1em;
-  margin: -0.04em;
-}
-
-/* Dense continuous text — paragraphs run together rather than stacking. */
-#container[data-layout='7'] {
-  font-size: 76%;
-  text-align: justify;
-  line-height: 1.15;
-}
-#container[data-layout='7'] p {
   display: inline;
 }
 
-#container[data-layout='8'] {
-  font-size: 100%;
-  text-align: center;
-  font-style: italic;
+/* --- palette (§12.5) ------------------------------------------------------------------
+   Eight slots holding the VJ's chosen palette, written to the stage when they choose one.
+
+   Acid gave every word a slot and coloured it whether or not anything had targeted it, which
+   meant words changed colour with nothing driving them. Colour now reaches a word only
+   through an `accent` layer — target, trigger, decay, like everything else — so these are
+   the values a layer may pick from rather than a colouring applied to all text. */
+
+#stage {
+  --c0: var(--stage-fg);
+  --c1: var(--stage-fg);
+  --c2: var(--stage-fg);
+  --c3: var(--stage-fg);
+  --c4: var(--stage-fg);
+  --c5: var(--stage-fg);
+  --c6: var(--stage-fg);
+  --c7: var(--stage-fg);
 }
 
-/* Borders slot. */
-#container[data-borders='1'] w { outline: 0.05em solid currentColor; }
-#container[data-borders='2'] c { outline: 0.05em solid currentColor; }
-#container[data-borders='3'] p { outline: 0.08em solid currentColor; }
-#container[data-borders='4'] w { border-bottom: 0.08em solid currentColor; }
+/* --- channels (§11.5) -----------------------------------------------------------------
+   One attribute per CSS property being contended for, rather than one shared `glitch`.
+   That is what lets several layers land on the same word and all of them show: invert
+   writes bg and fg, a later accent overwrites only fg, and the result is a black block with
+   accent-coloured text — a look the single-attribute scheme could not reach at all.
 
-/* Swell transitions. Effects set min-width; CSS animates getting there. */
-w, c {
-  transition: min-width 0.14s ease, min-height 0.14s ease;
+   The slot mechanism is unchanged. The engine picks a number; what a number *looks* like is
+   decided here, per preset, which is why wildly different presets need no new JavaScript. */
+
+/* bg and fg slot n are authored as a matched pair, so `invert` writing both to the same
+   number gives a coherent block. They remain separate channels, so a later layer can take
+   fg on its own — which is the whole point of naming channels after CSS properties. */
+[data-bg='1'] { background: #000000; }
+[data-bg='2'] { background: #ffff00; }
+[data-bg='3'] { background: #ff3300; }
+[data-bg='4'] { background: #0000ff; }
+
+[data-fg='1'] { color: #ffffff; }
+[data-fg='2'] { color: #0000ff; }
+[data-fg='3'] { color: #ffffff; }
+[data-fg='4'] { color: #ffffff; }
+
+/* `accent` writes a palette slot. A separate namespace from the numbered pairs above, which
+   are chosen for contrast against a background rather than to be read on their own. */
+[data-fg='p0'] { color: var(--c0); }
+[data-fg='p1'] { color: var(--c1); }
+[data-fg='p2'] { color: var(--c2); }
+[data-fg='p3'] { color: var(--c3); }
+[data-fg='p4'] { color: var(--c4); }
+[data-fg='p5'] { color: var(--c5); }
+[data-fg='p6'] { color: var(--c6); }
+[data-fg='p7'] { color: var(--c7); }
+
+/* Wingdings and Webdings remap the Latin alphabet to symbols, which is the whole effect —
+   the word becomes glyphs while keeping its shape and length. `Dingbats` was named here and
+   does not exist on Windows, so this fell through to `Segoe UI Symbol`, which has ordinary
+   Latin glyphs: the text stayed readable and only its metrics shifted, which read as a
+   faint pulse rather than as corruption. */
+[data-font='1'] { font-family: 'Wingdings', 'Webdings', 'Segoe UI Symbol', fantasy; }
+
+[data-deco='1'] { text-decoration: underline; }
+[data-deco='2'] { text-decoration: line-through; }
+
+[data-outline='1'] { outline: 0.06em solid currentColor; }
+
+/* Scale rather than a min-width floor: sizing by width reflows the paragraph, and
+   re-wrapping several times a bar reads as broken rather than as an effect (§11.5).
+   Inline elements need a block display to accept a transform at all. */
+[data-size] {
+  display: inline-block;
+  transform: scale(var(--size, 1));
 }
 
-/* --- edge layouts --------------------------------------------------------------------
-   For compositing over other visuals. These keep the middle of the stage clear and push
-   the text out to bands and rails around it. All absolutely positioned, because that is
-   the only way to reserve a region reliably regardless of how much text there is. */
+/* Applied once; CSS does the repeating, so the engine does no per-frame work — which makes
+   flicker the cheapest treatment rather than the awkward one.
 
-#container[data-layout='10'],
-#container[data-layout='11'],
-#container[data-layout='12'],
-#container[data-layout='13'],
-#container[data-layout='14'] {
+   The period is a multiple of `--bar`, which the engine keeps in step with the tempo. So a
+   flicker set to 0.25 is one beat at 128 and one beat at 174, and it re-times itself the
+   moment a new track locks — a flicker running at a fixed wall-clock rate beats against the
+   music and reads as a broken monitor rather than as an effect (§11.5). */
+[data-anim] {
+  animation: olib-flicker calc(var(--bar, 2s) * var(--anim, 0.25)) steps(2, jump-none) infinite;
+}
+
+@keyframes olib-flicker {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.15; }
+}
+
+[data-vis='1'] { visibility: hidden; }
+
+
+/* --- blocks (§11.6) -------------------------------------------------------------------
+   A block is anchored at a cell of the 7x7 spawn grid and sized by its preset, both rolled
+   per typeset. Position and size arrive as inline percentages — they are per-block data,
+   not style, and there is no sensible way to express "this one, here" as a rule.
+
+   Blocks may overlap. Under the 3x3 grid each took a distinct cell so non-overlap was true
+   by construction; anchors give that up on purpose, because the VJ chooses the size and the
+   app second-guessing it is worse than the occasional collision. */
+
+.block {
   position: absolute;
-  display: flex;
+  min-width: 0;
+  /* Named, because a conveyor's copies are absolutely positioned and therefore resolve
+     against the *padding* box — they have to be inset by hand to match. */
+  --pad: calc(var(--fs) * 0.28);
+  padding: var(--pad);
   overflow: hidden;
-  padding: 1.6vh 2.4vw;
-  font-size: 86%;
-  line-height: 1.06;
+
+  /* Vertically centred within its own box, which is what the table-cell used to do for the
+     whole stage — now per block, so a short passage sits in the middle of its band.
+
+     `safe` is what makes that survive overflow. Plain `center` distributes the excess to
+     *both* ends, so a passage taller than its block loses its opening line as well as its
+     last — and the beginning is the half you cannot do without. With `safe`, centring
+     applies while the text fits and gives way to top-aligned the moment it does not, so a
+     block that is too small clips its end rather than its start. */
+  display: flex;
+  flex-direction: column;
+  justify-content: safe center;
 }
 
-/* Top band. */
-#container[data-layout='10'] {
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 27%;
-  align-items: flex-start;
-  justify-content: center;
-  text-align: center;
+/* A sentence is several lines, so it needs an element to be addressable by — but it must
+   not become a box, or the flow layouts would be laying out sentences instead of lines.
+   `display: contents` gives it an identity with no layout of its own. */
+sn {
+  display: contents;
 }
 
-/* Bottom band. */
-#container[data-layout='11'] {
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 27%;
-  align-items: flex-end;
-  justify-content: center;
-  text-align: center;
-}
-
-/*
- * Two rails, left and right.
- *
- * A two-column layout with an enormous gap is the trick here: the text flows into narrow
- * columns at either edge and the gap *is* the protected middle. It needs no knowledge of
- * how much text there is, which the band layouts do.
- */
-#container[data-layout='12'] {
-  inset: 0;
-  display: block;
-  column-count: 2;
-  column-gap: 56%;
-  text-align: justify;
-  font-size: 78%;
-  padding: 3vh 2.4vw;
-}
-
-/* Left rail only. */
-#container[data-layout='13'] {
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 26%;
-  align-items: center;
-  text-align: left;
-  font-size: 80%;
-}
-
-/* Right rail only. */
-#container[data-layout='14'] {
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 26%;
-  align-items: center;
-  text-align: right;
-  font-size: 80%;
-}
-
-/* Bands and rails hold a flex child, so the paragraphs need a wrapper context. */
-#container[data-layout='10'] p,
-#container[data-layout='11'] p,
-#container[data-layout='13'] p,
-#container[data-layout='14'] p {
+/* The conveyor's moving part. Fills the block, so a stationary preset is unaffected. */
+.block-content {
   width: 100%;
 }
 
+/* Every keyframe that moves something is `olib-move-…`, and the engine matches on that
+   prefix. Named that way after a rename left two matchers behind: the wrapping keyframes
+   were called `olib-wrap-…`, matched nothing, and so were never re-timed to the tempo and
+   never had their position carried across a re-typeset — the block teleported back to its
+   anchor every phrase. A shared prefix means a new one is covered by existing code.
 
-/* --- blocks ---------------------------------------------------------------------------
-   Independent text regions. Each is assigned a distinct cell of a 3x3 grid at typeset
-   time, with the centre cell never used — that is what makes "up to three at once, not
-   overlapping" true by construction rather than by luck.
+   `olib-flicker` deliberately does not have it: flicker is timed by `--bar` rather than by
+   playback rate, and there can be hundreds of them at once. */
 
-   In non-grid layouts the grid-area is simply ignored and blocks stack normally. */
+/* --- motion (§11.5) -------------------------------------------------------------------
+   Two kinds, and they are the same movement with a completely different look: content
+   motion slides text through a block bolted to the frame, block motion carries the block
+   across the canvas. They look alike only when the block already spans the frame, because
+   only then is the clipping window the whole picture.
 
-.block {
-  min-width: 0;
-  overflow: hidden;
+   Both are CSS animations timed against `--bar`, so they re-time themselves on a tempo
+   change and cost nothing per frame — the same reasoning as flicker.
+
+   **One speed unit for both: fractions of the canvas per four beats.** Set to the same
+   number they move at the same pixels-per-second. Content motion still *travels* one box,
+   because text has to sweep through its own window and a short strip would otherwise sit
+   empty most of the time — so its duration is scaled by the box's share of the canvas
+   (`--box-hr`), which is what keeps the velocity honest. */
+
+/* A conveyor block lays its copies out itself, so it opts out of the vertical centring the
+   other blocks use. */
+.block[data-conveyor] {
+  display: block;
 }
 
-/* Scattered — three blocks around the edges, centre kept clear. */
-#container[data-layout='15'] {
+/* The copies are positioned against `.block-content`, which is made a containing block
+   explicitly rather than by accident.
+
+   An absolutely positioned box resolves against its containing block's *padding* box. With
+   nothing positioned in between, that was `.block` — so each copy came out wider than the
+   in-flow original by twice the padding, wrapped its lines differently, and therefore did not
+   match the height the travel distance had been measured from. The loop jumped on every wrap.
+
+   The trap in fixing it: an animated `transform` *also* creates a containing block, so once
+   the animation started `.block-content` became one and the correction applied twice, leaving
+   the text inset by double the padding. Saying `position: relative` here makes it the
+   containing block whether the animation is running or not, so `left: 0` means the block's
+   content box in every case. */
+.block[data-conveyor] .block-content {
+  position: relative;
+}
+
+.block[data-conveyor] .loop {
   position: absolute;
-  inset: 0;
-  display: grid;
-  /* The middle row and column are the protected centre, so they are deliberately the
-     smallest — edge cells need the space, the centre only needs to stay clear. */
-  grid-template-columns: 1fr 0.7fr 1fr;
-  grid-template-rows: 1fr 0.6fr 1fr;
-  gap: 1.2vh 1.6vw;
-  padding: 2vh 2.4vw;
-  font-size: 76%;
-  align-items: center;
-  text-align: left;
+  left: 0;
+  right: 0;
+  top: 0;
 }
 
-/* Corners — same idea, pushed harder into the frame edges. */
-#container[data-layout='16'] {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  grid-template-columns: 1fr 0.6fr 1fr;
-  grid-template-rows: 1fr 0.5fr 1fr;
-  padding: 1.4vh 1.8vw;
-  font-size: 88%;
-  text-align: left;
-}
-#container[data-layout='16'] .block:nth-child(odd) {
-  text-align: right;
+/* Each repeat sits one text-height below the last — positioned inline, since how many there
+   are depends on how tall the passage turned out. One cycle moves exactly that far, so every
+   copy lands where the one above it began, which is the whole trick. */
+
+/* Timed against a *nominal* 2s bar and then scaled by `playbackRate` from the live tempo.
+   Rewriting `animation-duration` as the tempo drifts does not preserve position — the browser
+   recomputes progress against the new duration and the animation jumps — which is what made
+   the conveyor stutter. See `Stage.retimeMotion`. Keep 2s in step with NOMINAL_BAR_SECONDS. */
+.block[data-conveyor] .block-content {
+  animation-duration: calc(2s * var(--travelr, 1) / var(--content-speed, 0.25));
+  animation-timing-function: linear;
 }
 
-/* Diagonal drift — blocks staggered across the frame, larger type. */
-#container[data-layout='17'] {
-  position: absolute;
-  inset: 0;
+/* Looping: a belt that never stops. */
+.block[data-conveyor='loop'] .block-content {
+  animation-iteration-count: infinite;
+}
+
+#container[data-content-motion='up'] .block[data-conveyor='loop'] .block-content {
+  animation-name: olib-move-loop-up;
+}
+#container[data-content-motion='down'] .block[data-conveyor='loop'] .block-content {
+  animation-name: olib-move-loop-down;
+}
+
+@keyframes olib-move-loop-up {
+  from { transform: translateY(0); }
+  to { transform: translateY(calc(-1 * var(--travel))); }
+}
+
+@keyframes olib-move-loop-down {
+  from { transform: translateY(calc(-1 * var(--travel))); }
+  to { transform: translateY(0); }
+}
+
+/* Single pass: in from below the box, out past the top, and gone until the next typeset.
+   `forwards` so it holds where it finished rather than snapping back into view. */
+.block[data-conveyor='once'] .block-content {
+  animation-iteration-count: 1;
+  animation-fill-mode: forwards;
+}
+
+#container[data-content-motion='up'] .block[data-conveyor='once'] .block-content {
+  animation-name: olib-move-sweep-up;
+}
+#container[data-content-motion='down'] .block[data-conveyor='once'] .block-content {
+  animation-name: olib-move-sweep-down;
+}
+
+@keyframes olib-move-sweep-up {
+  from { transform: translateY(var(--box-h)); }
+  to { transform: translateY(calc(-1 * var(--text-h))); }
+}
+
+@keyframes olib-move-sweep-down {
+  from { transform: translateY(calc(-1 * var(--text-h))); }
+  to { transform: translateY(var(--box-h)); }
+}
+
+/* Crossing once: two canvases, entering from off one edge and leaving off the other, so the
+   restart happens while the block is out of frame and is never seen. */
+#container[data-block-motion]:not([data-block-loop]) .block {
+  animation-duration: calc(2s * 2 / var(--block-speed, 0.25));
+}
+
+/* Wrapping: one canvas per cycle, with a copy sitting exactly one canvas behind. As the
+   original leaves the right the copy arrives at the left, and at the wrap the copy is standing
+   where the original began — the same trick the conveyor uses, one level up.
+
+   `--wrap` is nothing on the original and one canvas on the copy, and appears at both ends of
+   the keyframes so the copy runs the same animation shifted along. */
+#container[data-block-motion][data-block-loop] .block {
+  animation-duration: calc(2s / var(--block-speed, 0.25));
+}
+
+#container[data-block-motion] .block {
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+#container[data-block-motion='up']:not([data-block-loop]) .block { animation-name: olib-move-block-up; }
+#container[data-block-motion='down']:not([data-block-loop]) .block { animation-name: olib-move-block-down; }
+#container[data-block-motion='left']:not([data-block-loop]) .block { animation-name: olib-move-block-left; }
+#container[data-block-motion='right']:not([data-block-loop]) .block { animation-name: olib-move-block-right; }
+
+#container[data-block-motion='up'][data-block-loop] .block { animation-name: olib-move-wrap-up; }
+#container[data-block-motion='down'][data-block-loop] .block { animation-name: olib-move-wrap-down; }
+#container[data-block-motion='left'][data-block-loop] .block { animation-name: olib-move-wrap-left; }
+#container[data-block-motion='right'][data-block-loop] .block { animation-name: olib-move-wrap-right; }
+
+@keyframes olib-move-block-up {
+  from { transform: translateY(var(--stage-h)); }
+  to { transform: translateY(calc(-1 * var(--stage-h))); }
+}
+
+@keyframes olib-move-block-down {
+  from { transform: translateY(calc(-1 * var(--stage-h))); }
+  to { transform: translateY(var(--stage-h)); }
+}
+
+@keyframes olib-move-block-left {
+  from { transform: translateX(var(--stage-w)); }
+  to { transform: translateX(calc(-1 * var(--stage-w))); }
+}
+
+@keyframes olib-move-block-right {
+  from { transform: translateX(calc(-1 * var(--stage-w))); }
+  to { transform: translateX(var(--stage-w)); }
+}
+
+@keyframes olib-move-wrap-up {
+  from { transform: translateY(var(--wrap, 0px)); }
+  to { transform: translateY(calc(var(--wrap, 0px) - var(--stage-h))); }
+}
+
+@keyframes olib-move-wrap-down {
+  from { transform: translateY(var(--wrap, 0px)); }
+  to { transform: translateY(calc(var(--wrap, 0px) + var(--stage-h))); }
+}
+
+@keyframes olib-move-wrap-left {
+  from { transform: translateX(var(--wrap, 0px)); }
+  to { transform: translateX(calc(var(--wrap, 0px) - var(--stage-w))); }
+}
+
+@keyframes olib-move-wrap-right {
+  from { transform: translateX(var(--wrap, 0px)); }
+  to { transform: translateX(calc(var(--wrap, 0px) + var(--stage-w))); }
+}
+
+/* --- align (§11.6) --------------------------------------------------------------------
+   Was bundled into layouts 1, 2 and 8 along with a font size and a line height. On its own
+   it combines with any anchor, any shape and any flow. */
+
+#container[data-align='left'] { text-align: left; }
+#container[data-align='centre'] { text-align: center; }
+#container[data-align='right'] { text-align: right; }
+#container[data-align='justify'] { text-align: justify; }
+
+/* --- flow (§11.6) ---------------------------------------------------------------------
+   How paragraphs arrange inside a block — the part of the old layout table that was neither
+   placement nor typography, and the one genuinely new setting to come out of deleting it. */
+
+/* Paragraphs stack. The default, and what most text wants. */
+#container[data-flow='stack'] .block p { display: block; }
+
+/* Run together into one slab. Was layout 7, and it still suits long sentences best. */
+#container[data-flow='run-on'] .block p {
+  display: inline;
+}
+#container[data-flow='run-on'] .block {
+  line-height: 1.15;
+}
+
+/* A grid of outlined cells. Was layout 6, at a size it was welded to. */
+#container[data-flow='grid'] .block {
   display: grid;
-  grid-template-columns: 1fr 0.7fr 1fr;
-  grid-template-rows: 1fr 0.6fr 1fr;
-  padding: 2vh 2.4vw;
-  font-size: 104%;
-  align-items: center;
+  grid-template-columns: repeat(auto-fill, minmax(6em, 1fr));
+  align-content: safe center;
+  gap: 0.06em;
+}
+#container[data-flow='grid'] .block p {
+  outline: 0.08em solid currentColor;
+  padding: 0.1em;
+}
+
+/* Wrapped paragraphs of uneven width, shoving each other about. Was layout 5. */
+#container[data-flow='wrapped'] .block {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-content: safe center;
+  gap: 0 0.4em;
+}
+#container[data-flow='wrapped'] .block p {
+  min-width: 25%;
+}
+
+/* Two columns with a gap. Was layout 12, where the gap *was* the protected middle — it is
+   now just a number, on a block sized and placed like any other. */
+#container[data-flow='columns'] .block {
+  display: block;
+  column-count: 2;
+  column-gap: var(--column-gap, 12%);
 }

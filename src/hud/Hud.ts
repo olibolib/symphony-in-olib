@@ -1,10 +1,13 @@
 import type { ClockSource } from '../types';
 import type { BandName } from '../audio/bands';
-import type { Readings } from '../audio/Analyser';
 import type { InputOption } from '../audio/AudioInput';
 
 import type { PaletteName } from '../render/palette';
-import type { LayoutSetName } from '../show/layouts';
+import { FULL, KEEP_CENTRE_CLEAR, type Mask } from '../show/mask';
+import { MaskGrid } from './MaskGrid';
+import { PresetEditor } from './PresetEditor';
+import type { PresetDoc } from '../ipc/protocol';
+import { APP_PREFIX } from '../ipc/protocol';
 
 export type BackgroundMode = 'white' | 'black' | 'transparent';
 
@@ -28,7 +31,10 @@ export class Hud {
   private readonly root: HTMLElement;
   private readonly backgroundSelect: HTMLSelectElement;
   private readonly paletteSelect: HTMLSelectElement;
-  private readonly layoutSelect: HTMLSelectElement;
+  private readonly maskGrid: MaskGrid;
+
+  /** The Presets tab (§11.4). Owns its own working copy — see `PresetEditor`. */
+  readonly editor: PresetEditor;
   private readonly deviceSelect: HTMLSelectElement;
   private readonly status: HTMLElement;
 
@@ -47,8 +53,8 @@ export class Hud {
   /** Called when the accent palette changes. */
   onPaletteChange: ((name: PaletteName) => void) | null = null;
 
-  /** Called when the layout set changes. */
-  onLayoutSetChange: ((name: LayoutSetName) => void) | null = null;
+  /** Called when the global spawn mask changes (§11.6). Carries the whole mask. */
+  onMaskChange: ((mask: Mask) => void) | null = null;
 
   /** Called when a preset is enabled or disabled for the automatic cycle. */
   onPresetToggle: ((name: string, enabled: boolean) => void) | null = null;
@@ -103,12 +109,18 @@ export class Hud {
       this.onPaletteChange?.(this.paletteSelect.value as PaletteName);
     });
 
-    this.layoutSelect = requireSelect(root, '#opt-layout');
-    this.layoutSelect.addEventListener('change', () => {
-      this.onLayoutSetChange?.(this.layoutSelect.value as LayoutSetName);
-    });
+    this.maskGrid = new MaskGrid(must(root, '#opt-mask'), FULL);
+    this.maskGrid.onChange = (mask) => this.onMaskChange?.(mask);
+    must(root, '#opt-mask-all').addEventListener('click', () => this.maskGrid.apply(FULL));
+    must(root, '#opt-mask-centre').addEventListener('click', () =>
+      this.maskGrid.apply(KEEP_CENTRE_CLEAR),
+    );
+    must(root, '#opt-mask-invert').addEventListener('click', () => this.maskGrid.invert());
 
-    must(root, '#opt-close').addEventListener('click', () => window.olib.close());
+    this.editor = new PresetEditor(must(root, '#opt-editor'));
+
+    // No custom close button any more: the control window has an ordinary title bar, and
+    // closing it hides to the tray rather than quitting (DESIGN.md §7.1).
     this.wireTabs(root);
     this.wireTextPanel(root);
 
@@ -139,18 +151,60 @@ export class Hud {
     }
   }
 
-  /** Populate the source dropdown, preserving the current selection where possible. */
-  setDevices(options: InputOption[], selectedId: string | null): void {
-    this.deviceSelect.replaceChildren(
-      ...options.map((option) => {
-        const el = document.createElement('option');
-        el.value = option.id;
-        el.textContent = option.label;
-        el.selected = option.id === selectedId;
-        return el;
-      }),
-    );
+  /**
+   * Populate the source dropdown.
+   *
+   * Applications are listed alongside devices because that is how you actually think about
+   * it — you want to capture Traktor, not reason about which endpoint Traktor happens to be
+   * using. Their values are prefixed so the handler can tell the two apart.
+   */
+  setDevices(
+    options: InputOption[],
+    selectedId: string | null,
+    apps: readonly { processId: string; title: string }[] = [],
+  ): void {
+    const build = (value: string, label: string): HTMLOptionElement => {
+      const el = document.createElement('option');
+      el.value = value;
+      el.textContent = label;
+      el.selected = value === selectedId;
+      return el;
+    };
+
+    const deviceGroup = document.createElement('optgroup');
+    deviceGroup.label = 'Devices';
+    deviceGroup.append(...options.map((o) => build(o.id, o.label)));
+
+    const children: HTMLElement[] = [deviceGroup];
+
+    if (apps.length > 0) {
+      const appGroup = document.createElement('optgroup');
+      appGroup.label = 'Applications';
+      appGroup.append(
+        ...apps.map((a) => build(`${APP_PREFIX}${a.processId}|${a.title}`, a.title)),
+      );
+      children.push(appGroup);
+    }
+
+    // Rebuilding a <select> on every state snapshot fights the pointer — you cannot keep it
+    // open long enough to choose anything. Only rebuild when the options actually change.
+    const signature = [
+      ...options.map((o) => o.id),
+      '|',
+      ...apps.map((a) => a.processId),
+    ].join(',');
+
+    if (signature !== this.deviceSignature) {
+      this.deviceSignature = signature;
+      this.deviceSelect.replaceChildren(...children);
+    }
+
+    if (selectedId !== null && this.deviceSelect.value !== selectedId) {
+      this.deviceSelect.value = selectedId;
+    }
   }
+
+  private deviceSignature = '';
 
   /** Push a sensitivity value into its slider without firing the change callback. */
   setSensitivity(band: BandName, value: number): void {
@@ -195,21 +249,27 @@ export class Hud {
   }
 
   /**
-   * Update the band meters. Writes only what changed: levels move every frame, but the
-   * onset LED is a data attribute flip that CSS animates, so JS does no work decaying it.
+   * Meter levels, from the throttled state snapshot.
+   *
+   * Onsets arrive separately via {@link flashOnset} — they are discrete and need to land on
+   * time, so they are not batched with the levels.
    */
-  setBands(readings: Readings): void {
+  setBandLevels(levels: Readonly<Record<BandName, { level: number }>>): void {
     for (const [band, els] of this.meters) {
-      const reading = readings[band];
+      const reading = levels[band];
       if (!reading) continue;
       els.bar.style.height = `${(reading.level * 100).toFixed(1)}%`;
-      if (reading.onset) {
-        els.name.dataset['on'] = 'true';
-        window.setTimeout(() => {
-          els.name.dataset['on'] = 'false';
-        }, 70);
-      }
     }
+  }
+
+  /** Light a band name to mark a transient. */
+  flashOnset(band: BandName): void {
+    const els = this.meters.get(band);
+    if (!els) return;
+    els.name.dataset['on'] = 'true';
+    window.setTimeout(() => {
+      els.name.dataset['on'] = 'false';
+    }, 70);
   }
 
   setBpm(bpm: number | null): void {
@@ -288,8 +348,13 @@ export class Hud {
     this.paletteSelect.value = name;
   }
 
-  setLayoutSet(name: LayoutSetName): void {
-    this.layoutSelect.value = name;
+  setMask(mask: Mask): void {
+    this.maskGrid.set(mask);
+  }
+
+  /** Hand the editable documents to the Presets tab. */
+  setPresetDocs(docs: readonly PresetDoc[]): void {
+    this.editor.setDocs(docs);
   }
 
   /**
@@ -408,6 +473,8 @@ export class Hud {
 
   /** Rebuild the text sub-tabs. */
   setTextList(names: readonly string[], selected: string): void {
+    // The Presets tab needs the same list, so a preset can pin one (§11.7).
+    this.editor.setTextNames(names);
     const tabs = must(document, '#opt-text-tabs');
     tabs.replaceChildren();
     this.textTabs.clear();

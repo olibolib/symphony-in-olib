@@ -5,174 +5,34 @@
     <title>Symphony in Olib</title>
     <link rel="stylesheet" href="/style/base.css" />
     <link rel="stylesheet" href="/style/stage.css" />
-    <link rel="stylesheet" href="/style/hud.css" />
+
+    <!--
+      Apply the saved background before the first paint.
+
+      `main.ts` is a module, so it is deferred: it runs after the document is parsed, and the
+      stage paints once with the default white background before it gets a chance. On a black
+      or transparent setup that is a white flash on the captured output — brief on a warm
+      start, much less brief while the presets folder and the device list are being read.
+
+      The key is duplicated from `BG_KEY` in main.ts deliberately: nothing this early can
+      import, and the alternative is a flash on every launch.
+    -->
+    <script>
+      try {
+        document.documentElement.dataset.bg = localStorage.getItem('olib.background') || 'white';
+      } catch (error) {
+        document.documentElement.dataset.bg = 'white';
+      }
+    </script>
   </head>
   <body>
-    <!-- Everything OBS captures lives inside #stage, and nothing else does. -->
+    <!--
+      The output window is the canvas and nothing else. No HUD, no gap, no chrome — an OBS
+      window capture of this window needs no crop at all. DESIGN.md §7.1.
+    -->
     <main id="stage">
       <div id="container"></div>
     </main>
-
-    <!--
-      Transparent gap between the stage and the HUD. Its job is to give the OBS crop a
-      margin for error, so the HUD can stay up during a set without ever appearing in the
-      capture. The window height never changes, so the crop is set once and never revisited.
-    -->
-    <div id="gap"></div>
-
-    <footer id="hud">
-      <div class="hud-bar">
-        <div class="move-handle" id="opt-move" title="Drag to move window">
-          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-            <path fill="currentColor" d="M8 0 11 4 9 4 9 7 12 7 12 5 16 8 12 11 12 9 9 9 9 12 11 12 8 16 5 12 7 12 7 9 4 9 4 11 0 8 4 5 4 7 7 7 7 4 5 4Z"/>
-          </svg>
-        </div>
-        <span class="hud-title">Symphony in Olib</span>
-        <button id="opt-close" title="Close">&#10005;</button>
-      </div>
-
-      <!--
-        Vertical split rather than stacked layers. The readouts sit beside the tabs instead
-        of above them, which roughly doubles the depth available to panel content — the text
-        editor in particular needs to be readable, not a letterbox.
-      -->
-      <div class="hud-split">
-      <!-- Always visible, whichever tab is open. Things you glance at without thinking. -->
-      <div class="strip">
-        <div class="readout">
-          <span class="label">BPM</span>
-          <span class="value" id="r-bpm">—</span>
-          <span class="sub">est <code id="r-est">—</code></span>
-        </div>
-
-        <div class="readout">
-          <span class="label">Source</span>
-          <span class="value small" id="r-source">none</span>
-        </div>
-
-        <div class="readout">
-          <span class="label">Confidence</span>
-          <span class="value small" id="r-conf">—</span>
-        </div>
-
-        <div class="readout">
-          <span class="label">Preset</span>
-          <span class="value" id="r-preset">—</span>
-          <span class="sub" id="r-energy">—</span>
-        </div>
-
-        <div class="readout beat">
-          <span class="label">Beat</span>
-          <span class="dot" id="r-beat"></span>
-        </div>
-
-        <!--
-          Vertical bars. The band name doubles as the onset indicator — it lights on a
-          transient, which removes a separate LED and buys the bars the height back.
-        -->
-        <div class="meters" id="r-meters">
-          <div class="meter" data-band="kick">
-            <span class="name">kick</span><span class="bar"><i></i></span>
-          </div>
-          <div class="meter" data-band="snare">
-            <span class="name">snare</span><span class="bar"><i></i></span>
-          </div>
-          <div class="meter" data-band="hat">
-            <span class="name">hat</span><span class="bar"><i></i></span>
-          </div>
-        </div>
-
-        <span class="status" id="opt-status">Not capturing</span>
-      </div>
-
-      <div class="hud-right">
-      <nav class="tabs" id="hud-tabs">
-        <button data-tab="audio" class="active">Audio</button>
-        <button data-tab="text">Text</button>
-        <button data-tab="effects">Effects</button>
-        <button data-tab="colours">Colours</button>
-        <button data-tab="settings">Settings</button>
-      </nav>
-
-      <div class="panels">
-        <section class="panel" data-panel="audio">
-          <label class="field">
-            <span>Source</span>
-            <select id="opt-device"><option value="">Loading…</option></select>
-          </label>
-
-          <div class="sens" id="opt-sens">
-            <span class="sens-title">Onset sensitivity</span>
-            <label><span>kick</span><input type="range" data-band="kick" min="0.5" max="6" step="0.1" /><code>—</code></label>
-            <label><span>snare</span><input type="range" data-band="snare" min="0.5" max="6" step="0.1" /><code>—</code></label>
-            <label><span>hat</span><input type="range" data-band="hat" min="0.5" max="6" step="0.1" /><code>—</code></label>
-          </div>
-        </section>
-
-        <section class="panel text-panel" data-panel="text" hidden>
-          <div class="text-tabs" id="opt-text-tabs"></div>
-
-          <textarea id="opt-text-body" spellcheck="false"
-                    placeholder="Loading…"></textarea>
-
-          <div class="text-actions">
-            <span class="text-note" id="opt-text-note"></span>
-            <button id="opt-text-delete" class="danger" title="Delete this text">&#128465;</button>
-            <button id="opt-text-import">Load file…</button>
-            <button id="opt-text-revert" disabled>Revert</button>
-            <button id="opt-text-apply" class="primary">Apply</button>
-          </div>
-        </section>
-
-        <section class="panel" data-panel="effects" hidden>
-          <label class="field">
-            <span>Layouts</span>
-            <select id="opt-layout">
-              <option value="centre">Centre — uses whole stage</option>
-              <option value="edges">Edges — keeps middle clear</option>
-              <option value="all">All</option>
-            </select>
-          </label>
-          <div class="preset-list" id="opt-presets"></div>
-        </section>
-
-        <section class="panel" data-panel="colours" hidden>
-          <label class="field">
-            <span>Palette</span>
-            <select id="opt-palette">
-              <option value="acid">Acid</option>
-              <option value="mono">Mono</option>
-              <option value="warm">Warm</option>
-              <option value="cool">Cool</option>
-              <option value="none">None</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Background</span>
-            <select id="opt-bg">
-              <option value="white">White</option>
-              <option value="black">Black</option>
-              <option value="transparent">Transparent</option>
-            </select>
-          </label>
-        </section>
-
-        <section class="panel" data-panel="settings" hidden>
-          <div class="stats">
-            <span>OBS crop <code id="r-crop">—</code></span>
-            <span>FPS <code id="r-fps">—</code></span>
-            <span class="clip">Clipped <code id="r-clip">0</code></span>
-          </div>
-          <p class="keys">
-            <kbd>Tab</kbd> hide HUD &nbsp;·&nbsp; <kbd>Space</kbd> tap tempo &nbsp;·&nbsp;
-            <kbd>Esc</kbd> auto tempo
-          </p>
-        </section>
-      </div>
-      </div>
-      </div>
-    </footer>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

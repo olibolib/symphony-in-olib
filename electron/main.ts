@@ -1,7 +1,15 @@
-import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, session, Tray } from 'electron';
 import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { COMMAND_CHANNEL, EVENT_CHANNEL, PCM_CHANNEL } from '../src/ipc/protocol';
+import {
+  getActiveWindowProcessIds,
+  setExecutablesRoot,
+  startAudioCapture,
+  stopAudioCapture,
+} from 'application-loopback';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -9,17 +17,59 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const STAGE = { width: 1280, height: 720 } as const;
 
 /**
- * Transparent band between the stage and the HUD, and the HUD itself.
+ * The tray icon.
  *
- * Keep in sync with --gap-h and --hud-h in style/base.css.
- *
- * The window height is the sum of all three and never changes. Hiding the HUD used to
- * resize the window, which moved the capture geometry under OBS — the gap plus a fixed
- * height means the crop is set once and never revisited, and the HUD can stay open through
- * a whole set without appearing in it.
+ * Packaged, `build/` is only build resources and is not inside the app — so the file is
+ * copied to the resources directory (see extraResources) and read from there. In development
+ * it is read straight from the source tree.
  */
-const GAP_HEIGHT = 30;
-const HUD_HEIGHT = 260;
+function trayIconPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'tray.png')
+    : join(__dirname, '..', '..', 'build', 'tray.png');
+}
+
+let tray: Tray | null = null;
+
+/**
+ * Closing the control window hides it rather than quitting — the show carries on. The tray
+ * is how it comes back, and the only place a menu can live: the canvas window is on the
+ * stream, and even an auto-hidden menu bar appears on Alt. DESIGN.md §7.1.
+ */
+function createTray(): void {
+  const image = nativeImage.createFromPath(trayIconPath());
+  tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
+  tray.setToolTip('Symphony in Olib');
+
+  const showControl = (): void => {
+    if (!controlWindow || controlWindow.isDestroyed()) return;
+    controlWindow.show();
+    controlWindow.focus();
+  };
+
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Show control window', click: showControl },
+      {
+        label: 'Control window always on top',
+        type: 'checkbox',
+        checked: false,
+        click: (item) => controlWindow?.setAlwaysOnTop(item.checked),
+      },
+      { type: 'separator' },
+      { label: 'Centre canvas on screen', click: () => centreOutput() },
+      { type: 'separator' },
+      { label: 'Quit', click: () => outputWindow?.close() },
+    ]),
+  );
+
+  // Double-click is the habit everyone already has for a tray icon.
+  tray.on('double-click', showControl);
+}
+
+/** Default size of the control window. Resizable, and its bounds are remembered. */
+const CONTROL_DEFAULT = { width: 980, height: 560 } as const;
+const CONTROL_MIN = { width: 560, height: 320 } as const;
 
 // DESIGN.md §5: the app has to keep rendering while the DJ software covers it. Chromium
 // normally throttles or stops painting windows it thinks nobody can see — which in this
@@ -40,15 +90,127 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // capturer, which is slower but permitted.
 app.commandLine.appendSwitch('disable-features', 'AllowWgcScreenCapturer');
 
-let mainWindow: BrowserWindow | null = null;
+/** The canvas. What OBS captures — no chrome, no crop needed. */
+let outputWindow: BrowserWindow | null = null;
 
-function createWindow(): void {
+/** The HUD. An ordinary window; hiding it minimises to the tray. */
+let controlWindow: BrowserWindow | null = null;
+
+/**
+ * Keep restored bounds on a display that currently exists.
+ *
+ * Saving a position on a second monitor, unplugging it and finding the window unreachable is
+ * a bug worth never shipping. DESIGN.md §7.1.
+ */
+function onVisibleDisplay(bounds: Electron.Rectangle): Electron.Rectangle {
+  const displays = screen.getAllDisplays();
+  const visible = displays.some((d) => {
+    const a = d.workArea;
+    return (
+      bounds.x < a.x + a.width &&
+      bounds.x + bounds.width > a.x &&
+      bounds.y < a.y + a.height &&
+      bounds.y + bounds.height > a.y
+    );
+  });
+
+  if (visible) return bounds;
+
+  const primary = screen.getPrimaryDisplay().workArea;
+  return {
+    width: bounds.width,
+    height: bounds.height,
+    x: primary.x + Math.round((primary.width - bounds.width) / 2),
+    y: primary.y + Math.round((primary.height - bounds.height) / 2),
+  };
+}
+
+/**
+ * Where the canvas was last left. DESIGN.md §13.1.
+ *
+ * OBS captures this window by its rectangle, so its position and size are part of a working
+ * setup rather than a convenience — losing them on every launch means re-cropping the source
+ * in OBS every time, which is exactly the kind of setup work this app should be doing once.
+ *
+ * Read synchronously because the window is built from it. It is one small file at startup, and
+ * the alternative is creating the window at the default size and moving it a frame later, which
+ * the user would see.
+ */
+function stageStatePath(): string {
+  return join(app.getPath('userData'), 'stage-window.json');
+}
+
+/**
+ * The saved bounds, or null if there are none we can trust.
+ *
+ * Everything is checked rather than assumed: this file can be edited by hand, can be left over
+ * from an older version, and can be half-written if the machine lost power mid-save. A bad one
+ * has to mean "use the default", never a window at NaN or 4 pixels wide.
+ */
+function readStageBounds(): Electron.Rectangle | null {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(stageStatePath(), 'utf8'));
+    if (typeof raw !== 'object' || raw === null) return null;
+
+    const { x, y, width, height } = raw as Record<string, unknown>;
+    if (![x, y, width, height].every((v) => typeof v === 'number' && Number.isFinite(v))) {
+      return null;
+    }
+
+    return onVisibleDisplay({
+      x: Math.round(x as number),
+      y: Math.round(y as number),
+      width: Math.max(160, Math.round(width as number)),
+      height: Math.max(90, Math.round(height as number)),
+    });
+  } catch {
+    // No file yet on a first launch, which is the common case and not an error.
+    return null;
+  }
+}
+
+/** Coalesces the burst of `moved` events a drag produces into one write. */
+let stageSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function rememberStageBounds(): void {
+  if (stageSaveTimer !== null) clearTimeout(stageSaveTimer);
+  stageSaveTimer = setTimeout(writeStageBounds, 400);
+}
+
+/**
+ * Synchronous, so it also works from `before-quit` — an async write there races the process
+ * exiting, and a size you set just before closing is precisely the one worth keeping.
+ */
+function writeStageBounds(): void {
+  if (stageSaveTimer !== null) {
+    clearTimeout(stageSaveTimer);
+    stageSaveTimer = null;
+  }
+  if (!outputWindow || outputWindow.isDestroyed()) return;
+
+  const [x, y] = outputWindow.getPosition();
+  // Content size, matching how the window is created and how the Canvas tab reports it: the
+  // stage is 1280x720 of actual pixels, not 1280x720 including a frame.
+  const [width, height] = outputWindow.getContentSize();
+
+  try {
+    writeFileSync(stageStatePath(), JSON.stringify({ x, y, width, height }), 'utf8');
+  } catch {
+    // A show that cannot write its window position is still a show. Nothing to tell the user
+    // about mid-set, and it will be retried on the next move.
+  }
+}
+
+function createOutputWindow(): void {
+  const saved = readStageBounds();
+
   const win = new BrowserWindow({
+    ...(saved ? { x: saved.x, y: saved.y } : {}),
     // useContentSize means these numbers describe the web page area, excluding the window
     // frame — so the stage really is 1280x720 of actual pixels.
     useContentSize: true,
-    width: STAGE.width,
-    height: STAGE.height + GAP_HEIGHT + HUD_HEIGHT,
+    width: saved?.width ?? STAGE.width,
+    height: saved?.height ?? STAGE.height,
     resizable: false,
 
     // Transparency for OBS compositing (DESIGN.md §13.3). Two constraints come with it on
@@ -71,7 +233,34 @@ function createWindow(): void {
 
   // Avoid a white flash on launch: build the page first, reveal when it's painted.
   win.once('ready-to-show', () => win.show());
-  mainWindow = win;
+
+  /**
+   * Click-through.
+   *
+   * A frameless transparent window still swallows every pointer event over its rectangle,
+   * so the canvas sat invisibly on top of whatever was behind it and ate the clicks. It has
+   * no interactive content at all now that the HUD is a separate window, so nothing is lost
+   * by making it ignore the mouse entirely — and it stops being a hole in the desktop.
+   */
+  win.setIgnoreMouseEvents(true);
+
+  outputWindow = win;
+
+  // Both events, because the window moves two ways: dragged by the HUD, or typed into the
+  // Canvas tab. `moved` fires per pixel through a drag, hence the debounce.
+  win.on('moved', rememberStageBounds);
+  win.on('resize', rememberStageBounds);
+
+  // Flushed while the window still exists. By `closed` it is destroyed and there is nothing
+  // left to read the bounds off — and a size typed in seconds before quitting is exactly the
+  // one worth keeping.
+  win.on('close', writeStageBounds);
+
+  // Closing the canvas quits. Closing the control window only hides it (see the tray).
+  win.on('closed', () => {
+    outputWindow = null;
+    app.quit();
+  });
 
   // DESIGN.md §14 — unbreakable. A renderer can die outright (Chromium will terminate one
   // that sends a malformed IPC, for instance), and the result is a black window that never
@@ -116,11 +305,44 @@ function createWindow(): void {
     },
   );
 
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    void win.loadURL(process.env['ELECTRON_RENDERER_URL']);
-  } else {
-    void win.loadFile(join(__dirname, '../renderer/index.html'));
-  }
+  loadRenderer(win, 'index.html');
+}
+
+/** Both windows load the same way; only the entry file differs. */
+function loadRenderer(win: BrowserWindow, file: string): void {
+  const devUrl = process.env['ELECTRON_RENDERER_URL'];
+  if (devUrl) void win.loadURL(`${devUrl}/${file}`);
+  else void win.loadFile(join(__dirname, `../renderer/${file}`));
+}
+
+function createControlWindow(): void {
+  const win = new BrowserWindow({
+    ...onVisibleDisplay({ x: 60, y: 60, ...CONTROL_DEFAULT }),
+    minWidth: CONTROL_MIN.width,
+    minHeight: CONTROL_MIN.height,
+    title: 'Symphony in Olib — Control',
+    backgroundColor: '#0b0b0b',
+    autoHideMenuBar: true,
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/preload.mjs'),
+      backgroundThrottling: false,
+      sandbox: false,
+    },
+  });
+
+  win.once('ready-to-show', () => win.show());
+  controlWindow = win;
+
+  // Hide rather than close: the show carries on, and the tray brings it back.
+  win.on('close', (event) => {
+    if (outputWindow !== null && !outputWindow.isDestroyed()) {
+      event.preventDefault();
+      win.hide();
+    }
+  });
+
+  loadRenderer(win, 'control.html');
 }
 
 /**
@@ -145,6 +367,44 @@ function textPath(name: string): string {
   return join(textsDir(), `${safe}.txt`);
 }
 
+/**
+ * Presets live beside the texts: one JSON file each, in writable app data.
+ *
+ * A file per preset rather than one big document, for the same reasons the texts are
+ * separate files — a preset can be copied to someone, a corrupt one costs you that preset
+ * rather than the whole bank, and the folder is browsable without the app.
+ */
+function presetsDir(): string {
+  return join(app.getPath('userData'), 'presets');
+}
+
+function presetPath(name: string): string {
+  const safe = basename(name).replace(/[^A-Za-z0-9 _-]/g, '').trim();
+  if (safe.length === 0) throw new Error('invalid preset name');
+  return join(presetsDir(), `${safe}.json`);
+}
+
+ipcMain.handle('olib:presets-list', async (): Promise<string[]> => {
+  await mkdir(presetsDir(), { recursive: true });
+  const files = await readdir(presetsDir());
+  return files.filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)).sort();
+});
+
+ipcMain.handle('olib:preset-read', async (_event, name: string): Promise<string> => {
+  return readFile(presetPath(name), 'utf8');
+});
+
+ipcMain.handle('olib:preset-write', async (_event, name: string, content: string) => {
+  await mkdir(presetsDir(), { recursive: true });
+  await writeFile(presetPath(name), content, 'utf8');
+});
+
+ipcMain.handle('olib:preset-delete', async (_event, name: string) => {
+  // `force`, like the text delete: the renderer's list can legitimately be a moment behind
+  // the folder, and deleting something already gone is not a failure.
+  await rm(presetPath(name), { force: true });
+});
+
 ipcMain.handle('olib:texts-list', async (): Promise<string[]> => {
   await mkdir(textsDir(), { recursive: true });
   const files = await readdir(textsDir());
@@ -168,9 +428,10 @@ ipcMain.handle('olib:text-delete', async (_event, name: string) => {
 
 /** Import a .txt from anywhere on disk. Returns the name it was saved under, or null. */
 ipcMain.handle('olib:text-import', async (): Promise<string | null> => {
-  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  const parent = controlWindow ?? outputWindow;
+  if (!parent || parent.isDestroyed()) return null;
 
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(parent, {
     title: 'Import text',
     filters: [{ name: 'Text', extensions: ['txt'] }],
     properties: ['openFile'],
@@ -187,8 +448,154 @@ ipcMain.handle('olib:text-import', async (): Promise<string | null> => {
 });
 
 ipcMain.on('olib:close', () => {
-  mainWindow?.close();
+  outputWindow?.close();
 });
+
+/**
+ * Message relay between the two renderers. DESIGN.md §7.1.
+ *
+ * Main is only a broker here — it does not read or act on the payloads, it forwards them.
+ * Keeping the routing dumb means the protocol can change without touching this file.
+ */
+ipcMain.on(COMMAND_CHANNEL, (_event, command: unknown) => {
+  if (outputWindow && !outputWindow.isDestroyed()) {
+    outputWindow.webContents.send(COMMAND_CHANNEL, command);
+  }
+});
+
+ipcMain.on(EVENT_CHANNEL, (_event, message: unknown) => {
+  if (controlWindow && !controlWindow.isDestroyed() && controlWindow.isVisible()) {
+    controlWindow.webContents.send(EVENT_CHANNEL, message);
+  }
+});
+
+ipcMain.on('olib:show-control', () => {
+  if (controlWindow && !controlWindow.isDestroyed()) {
+    controlWindow.show();
+    controlWindow.focus();
+  }
+});
+
+ipcMain.on('olib:always-on-top', (_event, value: boolean) => {
+  controlWindow?.setAlwaysOnTop(value);
+});
+
+/**
+ * Output window placement, driven from the control window.
+ *
+ * The canvas is frameless — transparency requires it on Windows, and transparency is worth
+ * having (verified: alpha does survive OBS window capture). Frameless means no title bar to
+ * drag, so position and size are typed rather than dragged. Which is arguably better when
+ * OBS is pointed at the window: exact numbers, and they survive a restart — whatever is set
+ * here is written to `stage-window.json` and restored on the next launch.
+ */
+ipcMain.handle('olib:output-bounds', () => {
+  if (!outputWindow || outputWindow.isDestroyed()) return null;
+  const [x, y] = outputWindow.getPosition();
+  const [width, height] = outputWindow.getContentSize();
+  return { x: x ?? 0, y: y ?? 0, width: width ?? 0, height: height ?? 0 };
+});
+
+ipcMain.on(
+  'olib:set-output-bounds',
+  (_event, bounds: { x: number; y: number; width: number; height: number }) => {
+    if (!outputWindow || outputWindow.isDestroyed()) return;
+    const safe = onVisibleDisplay({
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      width: Math.max(160, Math.round(bounds.width)),
+      height: Math.max(90, Math.round(bounds.height)),
+    });
+    outputWindow.setContentSize(safe.width, safe.height);
+    outputWindow.setPosition(safe.x, safe.y);
+  },
+);
+
+/**
+ * Per-application audio capture. DESIGN.md §8.2.
+ *
+ * Windows process loopback, via a helper executable the package ships — no native module and
+ * no toolchain. Captures one application's output regardless of which device it is using,
+ * which is the only way to get a DJ mix without also getting notification pings.
+ *
+ * The helper streams 16-bit stereo 48kHz PCM. It is forwarded straight to the output window,
+ * where the engine lives; main does not look at it.
+ */
+let capturingPid: string | null = null;
+
+ipcMain.handle('olib:apps-list', async () => {
+  const windows = await getActiveWindowProcessIds();
+
+  // One entry per process. Applications routinely have several windows, and a list with
+  // "Traktor Pro 4" three times is worse than useless.
+  const seen = new Map<string, { processId: string; title: string }>();
+  for (const w of windows) {
+    const id = String(w.processId);
+    if (!seen.has(id) && w.title.trim().length > 0) {
+      seen.set(id, { processId: id, title: w.title });
+    }
+  }
+  return [...seen.values()];
+});
+
+ipcMain.handle('olib:app-capture-start', (_event, processId: string) => {
+  stopAppCapture();
+
+  try {
+    startAudioCapture(processId, {
+      onData: (data) => {
+        if (!outputWindow || outputWindow.isDestroyed()) return;
+        // Copy: the helper reuses its buffer, and the structured clone happens later.
+        outputWindow.webContents.send(PCM_CHANNEL, new Uint8Array(data).buffer);
+      },
+    });
+    capturingPid = processId;
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, message };
+  }
+});
+
+ipcMain.on('olib:app-capture-stop', () => stopAppCapture());
+
+function stopAppCapture(): void {
+  if (capturingPid === null) return;
+  try {
+    stopAudioCapture(capturingPid);
+  } catch {
+    // Already gone. Nothing to do, and nothing worth reporting.
+  }
+  capturingPid = null;
+}
+
+app.on('before-quit', stopAppCapture);
+
+function centreOutput(): void {
+  if (!outputWindow || outputWindow.isDestroyed()) return;
+  const [width, height] = outputWindow.getContentSize();
+  const area = screen.getDisplayNearestPoint(outputWindow.getBounds()).workArea;
+  outputWindow.setPosition(
+    area.x + Math.round((area.width - (width ?? 0)) / 2),
+    area.y + Math.round((area.height - (height ?? 0)) / 2),
+  );
+}
+
+ipcMain.on('olib:centre-output', centreOutput);
+
+/**
+ * The capture helpers resolve relative to their own module, which in a packaged build is
+ * inside app.asar — and an executable cannot be spawned from an archive. electron-builder
+ * unpacks them (see asarUnpack); this points the package at where they actually landed.
+ *
+ * Without it, per-application capture works perfectly in development and fails only in the
+ * installed build, which is the worst place to discover it.
+ */
+if (app.isPackaged) {
+  setExecutablesRoot(
+    join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'application-loopback', 'bin'),
+  );
+}
 
 void app.whenReady().then(() => {
   // DESIGN.md §5: no permission dialogs mid-set. In a browser the user would get a prompt
@@ -213,12 +620,20 @@ void app.whenReady().then(() => {
     { useSystemPicker: false },
   );
 
-  createWindow();
+  createOutputWindow();
+  createControlWindow();
+  createTray();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createOutputWindow();
+      createControlWindow();
+    }
   });
 });
+
+// Quitting from the tray never closes the canvas window, so the flush above does not run.
+app.on('before-quit', writeStageBounds);
 
 app.on('window-all-closed', () => {
   app.quit();

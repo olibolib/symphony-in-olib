@@ -17,6 +17,50 @@ import type { TempoEstimate } from './BeatTracker';
 const BEATS_PER_BAR = 4;
 const BARS_PER_PHRASE = 4;
 
+/**
+ * How hard the kick must be hitting before a *different* tempo is believed.
+ *
+ * Slightly below 1 — the kick has to be doing roughly what it has been, not more. Demanding
+ * more than its typical strength would mean only a drop could ever change the tempo, and a
+ * new record often comes in at the same weight as the last one.
+ */
+const KICK_AUTHORITY = 0.8;
+
+/**
+ * How well the kicks must land on the proposed tempo before it is believed.
+ *
+ * Strength says a kick is there; this says it agrees. They are different questions, and the
+ * observed 130-to-170 jump answered the first one honestly — the intro was loud, it simply had
+ * no kick in it, only hats and snares for the best part of a minute.
+ */
+const KICK_AGREEMENT = 0.45;
+
+/**
+ * A change this large has to prove itself completely.
+ *
+ * **DJs beatmatch.** Two records in a transition are at nearly the same tempo, because that is
+ * what a transition *is* — so a large jump is almost never a mix, and is nearly always the
+ * correlation locking onto a pattern rather than a pulse. Between {@link TRACK_CHANGE_RATIO}
+ * and here, the evidence demanded ramps up: more kick, better agreement, and longer to hold it.
+ *
+ * Not a flat refusal, because a hard cut between genres does happen and the grid should follow
+ * it. It just needs serious clues rather than eight seconds of hats.
+ */
+const LARGE_CHANGE_RATIO = 0.3;
+
+/** What a change at {@link LARGE_CHANGE_RATIO} has to show instead. */
+const LARGE_KICK_AUTHORITY = 1;
+const LARGE_KICK_AGREEMENT = 0.8;
+const LARGE_CHANGE_ESTIMATES = 28;
+
+/**
+ * Kick strength below which fine correction stops entirely.
+ *
+ * Between here and its typical strength the correction ramps, so the grid becomes gradually
+ * more stubborn as the kick fades rather than switching off at a line.
+ */
+const CORRECTION_FLOOR = 0.5;
+
 /** Fraction of the measured phase error corrected per estimate. Low, to avoid jitter. */
 const PHASE_CORRECTION = 0.18;
 
@@ -45,6 +89,23 @@ const OCTAVE_TOLERANCE = 0.06;
 
 /** Taps older than this are stale and start a new count. */
 const TAP_TIMEOUT_MS = 2500;
+
+/**
+ * What the kick has to say about a tempo. Supplied by `KickHistory` (§9.2.4).
+ *
+ * A function rather than a number for the agreement, because the Clock needs it for two
+ * periods — the one being proposed and the one it is already holding — and only the Clock
+ * knows the second.
+ */
+export interface KickEvidence {
+  /** Kick strength now against its recent typical. 1 is business as usual. */
+  readonly authority: number;
+  /** How well recent kicks fall on a grid of this period, 0 to 1. */
+  agreementFor(periodMs: number): number;
+}
+
+/** Used when nothing is listening to the kick, so the Clock stays usable on its own. */
+const NO_EVIDENCE: KickEvidence = { authority: 1, agreementFor: () => 1 };
 
 export interface BeatEvent {
   /** Beats since the clock's origin. */
@@ -104,7 +165,12 @@ export class Clock {
    * is the thing keeping time, and yanking it toward every estimate would reintroduce
    * exactly the jitter the prediction model exists to avoid.
    */
-  apply(estimate: TempoEstimate): void {
+  /**
+   * @param kick What the kick has to say (§9.2.4). Below its typical strength the kick has
+   * dropped away, and a tempo estimate made without it is not evidence about the tempo.
+   */
+  apply(estimate: TempoEstimate, kick: KickEvidence = NO_EVIDENCE): void {
+    const authority = kick.authority;
     this.confidence = estimate.confidence;
 
     if (!this.started) {
@@ -128,9 +194,35 @@ export class Clock {
     const ratio = Math.abs(estimate.periodMs - this.periodMs) / this.periodMs;
 
     if (ratio > TRACK_CHANGE_RATIO) {
-      // Could be a new record, could be one bad estimate. Require persistence.
+      // A different tempo is only believable while the kick is carrying one.
+      //
+      // Everything else in the mix is periodic enough to produce a confident estimate that
+      // happens to be wrong — eight seconds of eighth-note hats through a breakdown really
+      // are periodic at twice the tempo, and the correlation cannot tell that from a record
+      // change. Waiting for the kick to come back costs a few seconds at the start of a new
+      // track and saves the grid from re-locking to a shaker.
+      // How much this change has to prove, from 0 for a small one to 1 for a large one. A
+      // beatmatched mix sits at the bottom of that and a suspicious leap at the top.
+      const demand = clamp01(
+        (ratio - TRACK_CHANGE_RATIO) / (LARGE_CHANGE_RATIO - TRACK_CHANGE_RATIO),
+      );
+
+      if (authority < lerp(KICK_AUTHORITY, LARGE_KICK_AUTHORITY, demand)) return;
+
+      // And the kicks have to agree with the tempo being proposed — better than they agree
+      // with the one already held, or there is no reason to move.
+      //
+      // This is the test strength could not do. A minute-long intro of hats and snares has a
+      // strong onset on every beat of its own pattern and none on the record's pulse, so it
+      // scores nothing against every candidate and moves nothing.
+      const forNew = kick.agreementFor(estimate.periodMs);
+      if (forNew < lerp(KICK_AGREEMENT, LARGE_KICK_AGREEMENT, demand)) return;
+      if (forNew <= kick.agreementFor(this.periodMs)) return;
+
+      // Could be a new record, could be one bad estimate. Require persistence, and more of it
+      // the further the proposed tempo is from the one already playing.
       this.disagreements++;
-      if (this.disagreements >= TRACK_CHANGE_ESTIMATES) {
+      if (this.disagreements >= lerp(TRACK_CHANGE_ESTIMATES, LARGE_CHANGE_ESTIMATES, demand)) {
         this.manual = false;
         this.lock(estimate, 'detected');
       }
@@ -142,8 +234,16 @@ export class Clock {
     // A tap outranks detection until the track changes, so stop here.
     if (this.manual) return;
 
-    this.periodMs += (estimate.periodMs - this.periodMs) * TEMPO_CORRECTION;
-    this.nudgePhase(estimate.phaseMs);
+    // Fine correction ramps to nothing rather than scaling straight down.
+    //
+    // Scaling by the authority directly left a breakdown able to walk the tempo 2.5 BPM over
+    // twenty estimates — small per estimate, and the grid is somewhere else by the time the
+    // kick returns. Below half the typical kick there is no evidence worth acting on, so the
+    // grid simply holds: it is predictive (§9.3), and running on the last known tempo through
+    // a quiet passage is exactly what it is for.
+    const trust = clamp01((authority - CORRECTION_FLOOR) / (1 - CORRECTION_FLOOR));
+    this.periodMs += (estimate.periodMs - this.periodMs) * TEMPO_CORRECTION * trust;
+    this.nudgePhase(estimate.phaseMs, trust);
     this.source = 'detected';
   }
 
@@ -154,11 +254,11 @@ export class Clock {
    * 90% of a period away, that is really 10% early, not 90% late, and correcting the long
    * way round would drag the grid backwards through a whole beat.
    */
-  private nudgePhase(measuredMs: number): void {
+  private nudgePhase(measuredMs: number, trust = 1): void {
     const elapsed = measuredMs - this.originMs;
     let error = elapsed % this.periodMs;
     if (error > this.periodMs / 2) error -= this.periodMs;
-    this.originMs += error * PHASE_CORRECTION;
+    this.originMs += error * PHASE_CORRECTION * trust;
   }
 
   private lock(estimate: TempoEstimate, source: ClockSource): void {
@@ -235,4 +335,13 @@ export class Clock {
       isPhraseStart: inBar === 0 && inPhrase === 0,
     };
   }
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
+}
+
+function lerp(from: number, to: number, at: number): number {
+  return from + (to - from) * at;
 }
