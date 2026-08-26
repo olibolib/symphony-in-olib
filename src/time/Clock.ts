@@ -48,10 +48,18 @@ const KICK_AGREEMENT = 0.45;
  */
 const LARGE_CHANGE_RATIO = 0.3;
 
-/** What a change at {@link LARGE_CHANGE_RATIO} has to show instead. */
-const LARGE_KICK_AUTHORITY = 1;
-const LARGE_KICK_AGREEMENT = 0.8;
-const LARGE_CHANGE_ESTIMATES = 28;
+/**
+ * What a change at {@link LARGE_CHANGE_RATIO} has to show instead.
+ *
+ * Softened from 1.0 / 0.80 / 28 after a real house-to-drum-and-bass change failed to take. The
+ * original numbers were set to survive a hats-and-snares intro, and they did — but they also
+ * held out through a genuine 128-to-174 cut for the better part of twelve seconds, which is a
+ * long time to be visibly on the wrong grid. The agreement test is what actually rejects an
+ * intro; the long hold was belt and braces, and it cost more than it bought.
+ */
+const LARGE_KICK_AUTHORITY = 0.95;
+const LARGE_KICK_AGREEMENT = 0.7;
+const LARGE_CHANGE_ESTIMATES = 14;
 
 /**
  * Kick strength below which fine correction stops entirely.
@@ -231,8 +239,18 @@ export class Clock {
 
     this.disagreements = 0;
 
-    // A tap outranks detection until the track changes, so stop here.
-    if (this.manual) return;
+    // A tap outranks detection until the track changes — but detection *agreeing* with the
+    // tap is the track changing, seen from the other side.
+    //
+    // Reaching here means the estimate is within the track-change band of the tapped tempo, so
+    // the two agree. Holding manual at that point would keep refusing corrections from a
+    // tracker that has already caught up, and leave the phase locked to whenever the taps
+    // happened to land. Handing back is also the fast way out of a big jump the automatic rule
+    // is being cautious about: tap the new tempo once and detection resumes on it.
+    if (this.manual) {
+      this.manual = false;
+      this.source = 'detected';
+    }
 
     // Fine correction ramps to nothing rather than scaling straight down.
     //
