@@ -913,11 +913,15 @@ function frame(now: number): void {
     // Kept separately from the tracker's envelope: the tracker wants everything periodic, and
     // this wants only the thing that actually carries the tempo (§9.2.4).
     kicks.push(now, bands.kick?.flux ?? 0);
+    if (bands.kick?.onset === true) kicks.pushOnset(now);
 
     const estimate = tracker.estimate(now);
     if (estimate) {
       hud.setEstimate(estimate.bpm);
-      clock.apply(estimate, kicks.authority);
+      clock.apply(estimate, {
+        authority: kicks.authority,
+        agreementFor: (periodMs) => kicks.agreement(periodMs, now),
+      });
       hud.setBpm(clock.bpm);
       hud.setSource(clock.source);
       hud.setConfidence(clock.confidence);
