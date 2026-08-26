@@ -850,10 +850,36 @@ kbd {
   font-size: 11.5px;
 }
 
-.pe-pair {
+/* A label and its controls travel together. Left as loose flex children they broke apart at
+   narrow widths, and a label like "rows" ended up on the line above its own numbers. */
+.pe-group {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.pe-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+/* Opens the second field. Quiet until it is on, since a fixed value is the common case. */
+.pe-vary {
+  padding: 1px 6px;
+  line-height: 1.1;
+  color: #6d6d6d;
+}
+
+.pe-vary.on {
+  border-color: #4ad07a;
+  color: #7ee6a4;
+}
+
+.pe-range [hidden] {
+  display: none;
 }
 
 .pe .mask-grid {

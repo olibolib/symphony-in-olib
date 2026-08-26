@@ -50,11 +50,13 @@ const NEW_PRESET_DOC: Omit<PresetDoc, 'name'> = {
     continuous: false,
     splitChars: true,
     blocks: 1,
-    size: { min: 28, max: 34 },
+    // One size, not a range. The editor opens a range only when you ask for it, and a new
+    // preset should start from the simple case.
+    size: { min: 30, max: 30 },
   },
   texts: ['default'],
   spawn: FULL,
-  blockShapes: [{ cols: { min: 3, max: 5 }, rows: { min: 2, max: 3 } }],
+  blockShapes: [{ cols: { min: 4, max: 4 }, rows: { min: 3, max: 3 } }],
   align: 'centre',
   flow: 'stack',
   avoidOverlap: true,
