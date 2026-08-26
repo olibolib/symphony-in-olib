@@ -53,7 +53,7 @@ import { Channels } from './show/Channels';
 import { Layer } from './show/Layer';
 type BackgroundMode = 'white' | 'black' | 'transparent';
 import { PALETTES, type PaletteName } from './render/palette';
-import { FULL, intersect, normalise, type Mask } from './show/mask';
+import { anchors, FULL, intersect, normalise, type Mask } from './show/mask';
 
 /**
  * Increment 1 complete.
@@ -375,6 +375,30 @@ function textsForBlocks(preset: VisualPreset, blocks: number): readonly TextPres
   return out;
 }
 
+/**
+ * Where this preset may anchor, once the VJ's global rule is taken into account (§11.6).
+ *
+ * Normally the intersection: a preset can be more restricted than the global mask, never
+ * less. But a preset with a tight mask — a single cell is a perfectly reasonable thing to
+ * want — has nothing left the moment the global mask excludes that one cell, and the design
+ * said the preset should then be skipped.
+ *
+ * Skipping is the wrong answer in practice. It leaves the stage empty with a message about a
+ * mask, which is a poor trade for a constraint the VJ can only have set for one reason: to
+ * keep text off part of the frame. Falling back to the **global mask alone** honours that
+ * reason exactly — nothing is ever anchored somewhere ruled out — while still putting text on
+ * screen. The preset's own composition is the preference, and it is the preference that gives
+ * way.
+ */
+function effectiveMask(spawn: Mask): Mask {
+  const both = intersect(globalMask, spawn);
+  if (anchors(both).length > 0) return both;
+
+  // Only reachable when the two genuinely have no cell in common.
+  const global = normalise(globalMask);
+  return anchors(global).length > 0 ? global : FULL;
+}
+
 /** Render the current preset's text selection. */
 function typesetNext(): void {
   const preset = bank.current;
@@ -385,8 +409,7 @@ function typesetNext(): void {
     count: preset.text.count,
     continuous: preset.text.continuous,
     blocks: preset.text.blocks,
-    // The VJ's mask wins: a preset can only ever be more restricted, never less (§11.6).
-    mask: intersect(globalMask, preset.spawn),
+    mask: effectiveMask(preset.spawn),
     shapes: preset.blockShapes,
     align: preset.align,
     flow: preset.flow,
@@ -412,8 +435,8 @@ function typesetNext(): void {
 
   hud.setClipped(typesetter.clipped);
 
-  // No allowed cell means the preset cannot be placed at all. §14: say so, rather than
-  // leaving a blank stage that looks identical to a crash.
+  // Now only reachable if the global mask itself is empty, which the editor refuses to
+  // produce. Kept because §14 would rather this be visible than silent.
   if (typesetter.unplaceable) {
     hud.setStatus(`"${bank.current.name}" has nowhere to spawn — widen the mask`, true);
   }

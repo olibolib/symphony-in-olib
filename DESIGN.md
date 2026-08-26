@@ -1621,9 +1621,14 @@ semantics a large enough block can still reach into an excluded cell. That is th
 for an authoring tool, but if a hard "never draw here" is ever needed, this is not it — it
 would have to be a clip.
 
-**If the intersection is empty the preset is skipped for that cycle, and says so.** That is the
-one case with no judgement in it: no allowed cell means nowhere to anchor, and §14 says it must
-be visible rather than silent.
+**If the intersection is empty, the global mask alone is used.** Skipping the preset was the
+original decision and it is wrong in practice: a preset with a tight mask — a single cell is a
+perfectly reasonable thing to want — has nothing left the moment the global mask excludes that
+cell, and the result was an empty stage with a message about masks.
+
+Falling back to the global mask honours the only reason a VJ sets one, which is to keep text
+off part of the frame: nothing is ever anchored somewhere ruled out. The preset's own mask is
+its composition, a preference, and the preference is what gives way.
 
 #### The layout table is deleted
 
