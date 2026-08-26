@@ -76,6 +76,18 @@ const clock = new Clock();
 const typesetter = new Typesetter(stage);
 const conductor = new Conductor();
 const channels = new Channels();
+
+/**
+ * Let channel writes reach a seamless conveyor's duplicate elements.
+ *
+ * Wired once: the lookup reads whatever pairing the typesetter holds now, and that is
+ * replaced on every typeset.
+ *
+ * Without this the copy carries no treatments at all — the original scrolls past lit and its
+ * replacement arrives plain, so every wrap looks like the colour dropping out. Which is
+ * precisely what it was doing.
+ */
+channels.setMirror((el) => typesetter.twinOf(el));
 const store = new PresetStore();
 const bank = new PresetBank(store.resolve());
 

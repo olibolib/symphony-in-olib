@@ -374,6 +374,9 @@ export class Typesetter {
     // costs no extra elements at all.
     const conveyor = options.contentMotion;
     if (conveyor && conveyor.speed > 0) this.measureConveyor(conveyor.continuous);
+    // A preset without a conveyor has no twins; leaving the last set in place would have
+    // channel writes chasing elements that are no longer on the stage.
+    else this.twins = new WeakMap();
 
     // After the travel is known, since that is what sets the duration.
     this.applyPhases(phases);
