@@ -10,6 +10,16 @@ const NOMINAL_BAR_SECONDS = 2;
 const MOTION_ANIMATIONS = /^olib-(loop|sweep|block)-/;
 
 /**
+ * Time constant for chasing a new tempo, in seconds.
+ *
+ * Closes about 92% of a 128-to-174 change within a second — quick enough that a track change
+ * feels like the visual noticing, slow enough to read as a glide rather than a jump. The
+ * largest single-frame speed change on that jump is 1.3%, which is below what the eye picks
+ * out as a step.
+ */
+const CHASE_SECONDS = 0.35;
+
+/**
  * The stage is the fixed-size rectangle OBS captures. It renders at 1:1 with no scaling,
  * so type stays pixel-crisp and the crop rectangle is trivial to report.
  * DESIGN.md §13.1–13.2.
@@ -108,58 +118,85 @@ export class Stage {
    * treatment fires would freeze each element at whatever the tempo was when it was lit, and
    * a flickering word from before a track change would beat against the one next to it.
    */
-  setBarSeconds(seconds: number): void {
-    if (seconds <= 0) return;
+  /**
+   * The tempo the visual should be moving at.
+   *
+   * Stored, not applied. Both a tap and a detected estimate arrive here, and both can move by
+   * a lot in one step — a track change from 128 to 174 is a 36% speed change. Snapping to it
+   * is a lurch, so {@link tick} chases it instead.
+   */
+  setTargetBar(seconds: number): void {
+    if (seconds > 0) this.targetBar = seconds;
+  }
 
-    // Only when it has moved enough to matter. `clock.bpm` is a live estimate and drifts by
-    // fractions of a beat continuously, so an exact comparison rewrites this most frames.
-    if (Math.abs(seconds - this.barSeconds) / this.barSeconds < 0.002) return;
-    this.barSeconds = seconds;
-
-    // Flicker still reads its period from here. A strobe changing phase is imperceptible, and
-    // there can be hundreds of them at once — far too many to drive individually.
-    this.el.style.setProperty('--bar', `${seconds.toFixed(4)}s`);
-
-    this.retimeMotion();
+  /** The bar length the visual is actually running at, after smoothing. */
+  get barSeconds(): number {
+    return this.currentBar;
   }
 
   /**
-   * Re-time the motion animations without moving them.
+   * Ease the running tempo toward the target. Call once per frame.
    *
-   * **Changing `animation-duration` does not preserve position.** The browser keeps the
-   * elapsed time and recomputes progress against the new duration, so every rewrite jumps —
-   * and since the tempo estimate drifts continuously, that was a jump most frames. It read as
-   * a stutter that got worse the harder the tracker was working.
+   * An exponential approach — each frame closes a fixed *proportion* of what is left, so the
+   * move is fast while the gap is large and settles gently as it closes. Deriving the step
+   * from elapsed time rather than counting frames keeps it identical at 30fps and 144.
    *
-   * `playbackRate` is the primitive that exists for this: it changes how fast the animation
-   * advances while leaving `currentTime` alone, so a tempo change becomes a change of speed
-   * rather than a jump to a new position. `updatePlaybackRate` is the seamless form.
-   *
-   * The durations in CSS are therefore written against a **nominal** bar, and this scales
-   * them. There are at most a handful of these animations — one per block, at most three
-   * blocks, times the two kinds — so walking them is cheap enough to do on every change.
+   * The alternative, a fixed rate of change, is wrong in both directions at once: slow enough
+   * to be smooth on a small correction is far too slow on a track change, and fast enough for
+   * a track change is a visible step on a correction of half a beat.
    */
-  private retimeMotion(): void {
-    const rate = NOMINAL_BAR_SECONDS / this.barSeconds;
+  tick(dt: number): void {
+    const gap = this.targetBar - this.currentBar;
 
-    for (const animation of this.el.getAnimations({ subtree: true })) {
-      const name = (animation as CSSAnimation).animationName;
-      if (typeof name !== 'string' || !MOTION_ANIMATIONS.test(name)) continue;
-      animation.updatePlaybackRate(rate);
+    // Close enough that no further easing is visible. Snapping here rather than approaching
+    // for ever keeps the readouts and the motion agreeing on a settled tempo.
+    if (Math.abs(gap) / this.targetBar < 0.0005) {
+      this.currentBar = this.targetBar;
+    } else {
+      this.currentBar += gap * (1 - Math.exp(-dt / CHASE_SECONDS));
+    }
+
+    const rate = NOMINAL_BAR_SECONDS / this.currentBar;
+    if (Math.abs(rate - this.appliedRate) / this.appliedRate > 0.0005) {
+      this.appliedRate = rate;
+      for (const animation of this.motions) animation.updatePlaybackRate(rate);
+    }
+
+    // Flicker reads its period from here. Thresholded because a duration rewrite restarts a
+    // strobe's phase — imperceptible, but there is no reason to do it every frame.
+    if (Math.abs(this.currentBar - this.publishedBar) / this.currentBar > 0.01) {
+      this.publishedBar = this.currentBar;
+      this.el.style.setProperty('--bar', `${this.currentBar.toFixed(4)}s`);
     }
   }
 
   /**
-   * Bring newly created motion animations up to the current tempo.
+   * Re-collect the motion animations after a typeset, and bring them up to speed.
    *
-   * A re-typeset builds new blocks, and their animations start at rate 1 — which is the
-   * nominal bar, not the live one. Called after every typeset.
+   * Cached rather than queried per frame: `getAnimations({ subtree: true })` walks every
+   * descendant, and on a stage carrying hundreds of flickering characters that is far too
+   * much to do sixty times a second. The set only changes when blocks are rebuilt.
+   *
+   * New animations start at the nominal rate, which is why this applies the current one
+   * immediately rather than waiting for the next tick.
    */
   syncMotion(): void {
-    this.retimeMotion();
+    this.motions = this.el
+      .getAnimations({ subtree: true })
+      .filter((animation) => {
+        const name = (animation as CSSAnimation).animationName;
+        return typeof name === 'string' && MOTION_ANIMATIONS.test(name);
+      });
+
+    const rate = NOMINAL_BAR_SECONDS / this.currentBar;
+    for (const animation of this.motions) animation.updatePlaybackRate(rate);
   }
 
-  private barSeconds = NOMINAL_BAR_SECONDS;
+  private targetBar = NOMINAL_BAR_SECONDS;
+  private currentBar = NOMINAL_BAR_SECONDS;
+  private publishedBar = NOMINAL_BAR_SECONDS;
+  private appliedRate = 1;
+  private motions: Animation[] = [];
 
   /** Sets the base font size all preset sizing is relative to. Mirrors Acid's `--fs`. */
   setFontScale(px: number): void {

@@ -1176,9 +1176,27 @@ hardest. Measured on a 2s→1.5s change a third of the way through: rewriting th
 the content **157px** in one frame; `updatePlaybackRate` moved it 4px, which is one frame of
 its normal travel.
 
-So the keyframes are written against a *nominal* two-second bar and scaled by rate. There are
-at most a handful of motion animations — one per block — so they are walked on every tempo
-change and after every typeset, since new blocks start at the nominal rate.
+So the keyframes are written against a *nominal* two-second bar and scaled by rate.
+
+**And the rate is chased, not set.** Preserving position is only half of it: a tap or a track
+change moves the target a long way in one step — 128 to 174 is a 36% speed change — and
+applying that instantly is a lurch even though nothing jumps. The running tempo eases toward
+the target by closing a fixed *proportion* of the remaining gap each frame, so the move is
+quick while the gap is large and settles gently as it closes.
+
+A fixed rate of change would be wrong in both directions at once: slow enough to be smooth on
+a track change is far too slow for a half-beat correction, and fast enough for a correction is
+a visible step on a track change.
+
+Measured over a 128→174 jump: 92% of the way inside a second, no overshoot, no reversal, and a
+largest single-frame speed change of 1.3% — below what reads as a step. Identical at 30fps and
+144fps, since the step comes from elapsed time rather than a frame count.
+
+The motion animations are **cached** rather than queried each frame: `getAnimations` with a
+subtree walks every descendant, and on a stage carrying hundreds of flickering characters that
+is far too much to do sixty times a second. The set only changes when blocks are rebuilt, so
+it is re-collected on typeset — which is also when new animations need bringing up to speed,
+since they start at the nominal rate.
 
 Flicker keeps its `--bar` duration: a strobe changing phase is imperceptible, and there can be
 hundreds at once. The tempo write itself is also thresholded, since a live estimate never
