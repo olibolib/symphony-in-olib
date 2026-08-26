@@ -315,10 +315,19 @@ export class Typesetter {
       // holding three screens of text would scroll three times as far for the same setting.
       const boxH = (box.height / 100) * this.stage.height;
 
+      // The palette is baked into the block, not left on the stage for everything to inherit.
+      // Eight declarations per block rather than one per element — still the mechanism §12.5
+      // exists for — but scoped so that changing the palette affects the *next* text rather
+      // than recolouring the one being read.
+      const palette = this.stage.slotColours
+        .map((colour, slot) => `--c${slot}:${colour};`)
+        .join('');
+
       const style =
         `left:${box.left.toFixed(3)}%;top:${box.top.toFixed(3)}%;` +
         `width:${box.width.toFixed(3)}%;height:${box.height.toFixed(3)}%;` +
-        `--box-h:${boxH.toFixed(2)}px;--box-hr:${(box.height / 100).toFixed(5)};`;
+        `--box-h:${boxH.toFixed(2)}px;--box-hr:${(box.height / 100).toFixed(5)};` +
+        palette;
 
       const built = this.build(lines, options, budgetPerBlock);
 

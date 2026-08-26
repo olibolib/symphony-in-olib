@@ -1100,6 +1100,27 @@ re-typeset, and a central registry would need invalidating each time; attributes
 the elements that carried them. Self-healing, and the decay loop stays proportional to what is
 actually lit.
 
+#### Static means static: colour is decided at typeset
+
+A word's base colour behaves the way its base size does — **decided when the text is typeset
+and then left alone unless a layer takes the channel**. It is the same rule §11.5 already
+applies to size, and it was being broken in the one place nobody looked.
+
+`colourShift` used to write `--c0`..`--c7` onto the *stage*, which every word inherits. So it
+recoloured **text already on screen**, including words no layer was targeting. Those changed on
+their own, out of time with anything, which reads as a fault rather than as an effect — and it
+is worst on a conveyor, where the same words come round again looking different.
+
+The palette assignment is now held on the stage as data and copied onto each **block** as it is
+built. Eight declarations per block rather than one per element, so it is still the mechanism
+§12.5 exists for — just scoped so a change lands on the next typeset instead of rewriting what
+is being read.
+
+*Kept:* unaccented slots stay `var(--stage-fg)` rather than a literal colour, so switching to a
+black or transparent background still makes the text readable. Verified: repainting the stage
+slots leaves existing words untouched, accents survive a background flip, and unaccented words
+still follow it.
+
 #### Continuous is a modifier, not a mode
 
 `continuous` was added as a seventh selection mode, and that was the wrong shape. It bundled

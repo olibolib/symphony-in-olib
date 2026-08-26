@@ -128,17 +128,19 @@ export const stopPulse = (): EffectRef => {
 export const colourShift = (params: { accents: number } = { accents: 2 }): EffectRef => {
   return (ctx: EffectContext) => {
     const accents = pickSome(ctx.palette, params.accents);
-    const style = ctx.stage.el.style;
 
-    // Base slots follow the stage foreground rather than a hardcoded black. On a
-    // transparent or black background, black text is invisible — and the colour slots
-    // override --stage-fg, so hardcoding here would silently blank the stage.
-    for (let slot = 0; slot < 8; slot++) {
-      style.setProperty(`--c${slot}`, 'var(--stage-fg)');
-    }
+    // Base slots follow the stage foreground rather than a hardcoded black. On a transparent
+    // or black background, black text is invisible — and the colour slots override
+    // `--stage-fg`, so a literal here would silently blank the stage.
+    const slots = Array.from({ length: 8 }, () => 'var(--stage-fg)');
     for (const accent of accents) {
-      style.setProperty(`--c${randomInt(8)}`, accent);
+      slots[randomInt(8)] = accent;
     }
+
+    // Chosen now, applied at the next typeset. Painting it here would recolour every word
+    // already on screen — including the ones no layer has touched, which then change out of
+    // time with the music and read as a fault rather than as an effect.
+    ctx.stage.slotColours = slots;
   };
 };
 

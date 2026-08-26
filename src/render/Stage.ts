@@ -203,6 +203,24 @@ export class Stage {
   private publishedBar = NOMINAL_BAR_SECONDS;
   private motions: Animation[] = [];
 
+  /**
+   * Which colour each slot currently means.
+   *
+   * Held here rather than written to the stage element, because writing it there recolours
+   * **text that is already on screen**. A word's base colour should behave the way its base
+   * size does — decided when it is typeset and then left alone unless a layer takes the
+   * channel. Otherwise words nothing is targeting change colour on their own, out of time
+   * with anything, which reads as a fault. It is worst on a conveyor, where the same words
+   * come round again looking different.
+   *
+   * The typesetter copies these onto each block as it builds it, so a change lands on the
+   * next typeset — a phrase boundary — and existing text keeps what it had.
+   *
+   * `var(--stage-fg)` rather than a colour for the unaccented slots, so switching to a black
+   * or transparent background still makes the text readable.
+   */
+  slotColours: readonly string[] = Array.from({ length: 8 }, () => 'var(--stage-fg)');
+
   /** Sets the base font size all preset sizing is relative to. Mirrors Acid's `--fs`. */
   setFontScale(px: number): void {
     this.el.style.setProperty('--fs', `${px}px`);
