@@ -38,6 +38,7 @@ import { AppCapture } from './audio/AppCapture';
 import { APP_PREFIX } from './ipc/protocol';
 import { BANDS, type BandName } from './audio/bands';
 import { BeatTracker } from './time/BeatTracker';
+import { KickHistory } from './time/KickHistory';
 import { Clock } from './time/Clock';
 import { parseText, type TextPreset } from './text/TextSource';
 import { Typesetter, type BlockMotion, type ContentMotion } from './text/Typesetter';
@@ -72,6 +73,7 @@ try {
 }
 const input = new AudioInput();
 const tracker = new BeatTracker();
+const kicks = new KickHistory();
 const clock = new Clock();
 const typesetter = new Typesetter(stage);
 const conductor = new Conductor();
@@ -908,10 +910,14 @@ function frame(now: number): void {
 
     tracker.push(now, onsetEnergy);
 
+    // Kept separately from the tracker's envelope: the tracker wants everything periodic, and
+    // this wants only the thing that actually carries the tempo (§9.2.4).
+    kicks.push(now, bands.kick?.flux ?? 0);
+
     const estimate = tracker.estimate(now);
     if (estimate) {
       hud.setEstimate(estimate.bpm);
-      clock.apply(estimate);
+      clock.apply(estimate, kicks.authority);
       hud.setBpm(clock.bpm);
       hud.setSource(clock.source);
       hud.setConfidence(clock.confidence);

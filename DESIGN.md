@@ -577,6 +577,42 @@ If it ever needs to be better, the discriminator to reach for is simultaneous en
 up: a bass note usually carries harmonics into 150–400 Hz at the moment of attack, where a
 kick is concentrated much lower. Real, but more machinery, and it misfires on clicky kicks.
 
+### 9.2.4 The kick decides whether a tempo change is believed
+
+The tempo of this music is carried by the kick. Everything else — pads, vocals, a shaker
+running through a breakdown — is periodic enough to produce a *confident* estimate that
+happens to be wrong, and correlation cannot tell the difference: eight seconds of eighth-note
+hats genuinely are periodic at twice the tempo.
+
+So `KickHistory` records the strongest kick in each of the last sixty seconds, and reports the
+last two seconds against the **median** of those. 1 means the kick is doing what it has been
+doing; below 1 is a breakdown or a filter sweep; above 1 is a drop.
+
+**Relative, not absolute**, because a quiet master and a loud one differ by more than a
+breakdown and a drop do — a fixed threshold would be tuned to one record and wrong for the
+next. Verified level-independent: the same passage at 0.05 and at 4.0 reads identically.
+
+*Per-second peaks, and the median of them.* An earlier version sampled ten times a second and
+took an 80th percentile, which made the answer depend on the kick's **duty cycle** — how much
+of each second the transient occupied — so it drifted with tempo. It happened to work at 128
+and fell apart after a breakdown. A second contains at least one kick at any tempo this app
+tracks, so every slot measures a kick rather than the gaps between them.
+
+| | |
+|---|---|
+| **Track change** | refused below 0.8. A different tempo is only believable while the kick is carrying one |
+| **Fine correction** | ramps to nothing below 0.5, so the grid becomes gradually more stubborn as the kick fades |
+| **Unknown** | reads as 1, so nothing is blocked at startup |
+
+Correction ramps rather than scaling straight down because scaling left a breakdown able to
+walk the tempo 2.5 BPM over twenty estimates — small each time, and the grid is somewhere else
+by the time the kick returns. Below half the typical kick there is no evidence worth acting
+on, and the grid is predictive: running on the last known tempo through a quiet passage is
+exactly what it is for.
+
+The cost is a few seconds at the start of a new record, while its kick establishes itself.
+That is the right trade against re-locking the grid to a shaker.
+
 ### 9.2.3 Known issue: tempo accuracy
 
 **Open, deferred.** Tempo lands within a few percent but is not exact — a 126 BPM house
