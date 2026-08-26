@@ -890,9 +890,10 @@ interface LayerData {
   triggers: Partial<Record<Lane, boolean>>;
   /** Bars to fade. 0 means it stays until re-typeset. */
   decayBars: number;
-  amount: number;
   /** Only read by size treatments. Rolled within these bounds when it fires. */
   size?: { min: number; max: number };
+  /** Period in bars. Only read by periodic treatments — flicker. */
+  rateBars?: number;
 }
 
 interface EffectData {
@@ -1016,7 +1017,7 @@ text and stage settings.
 | Axis | Options |
 |---|---|
 | Target | everything matching a string · a proportion of a slice · exactly N of a slice · every Nth |
-| Slice | `char` · `word` · `sentence` · `paragraph` · `block` |
+| Slice | `char` · `word` · `sentence` · `paragraph` · `block` — a `<p>` is a *line*, so a sentence gets its own wrapper |
 | Treatment | `invert` · `accent` · `dingbat` · `underline` · `strike` · `outline` · `swell` · `flicker` · `blank` |
 | Trigger | `kick` · `snare` · `hat` · `beat` · `bar` · `phrase` · `held` · `always` |
 
@@ -1097,6 +1098,63 @@ set, and leaves the attribute alone.
 re-typeset, and a central registry would need invalidating each time; attributes vanish with
 the elements that carried them. Self-healing, and the decay loop stays proportional to what is
 actually lit.
+
+#### Motion, in two kinds
+
+Omitted from this section when the proposal was folded in, and therefore never built until
+it was noticed missing. Recorded properly now.
+
+| Kind | What moves | Directions |
+|---|---|---|
+| **Content motion** | Text slides *through* a block that stays bolted to the frame — the conveyor | `up` · `down` |
+| **Block motion** | The block itself travels across the canvas | `up` · `down` · `left` · `right` |
+
+Like a ticker board: the board is bolted to the wall, the letters travel across it. Block
+motion moves the board.
+
+**They are the same movement and a completely different look.** That is not a contradiction
+— it is the reason both exist. A conveyor is text passing a fixed window, so the frame stays
+composed and only the words move; block motion is the window itself travelling, so the
+composition changes and the text within it does not. The two converge only when the block
+already spans the frame, because only then is the clipping window the whole picture.
+
+Content motion is up and down only. Text scrolling sideways through its own box reads as a
+fault rather than as an effect.
+
+#### One speed unit, so the same number means the same velocity
+
+Both are **fractions of the canvas per four beats**. Set to the same number they move at the
+same pixels per second, whatever size the box is.
+
+Measuring content motion against the *box* was the obvious alternative and is wrong: it would
+mean a one-cell strip and a full-height column scrolling at visibly different speeds from the
+same setting, and the VJ having to re-tune the number every time they changed a shape.
+
+Content motion still *travels* one box, because text has to sweep through its own window and
+a short strip would otherwise sit empty most of the time. Only the duration is
+canvas-derived. Measured at 128bpm with speed `0.5`:
+
+| Box | Height | Cycle | Velocity |
+|---|---|---|---|
+| Full-height column | 720px | 8.0s | **180 px/s** |
+| One-cell strip | 103px | 1.14s | **180 px/s** |
+
+**Both are CSS animations timed against `--bar`**, like flicker: they re-time themselves on a
+tempo change, for every element at once, with nothing running per frame. The block's height
+is written into it as a length *and* as a fraction of the canvas, because `calc` cannot
+divide a length by a length — the duration needs the ratio as a plain number.
+
+Not `translateY(100%)`, which resolves against the *content's* own height: a block holding
+three screens of text would scroll three times as far for the same setting.
+
+*Accepted:* neither loops seamlessly. Content sweeps from below the box to above it and
+restarts; a block travels two canvases, entering off one edge and leaving off the other, so
+the restart happens out of frame. A seamless conveyor needs the content duplicated, which
+doubles that block's elements — and worse, layers would light each copy independently, so the
+same word would flicker differently in its two halves.
+
+*Not built:* per-element motion. Moving a block is one transform; making individual words
+drift is one per element, and at a few thousand elements that is where the frame rate goes.
 
 #### Four beats is the unit for everything the audience sees
 
@@ -1209,6 +1267,16 @@ re-wrapping a paragraph several times a bar reads as broken rather than as an ef
 They compose in that order: `font-size` sets the element's real box, `transform` scales what is
 already there without disturbing the layout around it. Inline elements need
 `display: inline-block` to accept a transform at all, which `<w>` and `<c>` can simply carry.
+
+#### No general "amount"
+
+A layer has no strength dial. A treatment is a switch — a half-applied inversion is not a
+thing — and *how much* is the target's business: 5% of words rather than 40%. The treatments
+that do carry a quantity carry a specific one, `size` for swell and `rateBars` for flicker.
+
+`amount` existed on `LayerSpec` for a while, was passed through every call, and was read by
+nothing. Removed rather than wired up: a second knob meaning roughly "strength" alongside the
+target proportion is how presets got confusing in the first place.
 
 #### Decided
 
@@ -2029,6 +2097,12 @@ Staged so each step is usable on its own:
   compiled built-ins on first run, debounced 600ms and flushed on close. Validation on load
   reports every correction by name and keeps as much of a preset as can be understood.
   Per-preset text lists and delete protection landed with it (§11.7).
+
+- **2e — the gaps.** Three things §11.5 described that the first four stages did not build:
+  the `sentence` slice (deferred in 2a because sentences had no wrapping element, and the
+  layout CSS that made adding one risky was deleted in 2b), the `always` trigger reaching the
+  editor, and **motion**, which was dropped when the proposal was folded into this document
+  and so was never scheduled. `LayerSpec.amount` was removed rather than wired up.
 
 **Increment 2 is complete.** What it cost that was not planned: four treatment bugs found by
 using the editor for five minutes (a colour-slot selector outranking the channel, so `accent`

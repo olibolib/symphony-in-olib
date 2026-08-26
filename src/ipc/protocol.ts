@@ -3,7 +3,7 @@ import type { PaletteName } from '../render/palette';
 import type { BlockShape, Mask } from '../show/mask';
 import type { LayerSpec } from '../show/Layer';
 import type { EnergyTag } from '../show/presets';
-import type { Align, Flow, TextMode } from '../text/Typesetter';
+import type { Align, BlockMotion, ContentMotion, Flow, TextMode } from '../text/Typesetter';
 import type { ClockSource } from '../types';
 
 /**
@@ -70,6 +70,10 @@ export interface PresetDoc {
   readonly align: Align;
   readonly flow: Flow;
   readonly avoidOverlap: boolean;
+
+  /** Text sliding through a stationary block, and the block travelling (§11.5). */
+  readonly contentMotion?: ContentMotion;
+  readonly blockMotion?: BlockMotion;
 
   readonly layers: readonly LayerSpec[];
 }

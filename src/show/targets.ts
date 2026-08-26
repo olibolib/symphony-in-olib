@@ -9,7 +9,7 @@ import type { Typesetter } from '../text/Typesetter';
  * treatment — which is what makes "invert every instance of the letter e" expressible.
  */
 
-export type Slice = 'char' | 'word' | 'paragraph' | 'block';
+export type Slice = 'char' | 'word' | 'sentence' | 'paragraph' | 'block';
 
 /**
  * The stored form. The `apply()` sugar in §11.5 normalises to this, so `{ word: '5%' }`
@@ -90,8 +90,11 @@ function matching(text: string, typesetter: Typesetter): readonly HTMLElement[] 
  * The units a slice selects *by*, each carrying the elements it would light.
  *
  * `char` and `word` produce one-element groups, so proportion and count mean the obvious
- * thing. `paragraph` and `block` produce many, so choosing one lights all of it — the
- * heavier gesture that made `glitchParagraphs` feel different from `glitchWords`.
+ * thing. `sentence`, `paragraph` and `block` produce many, so choosing one lights all of it —
+ * the heavier gesture that made `glitchParagraphs` feel different from `glitchWords`.
+ *
+ * A `<p>` is a *line*, not a sentence: a sentence can run to several, and `sentence` selects
+ * whole thoughts where `paragraph` selects however the text happened to break.
  */
 function groupsOf(slice: Slice, typesetter: Typesetter): readonly HTMLElement[][] {
   switch (slice) {
@@ -100,6 +103,9 @@ function groupsOf(slice: Slice, typesetter: Typesetter): readonly HTMLElement[][
 
     case 'word':
       return typesetter.words.map((el) => [el]);
+
+    case 'sentence':
+      return typesetter.sentences.map(treatable);
 
     case 'paragraph':
       return typesetter.paragraphs.map(treatable);

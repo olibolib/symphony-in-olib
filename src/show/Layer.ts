@@ -26,9 +26,6 @@ export interface LayerSpec {
    */
   readonly decayBars: number;
 
-  /** 0–1. How strongly the treatment applies, where the treatment has a notion of it. */
-  readonly amount?: number;
-
   /** Only read by size treatments. Rolled within these bounds each time it fires. */
   readonly size?: { readonly min: number; readonly max: number };
 
@@ -86,13 +83,10 @@ export class Layer {
     const elements = resolve(this.spec.target, ctx.typesetter);
     if (elements.length === 0) return;
 
-    const amount = this.spec.amount ?? 1;
-
     for (const el of elements) {
       // Rolled per element, so a treatment with a size range scatters rather than
       // resizing every target to the same value.
       const written = write(this.spec.treatment, {
-        amount,
         ...(this.spec.size ? { size: this.spec.size } : {}),
         ...(this.spec.rateBars !== undefined ? { rateBars: this.spec.rateBars } : {}),
       });

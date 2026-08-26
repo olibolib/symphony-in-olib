@@ -992,3 +992,27 @@ kbd {
   gap: 5px;
   cursor: pointer;
 }
+
+/* Motion, in two rows. Both carry the unit in the label because they share it — the whole
+   point is that the same number means the same velocity for a scroll and for a travelling
+   block, even though the two look nothing alike. */
+.pe-motions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pe-motion {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 5px 7px;
+  background: #131313;
+  border: 1px solid #232323;
+}
+
+.pe-motion > .pe-label:first-child {
+  min-width: 116px;
+}

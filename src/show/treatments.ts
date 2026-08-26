@@ -73,13 +73,14 @@ const DECO_STRIKE = 2;
 /**
  * Decide what to write for one application of a treatment.
  *
- * `amount` is the layer's 0–1 strength. Only `swell` currently reads it, via its bounds —
- * the rest are switches, and a half-applied inversion is not a thing.
+ * There is no general "amount": a treatment is a switch, and a half-applied inversion is not
+ * a thing. *How much* is the target's business — 5% of words rather than 40% — and the
+ * treatments that do carry a quantity carry a specific one, `size` for swell and `rateBars`
+ * for flicker. A second knob meaning roughly "strength" is how presets got confusing before.
  */
 export function write(
   treatment: Treatment,
   options: {
-    readonly amount: number;
     readonly size?: { min: number; max: number };
     readonly rateBars?: number;
   },

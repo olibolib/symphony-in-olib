@@ -28,7 +28,7 @@ export interface ParseResult {
 }
 
 const TREATMENTS = new Set<string>(Object.keys(CHANNELS));
-const SLICES = new Set(['char', 'word', 'paragraph', 'block']);
+const SLICES = new Set(['char', 'word', 'sentence', 'paragraph', 'block']);
 const MODES = new Set<string>([
   'whole', 'continuous', 'sentence', 'sentences', 'shortSentences', 'longSentences', 'word',
 ]);
@@ -88,6 +88,8 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
     align: pickFrom(o['align'], ALIGNS, fallback.align, 'align', say) as Align,
     flow: pickFrom(o['flow'], FLOWS, fallback.flow, 'flow', say) as Flow,
     avoidOverlap: bool(o['avoidOverlap'], fallback.avoidOverlap),
+    ...motion(o['contentMotion'], CONTENT_DIRECTIONS, 'contentMotion', say),
+    ...motion(o['blockMotion'], BLOCK_DIRECTIONS, 'blockMotion', say),
     layers: layers(o['layers'], say),
   };
 
@@ -233,7 +235,6 @@ function layers(value: unknown, say: Say): readonly LayerSpec[] {
     }
 
     const decay = item['decayBars'];
-    const amount = item['amount'];
     const rate = item['rateBars'];
     // Not `range` — that clamps to grid cells, and a swell bound is a scale factor.
     const size = scaleRange(item['size']);
@@ -243,13 +244,51 @@ function layers(value: unknown, say: Say): readonly LayerSpec[] {
       target,
       triggers,
       decayBars: typeof decay === 'number' && decay >= 0 ? decay : 0.5,
-      ...(typeof amount === 'number' ? { amount } : {}),
       ...(typeof rate === 'number' && rate > 0 ? { rateBars: rate } : {}),
       ...(size ? { size } : {}),
     });
   });
 
   return out;
+}
+
+const CONTENT_DIRECTIONS = new Set(['up', 'down']);
+const BLOCK_DIRECTIONS = new Set(['up', 'down', 'left', 'right']);
+
+/**
+ * A motion setting, or nothing.
+ *
+ * Absent is a valid and common state — most presets are still — so an unreadable one is
+ * dropped rather than replaced with a default. Inventing movement nobody asked for is worse
+ * than losing a setting that was already malformed.
+ */
+function motion(
+  value: unknown,
+  directions: Set<string>,
+  field: string,
+  say: Say,
+): Record<string, { direction: string; speed: number }> {
+  if (value === undefined) return {};
+
+  if (!isRecord(value)) {
+    say(`${field} is not an object, ignored`);
+    return {};
+  }
+
+  const direction = value['direction'];
+  if (typeof direction !== 'string' || !directions.has(direction)) {
+    say(`${field} has unknown direction "${String(direction)}", ignored`);
+    return {};
+  }
+
+  const speed = value['speed'];
+  if (typeof speed !== 'number' || !Number.isFinite(speed) || speed <= 0) {
+    say(`${field} has no usable speed, ignored`);
+    return {};
+  }
+
+  // Faster than four canvases a bar is not a look, it is a strobe of unreadable smear.
+  return { [field]: { direction, speed: Math.min(4, speed) } };
 }
 
 /** Scale bounds for `swell`, in multiples of the base size rather than in cells. */

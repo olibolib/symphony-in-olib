@@ -67,6 +67,12 @@ export interface TypesetOptions {
   readonly align?: Align;
   readonly flow?: Flow;
 
+  /** Text sliding **through** a block that stays put — the conveyor. */
+  readonly contentMotion?: ContentMotion;
+
+  /** The block itself travelling across the canvas. */
+  readonly blockMotion?: BlockMotion;
+
   /**
    * Base size in px, rolled once per typeset and then left alone.
    *
@@ -89,6 +95,32 @@ export interface TypesetOptions {
 export type Align = 'left' | 'centre' | 'right' | 'justify';
 
 /**
+ * Motion, in two kinds. DESIGN.md §11.5.
+ *
+ * **They are the same movement and a completely different look.** Content motion slides text
+ * through a block that stays bolted to the frame; block motion carries the block itself
+ * across the canvas. The two only look alike when the block already spans the frame, because
+ * only then is the clipping window the whole picture.
+ *
+ * So they share a speed unit — **fractions of the canvas per four beats** — and set to the
+ * same number they move at the same pixels-per-second. What differs is what is bounded: a
+ * conveyor is text passing a fixed window, block motion is the window itself travelling.
+ */
+
+/** Up or down only. Text scrolling sideways through its own box reads as a fault. */
+export interface ContentMotion {
+  readonly direction: 'up' | 'down';
+  /** Fractions of the canvas per four beats — the same unit block motion uses. */
+  readonly speed: number;
+}
+
+export interface BlockMotion {
+  readonly direction: 'up' | 'down' | 'left' | 'right';
+  /** Fractions of the canvas per four beats. */
+  readonly speed: number;
+}
+
+/**
  * How paragraphs arrange inside a block.
  *
  * What is left of the old layout table once placement and typography are taken out of it:
@@ -96,6 +128,28 @@ export type Align = 'left' | 'centre' | 'right' | 'justify';
  * As a setting they combine with any anchor and any size, which none of them could before.
  */
 export type Flow = 'stack' | 'run-on' | 'grid' | 'wrapped' | 'columns';
+
+/**
+ * Write a motion setting as attributes CSS can act on.
+ *
+ * Removed rather than set to a direction when off, so the stylesheet needs no "none" case
+ * and a stopped block carries no animation at all.
+ */
+function setMotion(
+  container: HTMLElement,
+  kind: 'content' | 'block',
+  motion: ContentMotion | BlockMotion | undefined,
+): void {
+  const key = `${kind}Motion`;
+  if (!motion || motion.speed <= 0) {
+    delete container.dataset[key];
+    container.style.removeProperty(`--${kind}-speed`);
+    return;
+  }
+
+  container.dataset[key] = motion.direction;
+  container.style.setProperty(`--${kind}-speed`, String(motion.speed));
+}
 
 /** A shape that fills most of the frame. Used when a preset declares none. */
 const DEFAULT_SHAPES: readonly BlockShape[] = [
@@ -135,6 +189,9 @@ export class Typesetter {
    * while tuning instead of looking like text that mysteriously failed to appear.
    */
   clipped = 0;
+
+  /** Sentence wrappers. A `<p>` is a *line*; a sentence can be several. */
+  sentences: readonly HTMLElement[] = [];
 
   /**
    * True when the effective mask had no allowed cell, so nothing could be placed.
@@ -206,9 +263,25 @@ export class Typesetter {
       // 3x3 grid could not produce, since every cell there was the same size (§11.6).
       const box = boxes[index] ?? boxes[0]!;
 
+      // The box's height, twice: as a length and as a fraction of the canvas.
+      //
+      // Content motion travels **one box** — the text has to sweep through its own window,
+      // and using the canvas there would leave a short strip empty most of the time. But it
+      // travels at a **canvas-relative speed**, so text scrolling inside a one-cell strip
+      // moves at the same pixels-per-second as a block crossing the whole frame. Same
+      // velocity, different look.
+      //
+      // Two variables because CSS `calc` cannot divide a length by a length: the duration
+      // needs the ratio as a plain number, and the translate needs the length.
+      //
+      // Not `translateY(100%)`, which resolves against the *content's* height — a block
+      // holding three screens of text would scroll three times as far for the same setting.
+      const boxH = (box.height / 100) * this.stage.height;
+
       const style =
         `left:${box.left.toFixed(3)}%;top:${box.top.toFixed(3)}%;` +
-        `width:${box.width.toFixed(3)}%;height:${box.height.toFixed(3)}%;`;
+        `width:${box.width.toFixed(3)}%;height:${box.height.toFixed(3)}%;` +
+        `--box-h:${boxH.toFixed(2)}px;--box-hr:${(box.height / 100).toFixed(5)};`;
 
       const built = this.build(lines, options, budgetPerBlock);
 
@@ -222,8 +295,11 @@ export class Typesetter {
       }
 
       parts.push(`<div class="block" data-block="${index}" style="${style}">`);
+      // An inner element so the contents can move while the block stays put — the conveyor
+      // (§11.5). Always present, so starting or stopping it needs no re-typeset.
+      parts.push('<div class="block-content">');
       parts.push(built.html);
-      parts.push('</div>');
+      parts.push('</div></div>');
     }
 
     // One assignment, not an append per word. Parsing a single string is dramatically
@@ -237,6 +313,11 @@ export class Typesetter {
     const container = this.stage.container;
     container.dataset['align'] = options.align ?? 'centre';
     container.dataset['flow'] = options.flow ?? 'stack';
+
+    // Motion is CSS, timed against `--bar`, so it re-times itself on a tempo change and
+    // costs nothing per frame — the same reasoning as flicker (§11.5).
+    setMotion(container, 'content', options.contentMotion);
+    setMotion(container, 'block', options.blockMotion);
 
     container.innerHTML = parts.join('');
 
@@ -292,6 +373,7 @@ export class Typesetter {
   private refresh(): void {
     const root = this.stage.container;
     this.blocks = Array.from(root.querySelectorAll<HTMLElement>('.block'));
+    this.sentences = Array.from(root.querySelectorAll<HTMLElement>('sn'));
     this.paragraphs = Array.from(root.querySelectorAll<HTMLElement>('p'));
     this.words = Array.from(root.querySelectorAll<HTMLElement>('w'));
     this.chars = Array.from(root.querySelectorAll<HTMLElement>('c'));
@@ -402,6 +484,12 @@ export class Typesetter {
       const cost = sentenceCost(sentence, options.splitChars);
       if (produced > 0 && produced + cost > budget) break;
 
+      // A sentence is several lines, so it needs an element of its own to be addressable —
+      // `<p>` is a line here, not a sentence. `<sn>` rather than `<s>`, which is
+      // strikethrough. It is `display: contents`, so it adds no box and the flow layouts
+      // treat the paragraphs exactly as they did before.
+      parts.push('<sn>');
+
       for (const line of sentence) {
         parts.push('<p>');
 
@@ -427,6 +515,7 @@ export class Typesetter {
         parts.push('</p>');
       }
 
+      parts.push('</sn>');
       produced += cost;
       used++;
     }

@@ -164,6 +164,85 @@ w[data-slot='7']:not([data-fg]) { color: var(--c7); }
   justify-content: safe center;
 }
 
+/* A sentence is several lines, so it needs an element to be addressable by — but it must
+   not become a box, or the flow layouts would be laying out sentences instead of lines.
+   `display: contents` gives it an identity with no layout of its own. */
+sn {
+  display: contents;
+}
+
+/* The conveyor's moving part. Fills the block, so a stationary preset is unaffected. */
+.block-content {
+  width: 100%;
+}
+
+/* --- motion (§11.5) -------------------------------------------------------------------
+   Two kinds, and they are the same movement with a completely different look: content
+   motion slides text through a block bolted to the frame, block motion carries the block
+   across the canvas. They look alike only when the block already spans the frame, because
+   only then is the clipping window the whole picture.
+
+   Both are CSS animations timed against `--bar`, so they re-time themselves on a tempo
+   change and cost nothing per frame — the same reasoning as flicker.
+
+   **One speed unit for both: fractions of the canvas per four beats.** Set to the same
+   number they move at the same pixels-per-second. Content motion still *travels* one box,
+   because text has to sweep through its own window and a short strip would otherwise sit
+   empty most of the time — so its duration is scaled by the box's share of the canvas
+   (`--box-hr`), which is what keeps the velocity honest. */
+
+#container[data-content-motion] .block-content {
+  animation-duration: calc(var(--bar, 2s) * 2 * var(--box-hr, 1) / var(--content-speed, 0.25));
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+#container[data-content-motion='up'] .block-content { animation-name: olib-content-up; }
+#container[data-content-motion='down'] .block-content { animation-name: olib-content-down; }
+
+@keyframes olib-content-up {
+  from { transform: translateY(var(--box-h, 100%)); }
+  to { transform: translateY(calc(-1 * var(--box-h, 100%))); }
+}
+
+@keyframes olib-content-down {
+  from { transform: translateY(calc(-1 * var(--box-h, 100%))); }
+  to { transform: translateY(var(--box-h, 100%)); }
+}
+
+/* Block motion travels two canvases, entering from off one edge and leaving off the other,
+   so the loop restarts while the block is out of frame and the jump is never seen. */
+#container[data-block-motion] .block {
+  animation-duration: calc(var(--bar, 2s) * 2 / var(--block-speed, 0.25));
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+#container[data-block-motion='up'] .block { animation-name: olib-block-up; }
+#container[data-block-motion='down'] .block { animation-name: olib-block-down; }
+#container[data-block-motion='left'] .block { animation-name: olib-block-left; }
+#container[data-block-motion='right'] .block { animation-name: olib-block-right; }
+
+@keyframes olib-block-up {
+  from { transform: translateY(var(--stage-h)); }
+  to { transform: translateY(calc(-1 * var(--stage-h))); }
+}
+
+@keyframes olib-block-down {
+  from { transform: translateY(calc(-1 * var(--stage-h))); }
+  to { transform: translateY(var(--stage-h)); }
+}
+
+@keyframes olib-block-left {
+  from { transform: translateX(var(--stage-w)); }
+  to { transform: translateX(calc(-1 * var(--stage-w))); }
+}
+
+@keyframes olib-block-right {
+  from { transform: translateX(calc(-1 * var(--stage-w))); }
+  to { transform: translateX(var(--stage-w)); }
+}
+
 /* --- align (§11.6) --------------------------------------------------------------------
    Was bundled into layouts 1, 2 and 8 along with a font size and a line height. On its own
    it combines with any anchor, any shape and any flow. */
@@ -178,10 +257,10 @@ w[data-slot='7']:not([data-fg]) { color: var(--c7); }
    placement nor typography, and the one genuinely new setting to come out of deleting it. */
 
 /* Paragraphs stack. The default, and what most text wants. */
-#container[data-flow='stack'] .block > p { display: block; }
+#container[data-flow='stack'] .block p { display: block; }
 
 /* Run together into one slab. Was layout 7, and it still suits long sentences best. */
-#container[data-flow='run-on'] .block > p {
+#container[data-flow='run-on'] .block p {
   display: inline;
 }
 #container[data-flow='run-on'] .block {
@@ -195,7 +274,7 @@ w[data-slot='7']:not([data-fg]) { color: var(--c7); }
   align-content: safe center;
   gap: 0.06em;
 }
-#container[data-flow='grid'] .block > p {
+#container[data-flow='grid'] .block p {
   outline: 0.08em solid currentColor;
   padding: 0.1em;
 }
@@ -207,7 +286,7 @@ w[data-slot='7']:not([data-fg]) { color: var(--c7); }
   align-content: safe center;
   gap: 0 0.4em;
 }
-#container[data-flow='wrapped'] .block > p {
+#container[data-flow='wrapped'] .block p {
   min-width: 25%;
 }
 

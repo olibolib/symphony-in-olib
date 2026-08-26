@@ -361,6 +361,8 @@ function typesetNext(): void {
     align: preset.align,
     flow: preset.flow,
     avoidOverlap: preset.avoidOverlap,
+    ...(preset.contentMotion ? { contentMotion: preset.contentMotion } : {}),
+    ...(preset.blockMotion ? { blockMotion: preset.blockMotion } : {}),
     size: preset.text.size,
     ...(preset.text.varyBy ? { varyBy: preset.text.varyBy } : {}),
   });
