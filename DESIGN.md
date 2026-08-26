@@ -1019,7 +1019,7 @@ text and stage settings.
 | Target | everything matching a string · a proportion of a slice · exactly N of a slice · every Nth |
 | Slice | `char` · `word` · `sentence` · `paragraph` · `block` — a `<p>` is a *line*, so a sentence gets its own wrapper |
 | Text | any mode, plus `continuous` to read it in order rather than sample it |
-| Treatment | `invert` · `accent` · `dingbat` · `underline` · `strike` · `outline` · `swell` · `flicker` · `blank` |
+| Treatment | `invert` · `accent` · `dingbat` · `underline` · `strike` · `outline` · `swell` · `flicker` · `blank` · `scroll` · `travel` |
 | Trigger | `typeset` · `kick` · `snare` · `hat` · `beat` · `bar` · `phrase` · `held` · `always` |
 
 Four targets by nine treatments is thirty-six combinations from thirteen primitives, and most
@@ -1172,10 +1172,23 @@ switching preset mid-poem changes how it looks rather than where it is.
 and says so. Without that it would fail its mode check and silently revert to random
 selection — the reading it was written for, quietly gone.
 
-#### Motion, in two kinds
+#### Motion, in two kinds — and both are treatments
 
-Omitted from this section when the proposal was folded in, and therefore never built until
-it was noticed missing. Recorded properly now.
+Omitted from this section when the proposal was folded in, and therefore never built until it
+was noticed missing.
+
+**`scroll` and `travel` are treatments, so motion is authored in the same list as everything
+else.** They began as their own pair of settings in the placement section, which meant two
+places to look and two shapes of control for what is, from the VJ's side, one kind of
+decision: pick a thing, say what it does. Choosing one in the treatment dropdown swaps the
+row's controls for a direction and a speed.
+
+What they do not have is a **target**. `scroll` moves the text through its block and `travel`
+moves the block across the canvas; neither selects elements, so neither writes a channel and
+neither decays — the editor hides the controls that would be meaningless, and the parser drops
+a motion layer that carries no direction or speed rather than leaving it inert.
+
+Where two of a kind exist, the **last wins**, matching the rule channels already follow.
 
 | Kind | What moves | Directions |
 |---|---|---|

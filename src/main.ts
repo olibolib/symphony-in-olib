@@ -40,7 +40,12 @@ import { BANDS, type BandName } from './audio/bands';
 import { BeatTracker } from './time/BeatTracker';
 import { Clock } from './time/Clock';
 import { parseText, type TextPreset } from './text/TextSource';
-import { Typesetter, type TextMode } from './text/Typesetter';
+import {
+  Typesetter,
+  type BlockMotion,
+  type ContentMotion,
+  type TextMode,
+} from './text/Typesetter';
 import { randomRange } from './util/random';
 import prologueRaw from '../presets/text/prologue.txt?raw';
 import { Conductor, type Lane } from './show/Conductor';
@@ -50,7 +55,7 @@ import type { VisualPreset } from './show/presets';
 import { PresetBank } from './show/PresetBank';
 import { type EffectContext } from './effects/types';
 import { Channels } from './show/Channels';
-import { Layer } from './show/Layer';
+import { Layer, type LayerSpec } from './show/Layer';
 type BackgroundMode = 'white' | 'black' | 'transparent';
 import { PALETTES, type PaletteName } from './render/palette';
 import { FULL, intersect, normalise, type Mask } from './show/mask';
@@ -415,6 +420,44 @@ function reportBlocked(name: string): void {
   );
 }
 
+/**
+ * Pull the motion settings out of the layer list.
+ *
+ * Motion is authored as a layer so a preset is described in one place, but it is applied by
+ * the typesetter rather than by writing to elements — so it has to be found again here.
+ *
+ * **The last one wins**, which is the same rule channels follow: layers are ordered and later
+ * ones sit on top. Two scroll layers is not a sensible preset, but it is an easy one to end up
+ * with while experimenting, and silently using the first would be the surprising answer.
+ */
+function motionOptions(layers: readonly LayerSpec[]): {
+  contentMotion?: ContentMotion;
+  blockMotion?: BlockMotion;
+} {
+  let content: ContentMotion | undefined;
+  let block: BlockMotion | undefined;
+
+  for (const layer of layers) {
+    const motion = layer.motion;
+    if (!motion || motion.speed <= 0) continue;
+
+    if (layer.treatment === 'scroll' && (motion.direction === 'up' || motion.direction === 'down')) {
+      content = {
+        direction: motion.direction,
+        speed: motion.speed,
+        continuous: motion.continuous !== false,
+      };
+    } else if (layer.treatment === 'travel') {
+      block = { direction: motion.direction, speed: motion.speed };
+    }
+  }
+
+  return {
+    ...(content ? { contentMotion: content } : {}),
+    ...(block ? { blockMotion: block } : {}),
+  };
+}
+
 /** Render the current preset's text selection. */
 function typesetNext(): void {
   const preset = bank.current;
@@ -432,8 +475,7 @@ function typesetNext(): void {
     avoidOverlap: preset.avoidOverlap,
     offset: preset.offset,
     wholeLines: preset.wholeLines,
-    ...(preset.contentMotion ? { contentMotion: preset.contentMotion } : {}),
-    ...(preset.blockMotion ? { blockMotion: preset.blockMotion } : {}),
+    ...motionOptions(preset.layers),
     size: preset.text.size,
     ...(preset.text.varyBy ? { varyBy: preset.text.varyBy } : {}),
   });

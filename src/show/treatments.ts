@@ -17,7 +17,27 @@ export type Treatment =
   | 'outline'
   | 'swell'
   | 'flicker'
-  | 'blank';
+  | 'blank'
+  | 'scroll'
+  | 'travel';
+
+/**
+ * The two that move something rather than mark it.
+ *
+ * They are treatments so that a preset is authored in **one list**. Motion used to be its own
+ * pair of settings in the placement section, which meant two places to look and two shapes of
+ * control for what is, from the VJ's side, the same kind of decision: pick a thing, say what
+ * it does.
+ *
+ * What they do not have is a target. `scroll` moves the text through its block and `travel`
+ * moves the block across the canvas; neither picks elements, so neither writes a channel and
+ * neither decays. The editor hides the controls that would be meaningless.
+ */
+export const MOTION_TREATMENTS: readonly Treatment[] = ['scroll', 'travel'];
+
+export function isMotion(treatment: Treatment): boolean {
+  return treatment === 'scroll' || treatment === 'travel';
+}
 
 /**
  * A CSS property being contended for.
@@ -39,6 +59,11 @@ export const CHANNELS: Readonly<Record<Treatment, readonly Channel[]>> = {
   swell: ['size'],
   flicker: ['anim'],
   blank: ['vis'],
+
+  // Nothing. They move a block rather than marking anything inside it, so there is no channel
+  // to contend for and nothing for decay to clear.
+  scroll: [],
+  travel: [],
 };
 
 /**
@@ -132,6 +157,11 @@ export function write(
 
     case 'blank':
       return [{ channel: 'vis', value: '1' }];
+
+    // Applied when the text is laid out, not by writing to elements — see `Typesetter`.
+    case 'scroll':
+    case 'travel':
+      return [];
   }
 }
 

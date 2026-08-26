@@ -1,6 +1,6 @@
 import { pulse, retext, scroll, stopScroll } from '../effects';
 import type { EffectRef } from '../effects/types';
-import type { Align, BlockMotion, ContentMotion, Flow, TextMode } from '../text/Typesetter';
+import type { Align, Flow, TextMode } from '../text/Typesetter';
 import type { Bindings } from './Conductor';
 import type { LayerSpec } from './Layer';
 import type { PresetDoc } from '../ipc/protocol';
@@ -118,9 +118,6 @@ export interface VisualPreset {
   /** Hide lines that do not fit entirely inside the block. */
   readonly wholeLines: boolean;
 
-  /** Text through a stationary block, and the block itself travelling (§11.5). */
-  readonly contentMotion?: ContentMotion;
-  readonly blockMotion?: BlockMotion;
 
   /**
    * Keep blocks off each other. Defaults to on for every built-in.
@@ -196,8 +193,6 @@ export function toDoc(preset: VisualPreset): PresetDoc {
       ...(preset.text.varyBy ? { varyBy: preset.text.varyBy } : {}),
     },
     texts: preset.texts,
-    ...(preset.contentMotion ? { contentMotion: preset.contentMotion } : {}),
-    ...(preset.blockMotion ? { blockMotion: preset.blockMotion } : {}),
     spawn: preset.spawn,
     blockShapes: preset.blockShapes,
     align: preset.align,
@@ -377,9 +372,6 @@ export const PRESETS: readonly VisualPreset[] = [
       { cols: { min: 2, max: 2 }, rows: { min: 4, max: 7 } },
       { cols: { min: 5, max: 7 }, rows: { min: 2, max: 3 } },
     ],
-    // The conveyor rather than the old stage-wide scroll: the block stays where it was
-     // anchored and the text moves through it, which is the look `drift` was always after.
-    contentMotion: { direction: 'up', speed: 0.12, continuous: true },
     align: 'justify',
     // Paragraphs run together into a single justified slab. Was layout 7, and it suits long
     // sentences better than anything else in the old table did.
@@ -391,6 +383,16 @@ export const PRESETS: readonly VisualPreset[] = [
     // nothing here.
     layers: [
       { treatment: 'accent', target: { slice: 'word', proportion: 0.15 }, triggers: { typeset: true }, decayBars: 0 },
+
+      // The conveyor, as a layer like everything else: the block stays where it was anchored
+      // and the text moves through it, which is the look `drift` was always named for.
+      {
+        treatment: 'scroll',
+        target: { slice: 'block', count: 1 },
+        triggers: {},
+        decayBars: 0,
+        motion: { direction: 'up', speed: 0.12, continuous: true },
+      },
       { treatment: 'invert', target: { slice: 'word', proportion: 0.03 }, triggers: { kick: true }, decayBars: FADE.fast },
       { treatment: 'underline', target: { slice: 'word', count: 2 }, triggers: { snare: true }, decayBars: FADE.fast },
       { treatment: 'invert', target: { slice: 'word', count: 1 }, triggers: { bar: true }, decayBars: FADE.fast },

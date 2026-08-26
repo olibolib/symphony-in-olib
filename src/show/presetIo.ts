@@ -25,6 +25,16 @@ import type { Align, Flow, TextMode } from '../text/Typesetter';
 export interface ParseResult {
   readonly doc: PresetDoc;
   readonly problems: readonly string[];
+
+  /**
+   * The file was written in an older shape and has been brought forward.
+   *
+   * Kept apart from `problems` because it is not one. A malformed value is a correction and
+   * the file should be left alone — rewriting it would destroy whatever was meant. A format
+   * migration preserves the behaviour exactly, so saving it is safe, and saving it is what
+   * stops the same notice appearing on every launch for ever.
+   */
+  readonly migrated: boolean;
 }
 
 const TREATMENTS = new Set<string>(Object.keys(CHANNELS));
@@ -47,6 +57,7 @@ const TRIGGERS = new Set<string>([
  */
 export function parsePreset(name: string, raw: string, fallback: PresetDoc): ParseResult {
   const problems: string[] = [];
+  let migrated = false;
 
   let value: unknown;
   try {
@@ -54,7 +65,11 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
   } catch {
     // Not recoverable field by field — there are no fields. Say so plainly and hand back the
     // fallback, so the preset still exists and can be re-saved over the broken file.
-    return { doc: { ...fallback, name }, problems: [`${name}: not valid JSON, using defaults`] };
+    return {
+      doc: { ...fallback, name },
+      problems: [`${name}: not valid JSON, using defaults`],
+      migrated: false,
+    };
   }
 
   const o = isRecord(value) ? value : {};
@@ -78,6 +93,7 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
     mode = 'sentences';
     continuous = true;
     say('mode "continuous" is now a modifier — migrated to sentences, read in order');
+    migrated = true;
   }
 
   const doc: PresetDoc = {
@@ -105,9 +121,18 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
     avoidOverlap: bool(o['avoidOverlap'], fallback.avoidOverlap),
     wholeLines: bool(o['wholeLines'], fallback.wholeLines),
     offset: offset(o['offset'], fallback.offset),
-    ...motion(o['contentMotion'], CONTENT_DIRECTIONS, 'contentMotion', say),
-    ...motion(o['blockMotion'], BLOCK_DIRECTIONS, 'blockMotion', say),
-    layers: layers(o['layers'], say),
+    layers: [
+      ...layers(o['layers'], say),
+      // Motion used to be a pair of fields on the document and is now a layer like anything
+      // else (§11.5). A preset saved before that would otherwise stop moving with no
+      // explanation, so it is carried across rather than dropped.
+      ...migrateMotion(o['contentMotion'], 'scroll', CONTENT_DIRECTIONS, say, () => {
+        migrated = true;
+      }),
+      ...migrateMotion(o['blockMotion'], 'travel', BLOCK_DIRECTIONS, say, () => {
+        migrated = true;
+      }),
+    ],
   };
 
   // A size range with min above max would silently swap or misbehave downstream; fixing it
@@ -117,10 +142,11 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
     return {
       doc: { ...doc, text: { ...doc.text, size: { min: doc.text.size.max, max: doc.text.size.min } } },
       problems,
+      migrated,
     };
   }
 
-  return { doc, problems };
+  return { doc, problems, migrated };
 }
 
 // --- field readers ---------------------------------------------------------------------------
@@ -253,8 +279,18 @@ function layers(value: unknown, say: Say): readonly LayerSpec[] {
 
     const decay = item['decayBars'];
     const rate = item['rateBars'];
+    const motion = readMotion(
+      item['motion'],
+      treatment === 'scroll' ? CONTENT_DIRECTIONS : BLOCK_DIRECTIONS,
+      treatment === 'scroll',
+    );
     // Not `range` — that clamps to grid cells, and a swell bound is a scale factor.
     const size = scaleRange(item['size']);
+
+    if ((treatment === 'scroll' || treatment === 'travel') && !motion) {
+      say(`layer ${index + 1} is a ${treatment} with no direction or speed, dropped`);
+      return;
+    }
 
     out.push({
       treatment: treatment as Treatment,
@@ -262,6 +298,7 @@ function layers(value: unknown, say: Say): readonly LayerSpec[] {
       triggers,
       decayBars: typeof decay === 'number' && decay >= 0 ? decay : 0.5,
       ...(typeof rate === 'number' && rate > 0 ? { rateBars: rate } : {}),
+      ...(motion ? { motion } : {}),
       ...(size ? { size } : {}),
     });
   });
@@ -296,42 +333,58 @@ const BLOCK_DIRECTIONS = new Set(['up', 'down', 'left', 'right']);
  * dropped rather than replaced with a default. Inventing movement nobody asked for is worse
  * than losing a setting that was already malformed.
  */
-function motion(
+function readMotion(
   value: unknown,
   directions: Set<string>,
-  field: string,
-  say: Say,
-): Record<string, { direction: string; speed: number; continuous?: boolean }> {
-  if (value === undefined) return {};
-
-  if (!isRecord(value)) {
-    say(`${field} is not an object, ignored`);
-    return {};
-  }
+  looping = true,
+): LayerSpec['motion'] | null {
+  if (!isRecord(value)) return null;
 
   const direction = value['direction'];
-  if (typeof direction !== 'string' || !directions.has(direction)) {
-    say(`${field} has unknown direction "${String(direction)}", ignored`);
-    return {};
-  }
+  if (typeof direction !== 'string' || !directions.has(direction)) return null;
 
   const speed = value['speed'];
-  if (typeof speed !== 'number' || !Number.isFinite(speed) || speed <= 0) {
-    say(`${field} has no usable speed, ignored`);
-    return {};
-  }
-
-  // Faster than four canvases a bar is not a look, it is a strobe of unreadable smear.
-  const clamped = Math.min(4, speed);
-
-  // Only the conveyor has a loop/once choice — a travelling block leaves the frame and comes
-  // back either way. Defaulting to `true` keeps a file written before the modifier existed
-  // behaving as it did.
-  if (field !== 'contentMotion') return { [field]: { direction, speed: clamped } };
+  if (typeof speed !== 'number' || !Number.isFinite(speed) || speed <= 0) return null;
 
   return {
-    [field]: { direction, speed: clamped, continuous: bool(value['continuous'], true) },
+    direction: direction as 'up' | 'down' | 'left' | 'right',
+    // Faster than four canvases a bar is not a look, it is a strobe of unreadable smear.
+    speed: Math.min(4, speed),
+    // Only `scroll` has a loop choice — a travelling block leaves the frame and re-enters from
+    // the far side either way. Omitted rather than stored-and-ignored, so a saved file does not
+    // suggest a setting that does nothing. Defaulting to true keeps a file written before the
+    // modifier existed behaving as it did.
+    ...(looping ? { continuous: bool(value['continuous'], true) } : {}),
   };
+}
+
+/** Turn a document-level motion setting into the layer it is now. */
+function migrateMotion(
+  value: unknown,
+  treatment: 'scroll' | 'travel',
+  directions: Set<string>,
+  say: Say,
+  mark: () => void,
+): LayerSpec[] {
+  if (value === undefined) return [];
+
+  const motion = readMotion(value, directions, treatment === 'scroll');
+  if (!motion) {
+    say(`${treatment} motion could not be read, dropped`);
+    return [];
+  }
+
+  say(`motion is a layer now — migrated to a "${treatment}" layer`);
+  mark();
+  return [
+    {
+      treatment,
+      target: { slice: 'block', count: 1 },
+      triggers: {},
+      decayBars: 0,
+      motion,
+    },
+  ];
 }
 
 /** Scale bounds for `swell`, in multiples of the base size rather than in cells. */

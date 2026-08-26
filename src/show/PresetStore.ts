@@ -132,6 +132,7 @@ export class PresetStore {
     }
 
     const loaded: PresetDoc[] = [];
+    const upgraded: PresetDoc[] = [];
     for (const name of names) {
       try {
         const raw = await window.olib.presets.read(name);
@@ -139,6 +140,11 @@ export class PresetStore {
         const result = parsePreset(name, raw, fallback);
         loaded.push(result.doc);
         problems.push(...result.problems);
+
+        // A format migration is written back at once. It preserves the behaviour exactly, so
+        // there is nothing to lose by saving it — and not saving it means the same notice on
+        // every launch for the rest of the preset's life.
+        if (result.migrated) upgraded.push(result.doc);
       } catch {
         problems.push(`${name}: could not be read, skipped`);
       }
@@ -150,6 +156,8 @@ export class PresetStore {
     else problems.push('No preset loaded, using the built-ins');
 
     this.problems = problems;
+
+    await Promise.all(upgraded.map((doc) => this.write(doc)));
   }
 
   /** Write every compiled preset out, so the folder starts as a full, editable set. */

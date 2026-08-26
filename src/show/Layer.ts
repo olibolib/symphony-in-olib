@@ -1,8 +1,16 @@
 import { decayProbability } from './Channels';
 import { resolve, type Target } from './targets';
-import { CHANNELS, write, type Treatment } from './treatments';
+import { CHANNELS, isMotion, write, type Treatment } from './treatments';
 import type { EffectContext } from '../effects/types';
 import type { LayerTrigger } from './Conductor';
+
+export interface MotionSpec {
+  readonly direction: 'up' | 'down' | 'left' | 'right';
+  /** Fractions of the canvas per four beats. */
+  readonly speed: number;
+  /** `scroll` only: loop for ever, or pass through once. */
+  readonly continuous?: boolean;
+}
 
 /**
  * One brick. DESIGN.md §11.5.
@@ -28,6 +36,14 @@ export interface LayerSpec {
 
   /** Only read by size treatments. Rolled within these bounds each time it fires. */
   readonly size?: { readonly min: number; readonly max: number };
+
+  /**
+   * Where and how fast, for the motion treatments.
+   *
+   * `scroll` takes `up` or `down` and may loop; `travel` takes any cardinal and always
+   * re-enters from the far side, so a loop flag would mean nothing.
+   */
+  readonly motion?: MotionSpec;
 
   /**
    * Period of one cycle, in bars. Only read by periodic treatments — `flicker` today.
@@ -80,6 +96,9 @@ export class Layer {
    * and a cached selection would be a list of detached nodes within a phrase.
    */
   fire(ctx: EffectContext): void {
+    // Motion is established when the text is laid out; there are no elements to mark.
+    if (isMotion(this.spec.treatment)) return;
+
     const elements = resolve(this.spec.target, ctx.typesetter);
     if (elements.length === 0) return;
 
