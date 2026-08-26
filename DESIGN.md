@@ -1338,8 +1338,20 @@ Verified across a tall narrow column and a wide short band: the copy's width is 
 flow, absolutely positioned, and mid-transform, and the rendered gap between copies equals the
 travel exactly.
 
-Travel is `max(text, box)`, and the copy sits exactly that far below the original, so at the
-wrap it lands where the original began. Using the text height alone would leave a gap whenever
+**The passage repeats until it fills the box**, then once more. Travel is one text-height, so
+every copy lands where the one above it began and the seam is never visible; the spare copy is
+what covers the box while the first is leaving.
+
+An earlier version used a single copy at `max(text, box)`. That never *jumps* — but a passage
+shorter than its box left an empty stretch between the end of the text and the start of the
+repeat, and a conveyor with a gap in it is a conveyor you can see the trick of. A 40px line in
+a 720px column left 720px of empty belt.
+
+The limit on repeats is **elements, not copies**, because that is where the cost is. One short
+line needs nineteen repeats and costs almost nothing; a dense paragraph needs three and costs a
+great deal. Capping the copies punished the cheap case and let the expensive one through. Half
+the element budget, so a conveyor can never cost more in repeats than the text itself, with a
+floor of two — one repeat is what makes it a loop at all. Using the text height alone would leave a gap whenever
 a passage is shorter than its box — the seam by another name. Verified: text taller than its
 box and text shorter than it both land the copy at the original's start position, both moving
 at the same velocity.

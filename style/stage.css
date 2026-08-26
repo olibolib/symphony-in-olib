@@ -210,11 +210,9 @@ sn {
   top: 0;
 }
 
-/* The second copy sits exactly one travel below the first. One cycle moves exactly that far,
-   so at the wrap it lands where the first began — which is the whole trick. */
-.block[data-conveyor='loop'] .loop[data-copy] {
-  top: var(--travel, 100%);
-}
+/* Each repeat sits one text-height below the last — positioned inline, since how many there
+   are depends on how tall the passage turned out. One cycle moves exactly that far, so every
+   copy lands where the one above it began, which is the whole trick. */
 
 /* Timed against a *nominal* 2s bar and then scaled by `playbackRate` from the live tempo.
    Rewriting `animation-duration` as the tempo drifts does not preserve position — the browser

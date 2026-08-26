@@ -198,6 +198,8 @@ function setMotion(
   }
 }
 
+
+
 /** Animations that run for ever, and therefore need their position carried across a typeset. */
 const ENDLESS = /^olib-(loop|block)-/;
 
@@ -207,6 +209,19 @@ const DEFAULT_SHAPES: readonly BlockShape[] = [
 ];
 
 const DEFAULT_MAX_ELEMENTS = 6000;
+
+/**
+ * How many duplicated elements a scrolling box may add to fill itself.
+ *
+ * The limit is **elements, not copies**, because that is where the cost actually is. One
+ * short line in a full-height column needs nineteen repeats and costs almost nothing; a dense
+ * paragraph needs three and costs a great deal. Capping the copies punished the cheap case
+ * and let the expensive one through — the 720px column above wanted nineteen and got twelve,
+ * leaving 280px of empty belt.
+ *
+ * Half the element budget, so a conveyor can never cost more in repeats than the text itself.
+ */
+const MAX_LOOP_ELEMENTS = DEFAULT_MAX_ELEMENTS / 2;
 
 export class Typesetter {
   private readonly stage: Stage;
@@ -486,24 +501,40 @@ export class Typesetter {
         continue;
       }
 
-      // A belt. The copy sits exactly one travel below the original and one cycle moves
-      // exactly that far, so at the wrap the copy lands where the original began and the
-      // seam is never visible.
+      // A belt: the passage repeated until it fills the box, then once more.
       //
-      // `max(text, box)` rather than the text alone: a passage shorter than its box would
-      // otherwise leave a gap between the copies, which is the seam by another name.
-      const loop = Math.max(textH, boxH);
+      // One cycle moves exactly one copy's height, so every copy lands where the one above it
+      // began and the seam is never visible. The spare copy is what covers the box while the
+      // first is leaving.
+      //
+      // The earlier version used `max(text, box)` with a single copy, which is seamless in
+      // the sense that it never jumps — but a passage shorter than its box left an empty
+      // stretch between the end of the text and the start of the repeat. A conveyor with a
+      // gap in it is a conveyor you can see the trick of.
+      // Enough to cover the box at every point in the cycle, plus one: at the moment the
+      // first copy has moved a full text-height out of frame, the rest still have to reach
+      // the bottom edge.
+      const wanted = Math.ceil(boxH / textH) + 1;
 
-      const copy = original.cloneNode(true) as HTMLElement;
-      copy.dataset['copy'] = '1';
-      // The same words twice — one of them is decoration as far as a reader is concerned.
-      copy.setAttribute('aria-hidden', 'true');
-      content.append(copy);
+      // Two is the floor — one repeat is what makes it a loop at all — even for a passage so
+      // dense that the budget would rather it did not.
+      const perCopy = Math.max(1, original.querySelectorAll('w, c').length);
+      const copies = Math.max(2, Math.min(wanted, Math.floor(MAX_LOOP_ELEMENTS / perCopy) + 1));
 
-      pairUp(original, copy, this.twins);
+      for (let i = 1; i < copies; i++) {
+        const copy = original.cloneNode(true) as HTMLElement;
+        copy.dataset['copy'] = String(i);
+        // The same words several times over — all but the first are decoration as far as a
+        // reader is concerned.
+        copy.setAttribute('aria-hidden', 'true');
+        copy.style.top = `${(i * textH).toFixed(2)}px`;
+        content.append(copy);
 
-      block.style.setProperty('--travel', `${loop.toFixed(2)}px`);
-      block.style.setProperty('--travelr', (loop / this.stage.height).toFixed(5));
+        pairUp(original, copy, this.twins);
+      }
+
+      block.style.setProperty('--travel', `${textH.toFixed(2)}px`);
+      block.style.setProperty('--travelr', (textH / this.stage.height).toFixed(5));
     }
   }
 
