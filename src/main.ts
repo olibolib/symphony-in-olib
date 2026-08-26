@@ -40,7 +40,7 @@ import { BANDS, type BandName } from './audio/bands';
 import { BeatTracker } from './time/BeatTracker';
 import { KickHistory } from './time/KickHistory';
 import { Clock } from './time/Clock';
-import { parseText, type TextPreset } from './text/TextSource';
+import { TextPool } from './text/TextPool';
 import { Typesetter, type BlockMotion, type ContentMotion } from './text/Typesetter';
 import { randomRange } from './util/random';
 import prologueRaw from '../presets/text/prologue.txt?raw';
@@ -212,73 +212,14 @@ hud.setCrop(stage.cropRect());
 
 // --- text -----------------------------------------------------------------------------
 
-/**
- * The engine holds only the text that is *on the stage*.
- *
- * Editing — drafts, one-level undo, the file list, create and delete — lives in the control
- * window, which owns the editor. The engine receives finished content and nothing else, so
- * none of that state crosses the window boundary. DESIGN.md §7.1.
- */
-let activeText: TextPreset = parseText('empty', '');
-let activeTextName = '';
-let pendingText: { name: string; content: string } | null = null;
-
-/** Queued rather than applied, like every other change (§11.2). */
-function queueText(name: string, content: string): void {
-  pendingText = { name, content };
-  hud.setTextList(activeTextName, pendingText.name);
-}
-
-function takePendingText(): boolean {
-  if (pendingText === null) return false;
-  activeText = parseText(pendingText.name, pendingText.content);
-  activeTextName = pendingText.name;
-  pendingText = null;
-  hud.setTextList(activeTextName, null);
-  return true;
-}
-
-/**
- * Texts a preset has pinned by name (§11.7), parsed and kept.
- *
- * The engine is handed the *active* text and nothing else — editing lives in the control
- * window (§7.1) — so a preset naming a different text has to fetch it. Read straight from the
- * folder rather than routed through the other window: it is saved content, which is exactly
- * what the engine is allowed to see, and it keeps drafts on the side of the boundary they
- * belong.
- *
- * Loaded ahead of time because typesetting is synchronous and happens on a phrase boundary.
- * Waiting on a file read there would mean a missed phrase.
- */
-const pinnedTexts = new Map<string, TextPreset>();
-
-/** Names that could not be loaded, so the warning is given once rather than every phrase. */
-const missingTexts = new Set<string>();
-
-async function loadPinnedTexts(): Promise<void> {
-  const wanted = new Set<string>();
-  for (const doc of store.all) {
-    for (const name of doc.texts) if (name !== 'default') wanted.add(name);
-  }
-
-  for (const name of wanted) {
-    if (pinnedTexts.has(name) || missingTexts.has(name)) continue;
-    try {
-      pinnedTexts.set(name, parseText(name, await window.olib.texts.read(name)));
-    } catch {
-      // §11.7: a pinned name will eventually not resolve — a text renamed or deleted outside
-      // the app, or a preset imported from someone else. Say so and fall back; nothing should
-      // vanish because a file was renamed in October.
-      missingTexts.add(name);
-      hud.setStatus(`Text "${name}" is missing — presets using it fall back`, true);
-    }
-  }
-
-  // A text that has come back should stop being treated as missing.
-  for (const name of Array.from(missingTexts)) {
-    if (!wanted.has(name)) missingTexts.delete(name);
-  }
-}
+/** What is on the stage, and the texts presets have pinned (§7.1, §11.7). */
+const texts = new TextPool(
+  {
+    status: (message, isError) => hud.setStatus(message, isError),
+    list: (active, pending) => hud.setTextList(active, pending),
+  },
+  (name) => window.olib.texts.read(name),
+);
 
 /**
  * Resolve a preset's text list to one text per block.
@@ -336,7 +277,7 @@ function reportBlocked(name: string, spawn: Mask): void {
 function typesetNext(): void {
   const preset = bank.current;
 
-  typesetter.render(textsForBlocks(preset.texts, preset.text.blocks, activeText, pinnedTexts), {
+  typesetter.render(textsForBlocks(preset.texts, preset.text.blocks, texts.current, texts.byName), {
     slice: preset.text.slice,
     splitChars: preset.text.splitChars,
     take: preset.text.take,
@@ -419,7 +360,7 @@ function publishPresets(): void {
     bank.all.map((p) => ({ name: p.name, energy: p.energy, enabled: bank.isEnabled(p.name) })),
   );
   hud.setPresetDocs(store.all);
-  void loadPinnedTexts();
+  void texts.load(store.all);
 }
 
 /**
@@ -495,7 +436,7 @@ applyPreset();
 void (async () => {
   await store.load();
   bank.replace(store.resolve());
-  await loadPinnedTexts();
+  await texts.load(store.all);
   publishPresets();
   applyPreset();
 
@@ -634,7 +575,7 @@ hud.onCommand = (command) => {
       break;
 
     case 'applyText':
-      queueText(command.name, command.content);
+      texts.queue(command.name, command.content);
       break;
 
     case 'selectText':
@@ -781,7 +722,7 @@ function frame(now: number): void {
       hud.setPresetState(bank.current.name, bank.pending);
 
       // Queued text goes live on the same boundary, through the same one-path rule.
-      if (takePendingText()) typesetNext();
+      if (texts.takePending()) typesetNext();
     }
   }
 
