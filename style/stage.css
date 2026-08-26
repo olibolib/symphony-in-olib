@@ -148,7 +148,10 @@ w[data-slot='7']:not([data-fg]) { color: var(--c7); }
 .block {
   position: absolute;
   min-width: 0;
-  padding: calc(var(--fs) * 0.28);
+  /* Named, because a conveyor's copies are absolutely positioned and therefore resolve
+     against the *padding* box — they have to be inset by hand to match. */
+  --pad: calc(var(--fs) * 0.28);
+  padding: var(--pad);
   overflow: hidden;
 
   /* Vertically centred within its own box, which is what the table-cell used to do for the
@@ -195,6 +198,23 @@ sn {
    other blocks use. */
 .block[data-conveyor] {
   display: block;
+}
+
+/* The copies are positioned against `.block-content`, which is made a containing block
+   explicitly rather than by accident.
+
+   An absolutely positioned box resolves against its containing block's *padding* box. With
+   nothing positioned in between, that was `.block` — so each copy came out wider than the
+   in-flow original by twice the padding, wrapped its lines differently, and therefore did not
+   match the height the travel distance had been measured from. The loop jumped on every wrap.
+
+   The trap in fixing it: an animated `transform` *also* creates a containing block, so once
+   the animation started `.block-content` became one and the correction applied twice, leaving
+   the text inset by double the padding. Saying `position: relative` here makes it the
+   containing block whether the animation is running or not, so `left: 0` means the block's
+   content box in every case. */
+.block[data-conveyor] .block-content {
+  position: relative;
 }
 
 .block[data-conveyor] .loop {

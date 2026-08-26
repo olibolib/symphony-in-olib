@@ -418,11 +418,18 @@ export class Typesetter {
       const original = content?.querySelector<HTMLElement>('.loop');
       if (!content || !original) continue;
 
+      // Switch to conveyor layout *before* measuring. It changes the copies from in-flow to
+      // absolutely positioned, and a measurement taken under the old layout is a measurement
+      // of a different box — which is the difference between a seamless loop and one that
+      // jumps every wrap.
+      block.dataset['conveyor'] = seamless ? 'loop' : 'once';
+
       const textH = original.scrollHeight;
       const boxH = block.clientHeight;
-      if (textH <= 0 || boxH <= 0) continue;
-
-      block.dataset['conveyor'] = seamless ? 'loop' : 'once';
+      if (textH <= 0 || boxH <= 0) {
+        delete block.dataset['conveyor'];
+        continue;
+      }
 
       if (!seamless) {
         // One pass: in from below the box, out past the top. Travel is the box plus the text,

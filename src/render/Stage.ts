@@ -137,6 +137,9 @@ export class Stage {
   /**
    * Ease the running tempo toward the target. Call once per frame.
    *
+   * Feeds flicker's period and the decay clock. Motion takes its speed once, at typeset, and
+   * keeps it — see {@link syncMotion}.
+   *
    * An exponential approach — each frame closes a fixed *proportion* of what is left, so the
    * move is fast while the gap is large and settles gently as it closes. Deriving the step
    * from elapsed time rather than counting frames keeps it identical at 30fps and 144.
@@ -156,11 +159,7 @@ export class Stage {
       this.currentBar += gap * (1 - Math.exp(-dt / CHASE_SECONDS));
     }
 
-    const rate = NOMINAL_BAR_SECONDS / this.currentBar;
-    if (Math.abs(rate - this.appliedRate) / this.appliedRate > 0.0005) {
-      this.appliedRate = rate;
-      for (const animation of this.motions) animation.updatePlaybackRate(rate);
-    }
+    // Motion is deliberately *not* re-timed here. See `syncMotion`.
 
     // Flicker reads its period from here. Thresholded because a duration rewrite restarts a
     // strobe's phase — imperceptible, but there is no reason to do it every frame.
@@ -171,14 +170,21 @@ export class Stage {
   }
 
   /**
-   * Re-collect the motion animations after a typeset, and bring them up to speed.
+   * Fix each block's speed at the tempo it was typeset at, and leave it there.
    *
-   * Cached rather than queried per frame: `getAnimations({ subtree: true })` walks every
-   * descendant, and on a stage carrying hundreds of flickering characters that is far too
-   * much to do sixty times a second. The set only changes when blocks are rebuilt.
+   * **A block's motion does not follow the tempo once it is running.** A text lasts a phrase
+   * or two — a handful of bars — and is then rebuilt at whatever the tempo has become, so it
+   * is never far out of step; and the alternative is worse than the error it corrects. Every
+   * adjustment to a *running* animation is a chance to disturb it, and a conveyor is the one
+   * thing on stage where a disturbance is unmistakable, because the eye is tracking a
+   * constant velocity and notices any departure from it.
    *
-   * New animations start at the nominal rate, which is why this applies the current one
-   * immediately rather than waiting for the next tick.
+   * Which also removes the whole class of problem: nothing touches a moving block between
+   * typesets, so nothing can make it stutter.
+   *
+   * Cached rather than queried per frame anyway: `getAnimations({ subtree: true })` walks
+   * every descendant, and on a stage carrying hundreds of flickering characters that is far
+   * too much to do sixty times a second.
    */
   syncMotion(): void {
     this.motions = this.el
@@ -195,7 +201,6 @@ export class Stage {
   private targetBar = NOMINAL_BAR_SECONDS;
   private currentBar = NOMINAL_BAR_SECONDS;
   private publishedBar = NOMINAL_BAR_SECONDS;
-  private appliedRate = 1;
   private motions: Animation[] = [];
 
   /** Sets the base font size all preset sizing is relative to. Mirrors Acid's `--fs`. */

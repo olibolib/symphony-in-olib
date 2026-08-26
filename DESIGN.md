@@ -1178,7 +1178,18 @@ its normal travel.
 
 So the keyframes are written against a *nominal* two-second bar and scaled by rate.
 
-**And the rate is chased, not set.** Preserving position is only half of it: a tap or a track
+**A block's speed is fixed when it is typeset and never changes while it runs.** A text lasts
+a phrase or two — a handful of bars — and is rebuilt at whatever the tempo has become, so it
+is never far out of step. The alternative is worse than the error it corrects: every
+adjustment to a running animation is a chance to disturb it, and a conveyor is the one thing
+on stage where a disturbance is unmistakable, because the eye is tracking a constant velocity
+and notices any departure from it. Nothing touches a moving block between typesets, so nothing
+can make it stutter.
+
+The smoothed tempo below still feeds flicker's period and the decay clock, where a step is
+imperceptible.
+
+**And that rate is chased, not set.** Preserving position is only half of it: a tap or a track
 change moves the target a long way in one step — 128 to 174 is a 36% speed change — and
 applying that instantly is a lurch even though nothing jumps. The running tempo eases toward
 the target by closing a fixed *proportion* of the remaining gap each frame, so the move is
@@ -1220,6 +1231,22 @@ independently, so the same word would flicker differently in its two halves and 
 away. So the copy is **not** in the registries and is never targeted; `Channels` mirrors every
 write and every clear into it, which keeps the halves identical by construction rather than by
 luck.
+
+**The copies must be laid out exactly as the original was measured**, and getting that wrong
+is what made an early version jump on every wrap rather than only when the tempo moved.
+
+An absolutely positioned box resolves against its containing block's *padding* box. With
+nothing positioned between the copies and `.block`, each copy came out wider than the in-flow
+original by twice the padding, wrapped its lines differently, and so did not match the height
+the travel had been measured from. The trap in fixing it: an animated `transform` *also*
+creates a containing block, so once the animation started the correction applied twice and the
+text sat inset by double the padding instead. `.block-content` is therefore made a containing
+block explicitly, so the geometry is the same whether the animation is running or not — and
+the switch to conveyor layout happens *before* the measurement, not after.
+
+Verified across a tall narrow column and a wide short band: the copy's width is identical in
+flow, absolutely positioned, and mid-transform, and the rendered gap between copies equals the
+travel exactly.
 
 Travel is `max(text, box)`, and the copy sits exactly that far below the original, so at the
 wrap it lands where the original began. Using the text height alone would leave a gap whenever
