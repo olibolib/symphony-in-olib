@@ -23,13 +23,28 @@ ${message}`;
   throw error;
 }
 
-window.addEventListener('error', (event) => {
-  console.error('[olib] uncaught error', event.error ?? event.message);
-});
+/**
+ * Surface anything that escapes, rather than leaving a dead-looking window with no clue why.
+ * DESIGN.md §14 — never fail silently.
+ *
+ * Registered here, before anything else can throw, and guarded because the HUD does not exist
+ * yet at this point. There used to be a second pair further down that did the same job with the
+ * HUD attached, which meant every error was reported twice and the file was long enough that
+ * nobody noticed.
+ */
+function surface(message: string, detail: unknown): void {
+  console.error('[olib]', detail ?? message);
+  try {
+    hud?.setStatus(`Error: ${message}`, true);
+  } catch {
+    // Thrown before the HUD was built. The console line above is the whole report.
+  }
+}
 
-window.addEventListener('unhandledrejection', (event) => {
-  console.error('[olib] unhandled rejection', event.reason);
-});
+window.addEventListener('error', (event) => surface(event.message, event.error));
+window.addEventListener('unhandledrejection', (event) =>
+  surface(String(event.reason), event.reason),
+);
 import { Stage } from './render/Stage';
 import { EngineBridge } from './ipc/EngineBridge';
 import { Sources } from './audio/Sources';
@@ -52,8 +67,8 @@ import { PresetBank } from './show/PresetBank';
 import { type EffectContext } from './effects/types';
 import { Channels } from './show/Channels';
 import { Layer, type LayerSpec } from './show/Layer';
-type BackgroundMode = 'white' | 'black' | 'transparent';
-import { PALETTES, type PaletteName } from './render/palette';
+import { PALETTES } from './render/palette';
+import { Look } from './show/Look';
 import { FULL, intersect, normalise, type Mask } from './show/mask';
 import { blockedMessage, motionOptions, needsRetypeset, textsForBlocks } from './show/wiring';
 
@@ -126,89 +141,19 @@ let frameDelta = 0;
  * Stage background. Transparent is for compositing over other layers in OBS (§13.3) — the
  * text colour flips to white with it, since black type over arbitrary video is unreadable.
  */
-/**
- * Also read by an inline script in `index.html`, which applies the mode before the first
- * paint. Change one and change the other, or launching flashes white.
- */
-const BG_KEY = 'olib.background';
-
-function applyBackground(mode: BackgroundMode): void {
-  document.documentElement.dataset['bg'] = mode;
-  stage.backgroundMode = mode;
-  localStorage.setItem(BG_KEY, mode);
-  hud.setBackground(mode);
-}
-
-const storedBackground = (localStorage.getItem(BG_KEY) as BackgroundMode | null) ?? 'white';
-applyBackground(storedBackground);
-hud.setBackground(storedBackground);
-
-/**
- * Palette and the global spawn mask. Both exist for compositing over other visuals:
- * saturated accents clash with whatever is underneath, and text landing on the subject of
- * the frame is the fastest way to spoil it.
- */
-const PALETTE_KEY = 'olib.palette';
-const MASK_KEY = 'olib.mask';
-
-let paletteName = (localStorage.getItem(PALETTE_KEY) as PaletteName | null) ?? 'acid';
-
-/**
- * Where text may anchor, whatever a preset asks for (§11.6).
- *
- * Defaults to everything allowed: a mask is a constraint the VJ adds for tonight's video,
- * and starting with one already applied would be the app inventing a restriction nobody
- * asked for. The presets carry their own, and the two are intersected.
- */
-let globalMask: Mask = readMask();
-
-function readMask(): Mask {
-  const saved = localStorage.getItem(MASK_KEY);
-  if (saved === null) return FULL;
-  try {
-    return normalise(JSON.parse(saved) as Mask);
-  } catch {
-    // A corrupt setting must not stop the app starting. Falling back to "everywhere" is
-    // visible and recoverable; failing to launch is not (§14).
-    return FULL;
-  }
-}
-
-hud.setPalette(paletteName);
-stage.setPalette(PALETTES[paletteName]);
-hud.setMask(globalMask);
-
-function setPalette(name: PaletteName): void {
-  paletteName = name;
-  localStorage.setItem(PALETTE_KEY, name);
-  hud.setPalette(name);
-
-  // Applied at once. Choosing a palette is a deliberate act, like switching the background —
-  // unlike the old periodic shifting, which changed colours nobody had asked to change.
-  stage.setPalette(PALETTES[name]);
-}
-
-/**
- * Apply a new global mask.
- *
- * Re-typesets immediately rather than waiting for the next phrase. If you have just excluded
- * a corner because text is sitting on the club's logo, sixteen bars is much too long to
- * wait — the same reasoning the layout set was changed under.
- */
-function setMask(mask: Mask): void {
-  globalMask = normalise(mask);
-  localStorage.setItem(MASK_KEY, JSON.stringify(globalMask));
-  hud.setMask(globalMask);
-  typesetNext();
-}
+/** Background, palette and the global mask — the frame, rather than any preset (§13.3.1). */
+const look = new Look(stage, {
+  background: (mode) => hud.setBackground(mode),
+  palette: (name) => hud.setPalette(name),
+  mask: (mask) => hud.setMask(mask),
+  retypeset: () => typesetNext(),
+});
+look.apply();
 
 hud.setSource('none');
 hud.setBpm(null);
 hud.setConfidence(null);
 hud.setCrop(stage.cropRect());
-// Base size everything else is a percentage of. Raised from 24: small type is unreadable
-// on a projector and gets smeared into mush by a visualiser warping the output.
-
 
 // --- text -----------------------------------------------------------------------------
 
@@ -239,7 +184,7 @@ const texts = new TextPool(
  * to say so rather than to quietly substitute a placement nobody asked for.
  */
 function effectiveMask(spawn: Mask): Mask {
-  return intersect(globalMask, spawn);
+  return intersect(look.mask, spawn);
 }
 
 /**
@@ -269,7 +214,7 @@ function reportBlocked(name: string, spawn: Mask): void {
     return;
   }
 
-  const message = blockedMessage(name, spawn, globalMask);
+  const message = blockedMessage(name, spawn, look.mask);
   if (message !== null) hud.setStatus(message, true);
 }
 
@@ -455,7 +400,7 @@ function effectContext(): EffectContext {
     channels,
     energy: sources.analyser?.energy ?? 0,
     bass: sources.analyser?.bass ?? 0,
-    palette: PALETTES[paletteName],
+    palette: PALETTES[look.palette],
     beatPhase: clock.phase(performance.now()),
     textAge,
     dt: frameDelta,
@@ -464,17 +409,6 @@ function effectContext(): EffectContext {
     retext: typesetNext,
   };
 }
-
-// Surface anything that escapes, rather than leaving a dead-looking window with no clue
-// why. DESIGN.md §14 — never fail silently.
-window.addEventListener('error', (event) => {
-  console.error('[olib]', event.error ?? event.message);
-  hud.setStatus(`Error: ${event.message}`, true);
-});
-window.addEventListener('unhandledrejection', (event) => {
-  console.error('[olib] rejection', event.reason);
-  hud.setStatus(`Error: ${String(event.reason)}`, true);
-});
 
 // --- audio ---------------------------------------------------------------------------
 
@@ -507,15 +441,15 @@ hud.onCommand = (command) => {
       break;
 
     case 'setPalette':
-      setPalette(command.name);
+      look.setPalette(command.name);
       break;
 
     case 'setMask':
-      setMask(command.mask);
+      look.setMask(command.mask);
       break;
 
     case 'setBackground':
-      applyBackground(command.mode);
+      look.setBackground(command.mode);
       break;
 
     case 'queuePreset':
