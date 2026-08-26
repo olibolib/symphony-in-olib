@@ -364,20 +364,27 @@ go, so they are worth naming before starting rather than discovering:
 
 ### 7.3 State that persists
 
-One JSON file in the app-data folder, alongside the texts and (later) the presets.
+Three kinds of thing, in three places.
 
-Settings currently live in eight separate `localStorage` keys — device, palette, layout set,
-background, sensitivities, enabled presets, active text, crash flag. Those move into the same
-file. One inspectable, hand-editable, backup-able place, consistent with how everything else
-is stored.
+| What | Where |
+|---|---|
+| Presets | one JSON file each, in `presets/` in app data |
+| Texts | one `.txt` file each, in `texts/` |
+| Canvas position and size | `stage-window.json` (§13.1) |
+| Everything else | `localStorage`, one key per setting |
 
-```
-config.json
-  windows      bounds for both windows, always-on-top flag
-  hud          the panel layout (§7.2)
-  audio        device id, per-band sensitivities
-  show         palette, layout set, background mode, enabled presets, active text
-```
+Files for anything you might want to copy, send to someone, or edit by hand. A corrupt preset
+costs you that preset rather than the whole bank.
+
+The `localStorage` keys are `olib.` plus: `inputDeviceId`, `pendingSource`, `sensitivity`,
+`palette`, `background`, `mask`, `activeText`, `disabledPresets`, `livePreset`, `editingPreset`.
+
+The last two are what makes a restart feel continuous — the show comes back on the preset that
+was live, and the editor reopens on the preset you were editing. Both store a *name*, so a
+preset deleted between sessions falls back to the first one instead of erroring.
+
+**Still open:** folding those keys into one `config.json` beside the presets. One inspectable,
+backup-able place is the goal; localStorage is what is there now.
 
 ---
 
@@ -817,7 +824,7 @@ schedule. A fixed hold is legible but predictable: you begin anticipating the ch
 is exactly what a generative visual should not allow. A longer hold also gives a downstream
 visualiser (§13.4) time to develop its warp before the thing it is warping disappears.
 
-When the text does hold, the preset compensates — see `whenHolding` in §12.2.1.
+When the text does hold, the preset compensates — that is the `held` trigger (§11.5).
 
 **Structure events** override the timer. A detected drop forces a change immediately and
 resets the counter; a breakdown switches to a sparse preset. This is Increment 4 — the timer
@@ -868,7 +875,7 @@ assignable per preset. Reviewed and agreed 2026-08-25.
 #### The problem with today's effects
 
 Effects are closures (§12.2). That is a good fit for how they are used *now* — authored in
-TypeScript, checked by the compiler, composed with `whenHolding`. But a closure is **opaque**:
+TypeScript, checked by the compiler, wrapped by other effects. But a closure is **opaque**:
 you cannot ask it its name, and you cannot ask it what parameters it has.
 
 Two consequences, and both block this feature outright:
@@ -904,7 +911,7 @@ interface EffectDefinition {
   readonly id: string;            // 'glitchWords'
   readonly label: string;         // 'Glitch words'
   readonly params: readonly ParamSpec[];
-  /** Container effects (whenHolding) accept children; leaf effects do not. */
+  /** Effects that wrap other effects accept children; leaf effects do not. */
   readonly acceptsChildren?: boolean;
   create(values: ParamValues, children?: readonly Effect[]): Effect;
 }
@@ -978,7 +985,7 @@ interface LayerData {
 interface EffectData {
   id: string;
   values: Record<string, number | boolean | string>;
-  children?: EffectData[];   // whenHolding and anything else that wraps
+  children?: EffectData[];   // for effects that wrap other effects
 }
 ```
 
@@ -986,10 +993,9 @@ Which makes a preset a JSON file, stored the same way texts are (§11.3) — a w
 folder, seeded with the built-ins on first run. `PresetBank` grows the shape `TextBank`
 already has: list, load, edit, apply, revert, save.
 
-**Container effects need the `children` field.** `whenHolding([...])` wraps other effects, and
-a flat list of ids and values cannot express that. Easy to overlook until it is the one thing
-that will not round-trip. Layers do not need it — a layer is flat by construction, which is
-one of the quieter benefits of the split.
+**`children` was never needed.** It was here for `whenHolding`, the one effect that wrapped
+others — and that became a trigger rather than a wrapper (§12.2.1). A layer is flat by
+construction, which is one of the quieter benefits of the split.
 
 #### Two speeds of change
 
@@ -1027,6 +1033,21 @@ scatter                                          [live]  [→]
 
 One row per layer, a dropdown per axis, a slider for amount, a checkbox per trigger, and a
 two-handle range where the treatment takes one. The grid is clickable and drag-selectable.
+
+#### Two rules the editor follows
+
+**Ranges collapse to one number.** A min and a max, where you nearly always want a single
+value, is two fields to keep in step. Every range shows one value with a `±` toggle; open it and
+you get both handles. Typing a min above the max pushes the max up with it, and the same in
+reverse, so the pair can never cross.
+
+**Choosing a treatment does not change anything else.** Picking a different treatment swaps the
+controls that belong to it and leaves the triggers and decay alone. It used to reset the
+triggers to `kick` every time, because the row's handlers had closed over a stale copy of the
+layer.
+
+**Space types a space.** Tap tempo is on the space bar and used to fire while you were typing
+into a text field. Key handling checks for a focused field first.
 
 #### Open risks
 
@@ -1750,6 +1771,19 @@ a look you chose. Overflowing off the *edge* is different — text nobody can se
 fault rather than a decision. So a block that would run off the edge is shifted back until it
 fits, keeping every pixel of the size it was given.
 
+#### Whole characters only, and a nudge
+
+Two settings, both about the edges of a block.
+
+**Whole lines and whole characters.** A scrolling block otherwise shows a half-height line at
+the top and bottom of its box, and a block at the frame edge shows a clipped letter. Turned on,
+anything not fully visible is hidden rather than drawn — `hidden`, not removed, so a layer that
+owns the element keeps its ownership and the line returns intact when it fits again.
+
+**Nudge.** Anchors are grid cells, which is deliberately coarse. Four pixel offsets — up, down,
+left, right — move a block off its anchor without giving up the grid: fine control where you
+want it, nothing to think about where you don't.
+
 #### Two masks, intersected
 
 ```
@@ -1914,131 +1948,92 @@ that `glitch="3"` is blue and underlined, or yellow on blue, or a dingbat substi
 So wildly different presets need no new JavaScript at all. They redefine the slots. All the
 engine does is decide *which elements* get *which slot*, and when.
 
-### 12.2 Element effects — **being split by §11.5**
+### 12.2 Element effects — replaced by §11.5
 
-As built. Each row is a target and a treatment fused together, which is precisely what §11.5
-separates — the left column becomes a *combination* a preset can express rather than a function
-that has to exist.
+The old effects fused a target and a treatment together: `glitchChars` could only pick
+characters, `invertBlock` could only invert. Layers separate the two, which is what made
+"invert every instance of the letter e" expressible at all.
 
-| Effect | Behaviour | Becomes |
-|---|---|---|
-| `glitchChars` | Picks a character — every "e" — and slots every instance at once | target `{ match: 'e' }` |
-| `glitchWords` | Slots a proportion of words | target `{ word: '5%' }` |
-| `glitchParagraphs` | Slots whole paragraphs together | target `{ paragraph: 1 }` |
-| `decor` | Second slot, for underlines and accents, independent of `glitch` | treatments `underline` / `strike` / `outline` |
-| `invertBlock` | The `.selected` inversion — black block, white text | treatment `invert` |
-| `swell` | Animates `min-width` / `min-height` so elements grow and shove the layout around | treatment `swell`, bounded and using `transform` (§11.5) |
-| `removeGlitches` | Decays slots back to 0 over time, at one rate for everything | **deleted** — decay is per-layer and measured in bars |
+The migration is done, so the table of what became what has gone with the code. One effect was
+dropped rather than translated: `addLink`, which turned words into Google search links —
+unclickable on a projector.
 
-Three targets by seven treatments is what the four rows above cannot reach: there is no way to
-say "invert every instance of the letter e", because *every instance of a character* is trapped
-in `glitchChars` and *invert* is trapped in `invertBlock`.
+### 12.2.1 Holding, and the pulse
 
-Dropped from Acid: `addLink`, which turned words into Google search links. Unclickable on a
-projector.
+**Held phrases need more happening to them.** Text that stays for two phrases reads as a stall
+unless the preset does something about it, and each does so in its own character: `scatter`
+corrupts more, `drift` starts scrolling, `swarm` glitches whole paragraphs, `still` turns over
+two words.
 
-### 12.2.1 Conditional and continuous effects
-
-Two effects that are not simple gestures.
-
-**`whenHolding([...])`** runs its children only on a phrase where the text is *not* being
-replaced. Static text for two phrases needs more happening to it or the second phrase reads
-as a stall, and each preset compensates in its own character: `scatter` corrupts more,
-`drift` starts scrolling, `swarm` glitches whole paragraphs, `still` turns over two words.
-
-> **Ordering dependency.** `whenHolding` must come *after* `retext` in a lane. It detects a
-> hold by observing that `textAge` was not reset. Placed first it fires on the phrase where
-> the text changes, which is precisely backwards. This is invisible from reading either
-> effect alone.
+This was a wrapper effect, `whenHolding([...])`, which detected a hold by noticing that
+`textAge` had not been reset — and therefore had to be ordered after `retext` in the lane, which
+was invisible from reading either effect. It is now the `held` trigger (§11.5), dispatched once
+after the phrase bindings with a fresh context. Same behaviour, no ordering rule.
 
 **`pulse({ amount, shape })`** scales the whole stage with the beat. Driven by the predicted
-grid rather than detected onsets (§9.3), so it lands *on* the beat and keeps breathing
-through a passage with no transients at all. `decay` hits hard and falls away, reading as the
-kick; `sine` breathes evenly and suits slower presets.
+grid rather than detected onsets (§9.3), so it lands *on* the beat and keeps breathing through a
+passage with no transients at all. `decay` hits hard and falls away, reading as the kick; `sine`
+breathes evenly and suits slower presets.
 
-Amounts want to be small. 0.02 is clearly visible at 720p; past about 0.05 it stops looking
-like a pulse and starts looking like a fault.
+Amounts want to be small. 0.02 is clearly visible at 720p; past about 0.05 it stops looking like
+a pulse and starts looking like a fault.
 
-### 12.2.2 Why effects are functions, and when that stops working
+### 12.2.2 Why the remaining effects are still functions
 
-An effect has no identity worth naming. Its interface is a single method, it shares no
-implementation with any other effect, and its only state is the parameters it was built with —
-so a class would add a name, a constructor, a field and a method to hold one number.
+An effect has no identity worth naming: one method, no shared implementation, and no state
+beyond the parameters it was built with. A class would add a name, a constructor and a field to
+hold one number.
 
-Composition is the other half: `whenHolding([...])` takes effects and returns an effect. As
-functions that is five lines; as classes it needs a `CompositeEffect` type and a new concept.
+**That stops working the moment effects need to be data.** A closure cannot report its own name
+or parameters, so no UI can be generated for it and no preset containing one can be written to a
+file. That is why layers are data (§11.4) and what is left here is not.
 
-**This stops working the moment effects need to be data.** A closure cannot report its own
-name or parameters, so no UI can be generated for it and no preset containing one can be
-written to a file. §11.4 sets out what replaces this.
+What is left is genuinely stage-wide — pulse, the stage-scroll used on held phrases, colour
+wave — where there is no target to aim at and nothing for the editor to show.
 
-**It stops working a second time for a different reason**, and that one is not about
-serialisation: a closure that picks its own targets cannot have those targets changed. `glitchWords`
-is 5% of words *and* a glitch, permanently. §11.5 splits that into a target and a treatment, which
-is why the element effects below become a shorter list of treatments rather than a longer list of
-functions — the combinations move out of the vocabulary and into the preset.
+### 12.3 Text selection
 
-### 12.3 Text selection modes
+Four independent settings now — slice, length, take and pick — described in §11.5. Three things
+from the original design survive the change and are worth keeping written down.
 
-Cheap, and responsible for most of the variety.
+**Sentences can span lines.** They are found by scanning for a terminating `.`, `!` or `?`, so
+the prologue's 53 lines become 34 sentences of 3 to 27 words.
 
-**The unit of selection is the sentence**, never the word or the line. Modes:
+**The element budget is checked between pieces, never inside one.** A sentence renders whole or
+not at all. The first always renders even if it alone exceeds the budget — a blank stage is a
+worse failure than a busy one.
 
-`whole` · `sentence` · `sentences` (N consecutive) · `shortSentences` · `longSentences` ·
-`word`
+**`word` is the one deliberate fragment.** Selecting by word count produced text ending
+mid-thought, which reads as a bug rather than an effect. A single isolated word reads as
+emphasis instead, because nothing is obviously missing.
 
-Selecting by word or line count produced fragments that end mid-thought — *"and at her
-heels, leashed in like"* — which reads as a bug rather than as an effect. Acid could get
-away with it because Wittgenstein's propositions are short and self-contained; verse is not.
+Alongside them, `splitChars` decides whether each glyph is its own element. It governs whether
+character-level effects are possible at all, and it has real performance cost (§14).
 
-Sentences are found by scanning for a terminating `.`, `!` or `?`, so they can span several
-lines. The prologue's 53 lines become 34 sentences of 3 to 27 words.
+### 12.4 Layout effects — replaced by §11.6
 
-**The element budget is checked between sentences, never inside one.** A sentence renders
-whole or not at all. The first always renders even if it alone exceeds the budget, because a
-blank stage is a worse failure than a busy one.
+The `layout` slot and its numbers `0..17` are gone, along with `newLayout`, which picked from
+them, and `fontScale`, which is now a text setting with a min and max. Most of that table turned
+out to be typography wearing a placement name.
 
-`word` survives as the one deliberate fragment: a single isolated word reads as emphasis
-rather than truncation, because nothing is obviously missing.
+Never coupled to placement, and unchanged: `columns`, `borders`, `background`, and the colour
+wave (§12.5).
 
-Plus `splitChars`, deciding whether each glyph is its own element — which governs whether
-character-level effects are even possible, and has real performance consequences (§14).
+There are now two things called scroll and it is worth being clear which is which: the layer
+treatment (§11.5) moves text through one block, and the older stage effect scrolls the whole
+stage. Only `drift` still uses the stage one, on held phrases.
 
-### 12.4 Layout effects — **superseded by §11.6**
+Two rules carried forward from the old block model:
 
-The `layout` slot, `LAYOUT_SETS`, `LayoutSetName` and the numbers `0..17` are replaced by the
-spawn grid. What each layout actually did, and where that behaviour lives now, is tabulated in
-§11.6; the short version is that most of the table was typography wearing a placement name.
+- **Take is a total across blocks, not per block.** Passing the full count to each was a bug —
+  two blocks asking for four sentences produced eight, crammed into cells a third of the stage
+  wide, with the surplus silently clipped.
+- **Blocks must clip, and say so.** §14 says nothing is lost silently, so the number of clipped
+  blocks is reported to the control window.
 
-These stage effects survive unchanged, because they were never coupled to placement:
-
-| Effect | Behaviour |
-|---|---|
-| `columns` | CSS multi-column, 1–6 |
-| `borders` | `borders` slot, 0–4 |
-| `scroll` | Auto-scroll at variable speed |
-| `background` | Stage background colour change |
-| `colourWave` | Rotates the colour-slot variables so colour moves through the text (§12.5) |
-
-**Deleted with the table:** `newLayout`, which picked from it, and `fontScale`, which is now a
-text setting with a min and max rather than a stage effect (§11.5).
-
-### 12.4.1 Text blocks — **superseded by §11.6**
-
-Blocks themselves stay; where they go changes. Two things stated here are still true and are
-carried forward rather than replaced:
-
-**`count` is a total across blocks, not per block.** Passing the full count to each was a bug:
-two blocks asking for four sentences produced eight, crammed into cells a third of the stage
-wide, where the surplus was silently clipped and simply looked like missing text.
-
-**Blocks must clip.** §14 says nothing should be lost silently, so the count of clipped blocks
-is reported to the control window.
-
-*No longer a guarantee:* that blocks occupy distinct cells and therefore cannot overlap. That
-followed from one-block-per-cell, which a 7x7 grid gives up. `avoidOverlap` (§11.6) searches for
-a non-colliding arrangement instead and is on by default — a preference rather than a
-construction, and one that can be turned off where collisions are the look.
+*No longer a guarantee:* that blocks cannot overlap. That followed from one block per cell,
+which a 7x7 grid gives up. `avoidOverlap` (§11.6) searches for a non-colliding arrangement
+instead, and is on by default.
 
 ### 12.4.2 Size floor
 
@@ -2146,14 +2141,14 @@ launches.
 |---|---|
 | **Background** — white / black / transparent | Transparent composites over other layers; the foreground flips to white with it, since black type over arbitrary video is unreadable |
 | **Palette** — acid / mono / warm / cool / none | Saturated accents clash badly with whatever is underneath. `mono` and `none` keep the whole typographic vocabulary and drop the colour |
-| **Layouts** — centre / edges / all | Other visuals usually put their subject in the middle of frame. The `edges` set keeps the centre clear and works around it |
+| **Placement** — the global mask | Other visuals usually put their subject in the middle of frame. Clearing the centre cells keeps it free and works around it (§11.6) |
 
-Two effects had to learn about these rather than assuming: `colourShift` bases its slots on
-the stage foreground instead of hardcoded black, which would blank the stage on a dark
-background; and the `background` flip does not run unless the mode is white, because an
-explicit choice about output should not be overruled by an effect.
+Two things had to learn about these rather than assuming: colour is based on the stage
+foreground instead of hardcoded black, which would blank the stage on a dark background; and the
+`background` flip does not run unless the mode is white, because an explicit choice about output
+should not be overruled by an effect.
 
-The layout set applies immediately on change rather than at the next bar — if text is
+The mask applies immediately on change rather than at the next bar — if text is
 sitting on your visuals, four beats is too long to wait.
 
 ### 13.4 Spout output
@@ -2296,6 +2291,18 @@ TypeScript earns its place twice: in the engine, where `Lane`, `EffectRef` and p
 are naturally typed, and in preset definitions, where a mistyped lane name or effect
 parameter should be a red squiggle rather than a visual that silently never happens.
 
+#### Build guards
+
+`npm run typecheck` runs three things: the compiler, then two scripts that catch mistakes types
+cannot see.
+
+- **`check-ids`** — every element id the renderer looks up exists in the HTML. A renamed id
+  otherwise fails silently at runtime.
+- **`check-animations`** — every CSS keyframe is matched by the code that drives it, and the
+  other way round. Added after a keyframe rename left the wrapping motion unmatched by the
+  pattern that re-times animations to tempo: it kept animating, at the wrong speed, and
+  restarted on every re-typeset. Nothing in the type system could have caught that.
+
 ```
 SymphonyInOlib/
 ├─ DESIGN.md
@@ -2424,7 +2431,7 @@ Staged so each step is usable on its own:
   reports every correction by name and keeps as much of a preset as can be understood.
   Per-preset text lists and delete protection landed with it (§11.7).
 
-- **2e — the gaps.** Three things §11.5 described that the first four stages did not build:
+- **2e — the gaps — done.** Three things §11.5 described that the first four stages did not build:
   the `sentence` slice (deferred in 2a because sentences had no wrapping element, and the
   layout CSS that made adding one risky was deleted in 2b), the `always` trigger reaching the
   editor, and **motion**, which was dropped when the proposal was folded into this document
@@ -2437,10 +2444,37 @@ inline-block characters; a dingbat font that does not exist on Windows), a stale
 that reverted a layer's triggers whenever its treatment changed, and flicker running at a
 fixed wall-clock rate despite §11.5 having decided otherwise.
 
-### Increment 3 — detection hardening
+#### After 2e
+
+Motion is where the time went, and none of it was in the design — it was in making the motion
+*hold together* once it existed.
+
+- **Colour became a layer.** `colourShift` was a stage effect writing colour whenever it liked,
+  which meant a word could change colour while it sat on screen. Colour is now decided at
+  typeset and only changed by a layer that owns the channel (§11.5). The palette binds to the
+  preset rather than the phrase, so switching preset changes the colours and holding text
+  does not.
+- **The conveyor got a real loop.** A duplicate of the content one length behind, with channel
+  writes mirrored to it, its scroll position carried across a re-typeset, and enough copies to
+  fill the box rather than a fixed number. Four separate causes of the same visible stutter,
+  found one at a time.
+- **Travel wraps too**, in all four directions, by a copy of the block one canvas behind. Its
+  wrap is separate from the conveyor's loop, because a preset can want one and not the other,
+  and an element can now have several copies rather than one.
+- **The global mask is absolute.** A preset works in the overlap and nowhere else; if the
+  overlap is empty the preset is refused, and the message names the global mask rather than
+  saying something cryptic about cells.
+
+### Increment 3 — detection hardening — **started**
 
 Confidence scoring, octave correction, faster re-lock on track change, downbeat and phrase
 heuristics, behaviour through breakdowns and silence.
+
+**Done so far:** the kick decides whether a tempo change is believed (§9.2.4). Strength against
+its own recent typical, agreement between the kicks and the tempo being proposed, and a bar that
+rises with the size of the jump because DJs beatmatch. Two observed failures drove it — a
+breakdown re-locking the grid to a shaker, and a minute-long intro of hats and snares jumping
+130 to 170 on a track that was 130.
 
 ### Increment 4 — palettes
 
@@ -2541,6 +2575,14 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Requiring the booth output to be the Windows default | **Dropped** | Every notification would go through the PA. Per-application capture instead (§8.2) |
 | A native addon for audio capture | **Not needed** | `application-loopback` ships helper executables, so no toolchain and no ABI matching (§8.2) |
 | TypeScript 7 | **Dropped** | Never a decision — npm resolved it on day one. Same language, ~1.2s faster on 5k lines, and peers across the ecosystem still target `^5` |
+| `colourShift` as a stage effect | **Dropped** | Colour could change while text sat on screen. Colour is a layer like everything else (§11.5) |
+| Motion as a document setting | **Dropped** | Two settings that behaved like layers but were edited somewhere else. `scroll` and `travel` are treatments (§11.5) |
+| A preset overriding the global mask | **Dropped** | The global mask is the frame you have decided to use. A preset works in the overlap or is refused (§11.6) |
+| Falling back to the global mask when a preset is blocked | **Dropped** | Silently doing something other than what the preset says. It is refused, and the message says why (§11.6) |
+| An absolute threshold for kick strength | **Dropped** | A quiet master and a loud one differ by more than a breakdown and a drop. Relative to its own recent typical (§9.2.4) |
+| Believing any confident tempo estimate | **Dropped** | Hats through a breakdown genuinely are periodic. The kicks have to agree with the tempo, not merely be loud (§9.2.4) |
+| A one-minute kick history | **Dropped** | A section longer than the window becomes the window's idea of normal. Three minutes (§9.2.4) |
+| Canvas bounds reset on every launch | **Dropped** | OBS captures the window by its rectangle; losing it means re-cropping every time (§13.1) |
 
 ---
 
@@ -2556,7 +2598,9 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Q9 | Are the snare (2.0) and hat (2.2) sensitivity defaults as eager as kick was? If they also want ~4, that is a systematic scaling error, not three numbers | §9.2.1 |
 | Q10 | Tempo reads a few percent low and the cause is not yet found. Deferred as good enough for visuals — revisit with a correlation-curve plot before changing the algorithm again | §9.2.3 |
 | Q11 | Block count is currently random 1–2 per re-typeset. Should it correlate with something — energy, for instance — rather than being arbitrary? | §11.6 |
-| Q12 | Are `longSentences` (up to 27 words) too dense at the new size floor, especially two blocks at once? | §12.4.2 |
+| Q12 | Are long sentences (up to 27 words) too dense at the new size floor, especially two blocks at once? | §12.4.2 |
+| Q14 | A genuine hard cut of 30%+ now takes ~12s to follow. Right trade, or should the top of the scale be softened? | §9.2.4 |
+| Q15 | Should the control window's position be remembered too? Same few lines, but it hides to the tray rather than closing | §7.3 |
 | Q13 | Pulse amounts are guesses (0.012–0.022). Worth tuning against a projector rather than a monitor — apparent scale changes with viewing distance | §12.2.1 |
 | ~~Q14~~ | ~~Fork on editing a built-in?~~ **Answered: no fork.** Built-ins are editable directly; "Restore defaults" re-seeds them | §11.4 |
 | ~~Q15~~ | ~~Do built-ins stay compiled?~~ **Answered: no.** Everything becomes data, for consistency. Type safety comes from `as const` definitions plus validation on load | §11.4 |
