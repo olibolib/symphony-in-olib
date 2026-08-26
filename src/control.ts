@@ -1,5 +1,6 @@
 import './types';
 import type { PresetDoc } from './ipc/protocol';
+import { isTyping } from './hud/keys';
 import { Hud } from './hud/Hud';
 import { TextBank } from './text/TextBank';
 import prologueRaw from '../presets/text/prologue.txt?raw';
@@ -332,6 +333,8 @@ loadOutputBounds();
 // Only while this window has focus. Global shortcuts would steal keys from the DJ software,
 // which is the one thing the tool must never do.
 window.addEventListener('keydown', (event) => {
+  if (isTyping(event.target)) return;
+
   if (event.code === 'Space') {
     event.preventDefault();
     window.olib.sendCommand({ type: 'tapTempo' });
