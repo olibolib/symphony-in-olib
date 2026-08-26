@@ -32,7 +32,7 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 import { Stage } from './render/Stage';
 import { EngineBridge } from './ipc/EngineBridge';
-import { AudioInput, SYSTEM_SOURCE_ID } from './audio/AudioInput';
+import { Sources } from './audio/Sources';
 import { Analyser } from './audio/Analyser';
 import { AppCapture } from './audio/AppCapture';
 import { APP_PREFIX } from './ipc/protocol';
@@ -72,7 +72,6 @@ try {
 } catch (error) {
   fatal(error);
 }
-const input = new AudioInput();
 const tracker = new BeatTracker();
 const kicks = new KickHistory();
 const clock = new Clock();
@@ -91,6 +90,20 @@ const channels = new Channels();
  * precisely what it was doing.
  */
 channels.setMirror((el) => typesetter.twinsOf(el));
+/**
+ * Capture, and the sensitivities it is read with (§8). Reports through the bridge, which is
+ * the only part of it the engine has an opinion about.
+ */
+const sources = new Sources({
+  status: (message, isError) => hud.setStatus(message, isError),
+  devices: (options, activeId) => hud.setDevices(options, activeId),
+  apps: (list) => hud.setApps(list),
+  sensitivity: (band, value) => hud.setSensitivity(band, value),
+});
+
+window.olib.apps.onPcm((chunk) => sources.acceptPcm(chunk));
+void sources.start();
+
 const store = new PresetStore();
 const bank = new PresetBank(store.resolve());
 
@@ -108,97 +121,6 @@ let textAge = 0;
  * zone threw before anything was on screen.
  */
 let frameDelta = 0;
-
-let analyser: Analyser | null = null;
-const appCapture = new AppCapture();
-
-/**
- * What is actually being captured, in the dropdown's own vocabulary.
- *
- * A device id, or `app:<pid>|<title>`. Kept here because `refreshDevices` republishes the
- * source list periodically and would otherwise report the last *device* as active even while
- * an application is being captured — which made the selection appear to revert.
- */
-let activeSourceId: string | null = null;
-
-// PCM from per-application capture. Straight through to the worklet; nothing inspects it.
-window.olib.apps.onPcm((chunk) => appCapture.accept(chunk));
-
-/**
- * Capture one application rather than a device.
- *
- * Works whatever output device the application is using, and cannot pick up anything else —
- * no notification pings in the club PA. The catch is ASIO: an application driving its
- * interface directly bypasses the Windows audio engine, and there is nothing to capture. We
- * detect that by seeing no frames arrive at all, which is a different thing from silence.
- */
-async function startAppCapture(processId: string, title: string): Promise<void> {
-  try {
-    hud.setStatus(`Opening ${title}…`);
-    analyser?.close();
-    analyser = null;
-    input.close();
-
-    const node = await appCapture.start(processId, title);
-    const next = new Analyser(node);
-    await next.resume();
-    for (const band of BANDS) next.setSensitivity(band.name, sensitivityFor(band.name));
-    analyser = next;
-
-    activeSourceId = `${APP_PREFIX}${processId}|${title}`;
-    captureLabel = title;
-    hud.setStatus(`Capturing ${title}`);
-    await refreshDevices();
-
-    // If nothing at all has arrived after a few seconds, say why rather than showing a dead
-    // meter and letting it look like the app is broken.
-    window.setTimeout(() => {
-      if (appCapture.framesReceived === 0) {
-        hud.setStatus(
-          `No audio from ${title} — it may be using ASIO, which bypasses Windows audio capture`,
-          true,
-        );
-      }
-    }, 4000);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    hud.setStatus(`Could not capture ${title} — ${message}`, true);
-  }
-}
-let captureLabel = '';
-let lastStatusAt = 0;
-
-/**
- * Onset sensitivities, tuned from the HUD and remembered. These want to be set against
- * real records rather than guessed at, so they are a live control rather than a constant.
- */
-const SENS_KEY = 'olib.sensitivity';
-
-function loadSensitivities(): Record<string, number> {
-  try {
-    const raw = localStorage.getItem(SENS_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, number>) : {};
-  } catch {
-    return {};
-  }
-}
-
-const sensitivities = loadSensitivities();
-
-function sensitivityFor(band: BandName): number {
-  const stored = sensitivities[band];
-  if (typeof stored === 'number') return stored;
-  return BANDS.find((b) => b.name === band)?.sensitivity ?? 2;
-}
-
-for (const band of BANDS) hud.setSensitivity(band.name, sensitivityFor(band.name));
-
-function setSensitivity(band: BandName, value: number): void {
-  sensitivities[band] = value;
-  localStorage.setItem(SENS_KEY, JSON.stringify(sensitivities));
-  analyser?.setSensitivity(band, value);
-  hud.setSensitivity(band, value);
-}
 
 /**
  * Stage background. Transparent is for compositing over other layers in OBS (§13.3) — the
@@ -590,8 +512,8 @@ function effectContext(): EffectContext {
     stage,
     typesetter,
     channels,
-    energy: analyser?.energy ?? 0,
-    bass: analyser?.bass ?? 0,
+    energy: sources.analyser?.energy ?? 0,
+    bass: sources.analyser?.bass ?? 0,
     palette: PALETTES[paletteName],
     beatPhase: clock.phase(performance.now()),
     textAge,
@@ -615,62 +537,6 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // --- audio ---------------------------------------------------------------------------
 
-async function refreshDevices(): Promise<void> {
-  hud.setApps(await window.olib.apps.list());
-  const options = await input.list();
-  hud.setDevices(
-    options.map((o) => ({ id: o.id, label: o.label })),
-    // The tracked source, not `input.activeId` — that only knows about devices, so it would
-    // report the previous device as active while an application is being captured.
-    activeSourceId ?? AudioInput.remembered() ?? SYSTEM_SOURCE_ID,
-  );
-}
-
-async function startCapture(id: string): Promise<void> {
-  try {
-    hud.setStatus('Opening…');
-    analyser?.close();
-    analyser = null;
-
-    appCapture.stop();
-    const stream = await input.open(id);
-    const next = new Analyser(stream);
-    await next.resume();
-    for (const band of BANDS) next.setSensitivity(band.name, sensitivityFor(band.name));
-    analyser = next;
-
-    activeSourceId = id;
-    captureLabel = `${input.activeTrackLabel ?? 'unknown source'} · ${next.sampleRate / 1000} kHz`;
-    hud.setStatus(`Capturing · ${captureLabel}`);
-    await refreshDevices();
-  } catch (error) {
-    // DESIGN.md §14: never fail silently, never take the app down.
-    const message = error instanceof Error ? error.message : String(error);
-    hud.setStatus(`Could not open source — ${message}`, true);
-    }
-}
-
-
-input.onDevicesChanged = () => void refreshDevices();
-
-// Come up already capturing: last used source, or system output on a first run.
-//
-// Unless the last attempt killed us. A source that crashes the renderer would otherwise be
-// retried on every launch, and since the reload happens automatically that is an infinite
-// loop with a black window. If we find the crash flag set, we stop and hand it to the user.
-void (async () => {
-  await refreshDevices();
-
-  const crashed = AudioInput.crashedOn();
-  if (crashed !== null) {
-    AudioInput.clearCrashFlag();
-    hud.setStatus(`"${crashed}" failed last time — pick a source to try again`, true);
-      return;
-  }
-
-  await startCapture(AudioInput.remembered() ?? SYSTEM_SOURCE_ID);
-})();
-
 // --- commands from the control window -------------------------------------------------
 
 /**
@@ -688,15 +554,15 @@ hud.onCommand = (command) => {
       break;
 
     case 'setDevice':
-      void startCapture(command.id);
+      void sources.openDevice(command.id);
       break;
 
     case 'setAppSource':
-      void startAppCapture(command.processId, command.title);
+      void sources.openApp(command.processId, command.title);
       break;
 
     case 'setSensitivity':
-      setSensitivity(command.band, command.value);
+      sources.setSensitivity(command.band, command.value);
       break;
 
     case 'setPalette':
@@ -807,6 +673,9 @@ syncStageSize();
 
 // --- frame loop ----------------------------------------------------------------------
 
+/** Throttles the capture readout, which is rewritten with a peak level as it changes. */
+let lastStatusAt = 0;
+
 let lastFrameAt = performance.now();
 
 
@@ -830,6 +699,7 @@ function frame(now: number): void {
 
   const ctx = effectContext();
 
+  const analyser = sources.analyser;
   if (analyser) {
     const bands = analyser.read(now);
     hud.setBands(bands);
@@ -873,7 +743,7 @@ function frame(now: number): void {
       lastStatusAt = now;
       const peak = analyser.peak;
       const db = peak > 0 ? `${(20 * Math.log10(peak)).toFixed(1)} dB` : 'silent';
-      hud.setStatus(`Capturing · ${captureLabel} · peak ${db}`);
+      hud.setStatus(`Capturing · ${sources.captureLabel} · peak ${db}`);
     }
   }
 
