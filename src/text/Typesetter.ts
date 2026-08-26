@@ -177,6 +177,9 @@ function setMotion(
   container.style.setProperty(`--${kind}-speed`, String(motion.speed));
 }
 
+/** Animations that run for ever, and therefore need their position carried across a typeset. */
+const ENDLESS = /^olib-(loop|block)-/;
+
 /** A shape that fills most of the frame. Used when a preset declares none. */
 const DEFAULT_SHAPES: readonly BlockShape[] = [
   { cols: { min: 5, max: 5 }, rows: { min: 3, max: 3 } },
@@ -356,6 +359,9 @@ export class Typesetter {
     setMotion(container, 'content', options.contentMotion);
     setMotion(container, 'block', options.blockMotion);
 
+    // Where the belt had got to, before the DOM carrying it is destroyed.
+    const phases = this.capturePhases();
+
     container.innerHTML = parts.join('');
 
     this.refresh();
@@ -368,6 +374,9 @@ export class Typesetter {
     // costs no extra elements at all.
     const conveyor = options.contentMotion;
     if (conveyor && conveyor.speed > 0) this.measureConveyor(conveyor.continuous);
+
+    // After the travel is known, since that is what sets the duration.
+    this.applyPhases(phases);
 
     this.measureClipping();
   }
@@ -459,6 +468,52 @@ export class Typesetter {
 
       block.style.setProperty('--travel', `${loop.toFixed(2)}px`);
       block.style.setProperty('--travelr', (loop / this.stage.height).toFixed(5));
+    }
+  }
+
+  /**
+   * How far through their cycles the continuous animations are.
+   *
+   * A re-typeset replaces the whole stage, so the elements carrying the animations are
+   * destroyed and their replacements start from zero — which snaps a conveyor back to the top
+   * every phrase or two. Measured at 202px on a half-height block: not a subtle stutter, a
+   * visible reset, and the one the frame timings could never explain because nothing was
+   * dropping frames.
+   *
+   * Recorded as a **fraction** rather than a time, because the new text is a different height
+   * and therefore a different cycle length. Two thirds of the way through stays two thirds of
+   * the way through.
+   *
+   * Only the endless ones. A single pass should start again for new text — that is the effect.
+   */
+  private capturePhases(): Map<string, number> {
+    const phases = new Map<string, number>();
+
+    for (const animation of this.stage.container.getAnimations({ subtree: true })) {
+      const name = (animation as CSSAnimation).animationName;
+      if (typeof name !== 'string' || !ENDLESS.test(name)) continue;
+      if (phases.has(name)) continue;
+
+      const duration = Number(animation.effect?.getComputedTiming().duration ?? 0);
+      const time = Number(animation.currentTime ?? 0);
+      if (duration > 0) phases.set(name, (time % duration) / duration);
+    }
+    return phases;
+  }
+
+  /** Put the new animations where the old ones had got to. */
+  private applyPhases(phases: Map<string, number>): void {
+    if (phases.size === 0) return;
+
+    for (const animation of this.stage.container.getAnimations({ subtree: true })) {
+      const name = (animation as CSSAnimation).animationName;
+      if (typeof name !== 'string') continue;
+
+      const phase = phases.get(name);
+      if (phase === undefined) continue;
+
+      const duration = Number(animation.effect?.getComputedTiming().duration ?? 0);
+      if (duration > 0) animation.currentTime = phase * duration;
     }
   }
 
