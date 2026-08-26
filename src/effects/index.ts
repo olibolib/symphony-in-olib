@@ -118,33 +118,6 @@ export const stopPulse = (): EffectRef => {
 // --- colour ----------------------------------------------------------------------------
 
 /**
- * Reseat the colour slots. DESIGN.md §12.5.
- *
- * Writes eight CSS variables, not inline styles on thousands of elements — the elements
- * were assigned a slot at typeset time and CSS does the rest. Most slots stay black; a
- * couple take an accent. Narrowing to a few colours at a time is what keeps Acid coherent
- * rather than confetti, and it is worth preserving exactly.
- */
-export const colourShift = (params: { accents: number } = { accents: 2 }): EffectRef => {
-  return (ctx: EffectContext) => {
-    const accents = pickSome(ctx.palette, params.accents);
-
-    // Base slots follow the stage foreground rather than a hardcoded black. On a transparent
-    // or black background, black text is invisible — and the colour slots override
-    // `--stage-fg`, so a literal here would silently blank the stage.
-    const slots = Array.from({ length: 8 }, () => 'var(--stage-fg)');
-    for (const accent of accents) {
-      slots[randomInt(8)] = accent;
-    }
-
-    // Chosen now, applied at the next typeset. Painting it here would recolour every word
-    // already on screen — including the ones no layer has touched, which then change out of
-    // time with the music and read as a fault rather than as an effect.
-    ctx.stage.slotColours = slots;
-  };
-};
-
-/**
  * Flip the stage background. Rare and heavy — a whole-screen event.
  *
  * No-ops in transparent mode. Painting a background there would silently undo the setting,

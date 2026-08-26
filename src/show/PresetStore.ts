@@ -1,6 +1,6 @@
 import type { EffectRef } from '../effects/types';
 import type { PresetDoc } from '../ipc/protocol';
-import { colourShift, retext } from '../effects';
+import { retext } from '../effects';
 import { FULL } from './mask';
 import type { Bindings } from './Conductor';
 import { parsePreset } from './presetIo';
@@ -38,12 +38,6 @@ interface StageParts {
  */
 const NEW_PRESET_PARTS: StageParts = {
   bindings: {
-    // The palette on `enter`, not on `phrase`. Bound to a phrase it reseats the colours of
-    // text still on screen, and a preset with no layers at all — which a new one has almost
-    // none of — then appears to change colour entirely on its own, out of time with the
-    // music. On a looping conveyor it is worse still: the belt rolls straight through the
-    // re-typeset, so the colour change is the only visible event and nothing motivates it.
-    enter: [colourShift({ accents: 2 })],
     phrase: [retext({ hold: [1, 2] })],
   },
 };
@@ -72,6 +66,15 @@ const NEW_PRESET_DOC: Omit<PresetDoc, 'name'> = {
       target: { slice: 'word', proportion: 0.05 },
       triggers: { kick: true },
       decayBars: 0.5,
+    },
+    // Colour, as a layer. A new preset should show that colour works the way everything else
+    // does — chosen once when the preset goes live, held until it ends — rather than arriving
+    // from somewhere the editor cannot see.
+    {
+      treatment: 'accent',
+      target: { slice: 'word', proportion: 0.2 },
+      triggers: { typeset: true },
+      decayBars: 0,
     },
   ],
 };

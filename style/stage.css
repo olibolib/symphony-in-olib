@@ -31,24 +31,14 @@ c {
   display: inline;
 }
 
-/* --- colour slots (§12.5) ---------------------------------------------------------
-   Each element gets a slot at typeset time. Animating colour then means changing eight
-   variables, not writing inline styles to thousands of elements — which is the layout
-   thrash the whole design is built to avoid.
+/* --- palette (§12.5) ------------------------------------------------------------------
+   Eight slots holding the VJ's chosen palette, written to the stage when they choose one.
 
-   `:not([data-fg])` is load-bearing. A slot rule is `w[data-slot]` — a type selector plus an
-   attribute, so it outranks the bare `[data-fg]` a channel writes and silently wins. That
-   made `accent` do nothing on a word, and made a word-level `invert` render black text on a
-   black block: an invisible word inside a visible rectangle. The exclusion says what is
-   actually meant — the slot is the *base* colour, and a layer taking the fg channel replaces
-   it. */
+   Acid gave every word a slot and coloured it whether or not anything had targeted it, which
+   meant words changed colour with nothing driving them. Colour now reaches a word only
+   through an `accent` layer — target, trigger, decay, like everything else — so these are
+   the values a layer may pick from rather than a colouring applied to all text. */
 
-/* Every slot starts as the stage foreground, not as black.
-   `colourShift` resets them to exactly this before scattering accents, so the two agree —
-   but it only runs on a phrase, and only two of the four built-ins bind it. Hardcoding black
-   here meant that on a black or transparent background the text was black on black until
-   some preset happened to reseat the slots, which needs a locked clock and up to 32 bars.
-   The stage looked empty and nothing was wrong with it. */
 #stage {
   --c0: var(--stage-fg);
   --c1: var(--stage-fg);
@@ -59,15 +49,6 @@ c {
   --c6: var(--stage-fg);
   --c7: var(--stage-fg);
 }
-
-w[data-slot='0']:not([data-fg]) { color: var(--c0); }
-w[data-slot='1']:not([data-fg]) { color: var(--c1); }
-w[data-slot='2']:not([data-fg]) { color: var(--c2); }
-w[data-slot='3']:not([data-fg]) { color: var(--c3); }
-w[data-slot='4']:not([data-fg]) { color: var(--c4); }
-w[data-slot='5']:not([data-fg]) { color: var(--c5); }
-w[data-slot='6']:not([data-fg]) { color: var(--c6); }
-w[data-slot='7']:not([data-fg]) { color: var(--c7); }
 
 /* --- channels (§11.5) -----------------------------------------------------------------
    One attribute per CSS property being contended for, rather than one shared `glitch`.
@@ -91,11 +72,16 @@ w[data-slot='7']:not([data-fg]) { color: var(--c7); }
 [data-fg='3'] { color: #ffffff; }
 [data-fg='4'] { color: #ffffff; }
 
-/* Accent slots: fg values chosen to read on their own, with no background behind them.
-   Deliberately not white — an accent that is invisible on the default white stage is a
-   layer that silently does nothing, which is the §14 failure mode. */
-[data-fg='5'] { color: #ff3300; }
-[data-fg='6'] { color: #00a05a; }
+/* `accent` writes a palette slot. A separate namespace from the numbered pairs above, which
+   are chosen for contrast against a background rather than to be read on their own. */
+[data-fg='p0'] { color: var(--c0); }
+[data-fg='p1'] { color: var(--c1); }
+[data-fg='p2'] { color: var(--c2); }
+[data-fg='p3'] { color: var(--c3); }
+[data-fg='p4'] { color: var(--c4); }
+[data-fg='p5'] { color: var(--c5); }
+[data-fg='p6'] { color: var(--c6); }
+[data-fg='p7'] { color: var(--c7); }
 
 /* Wingdings and Webdings remap the Latin alphabet to symbols, which is the whole effect —
    the word becomes glyphs while keeping its shape and length. `Dingbats` was named here and

@@ -250,12 +250,17 @@ function readMask(): Mask {
 }
 
 hud.setPalette(paletteName);
+stage.setPalette(PALETTES[paletteName]);
 hud.setMask(globalMask);
 
 function setPalette(name: PaletteName): void {
   paletteName = name;
   localStorage.setItem(PALETTE_KEY, name);
   hud.setPalette(name);
+
+  // Applied at once. Choosing a palette is a deliberate act, like switching the background —
+  // unlike the old periodic shifting, which changed colours nobody had asked to change.
+  stage.setPalette(PALETTES[name]);
 }
 
 /**
@@ -400,6 +405,11 @@ function typesetNext(): void {
   // one. Cheap: a handful of animations, a few times a minute.
   stage.syncMotion();
 
+  // The text's settled look, applied to the elements that were just built. Before any beat
+  // has landed, so a static layer is underneath whatever the music adds rather than fighting
+  // it for the same channel.
+  conductor.fire('typeset', effectContext());
+
   hud.setClipped(typesetter.clipped);
 
   // No allowed cell means the preset cannot be placed at all. §14: say so, rather than
@@ -432,10 +442,6 @@ function applyPreset(): void {
   // anyway, but a preset change that does not re-typeset would otherwise leave them lit
   // with nothing left to decay them.
   channels.clearAll();
-
-  // Once, before the first typeset, so whatever it decides is what the first text is built
-  // with rather than arriving a phrase later.
-  conductor.fire('enter', effectContext());
 
   hud.setPresetState(preset.name, bank.pending);
   // Base size is rolled by the typesetter now, from the preset's range (§11.5).

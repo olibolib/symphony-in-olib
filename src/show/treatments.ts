@@ -61,12 +61,14 @@ export interface Written {
  * same number gives a coherent block — a dark ground with light type, or yellow with blue.
  * They are still separate channels, so a later `accent` can take `fg` alone.
  *
- * Accent uses `fg` slots outside that range, because the paired values assume a background
- * is there: white type is correct over black and invisible on the default white stage. An
- * accent that cannot be seen is a layer that silently does nothing (§14).
+ * Accent writes `p0`..`p7` instead — the VJ's palette. Kept in a separate namespace because
+ * the paired values assume a background is behind them: white type is correct over black and
+ * invisible on the default white stage.
  */
 const BG_FG_PAIRS = 4;
-const ACCENT_SLOTS = [2, 5, 6] as const;
+
+/** How many palette slots `accent` may choose from. Matches `--c0`..`--c7`. */
+const PALETTE_SLOTS = 8;
 const DECO_UNDERLINE = 1;
 const DECO_STRIKE = 2;
 
@@ -96,8 +98,10 @@ export function write(
     }
 
     case 'accent': {
-      const slot = ACCENT_SLOTS[Math.floor(Math.random() * ACCENT_SLOTS.length)] ?? 2;
-      return [{ channel: 'fg', value: String(slot) }];
+      // A palette slot, written as `p<n>` so it cannot collide with the numbered pairs
+      // `invert` uses — those are chosen for contrast against a background, these are the
+      // VJ's colours. Rolled per application, the way `invert` rolls its pair.
+      return [{ channel: 'fg', value: `p${Math.floor(Math.random() * PALETTE_SLOTS)}` }];
     }
 
     case 'dingbat':

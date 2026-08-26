@@ -1,4 +1,4 @@
-import { colourShift, pulse, retext, scroll, stopScroll } from '../effects';
+import { pulse, retext, scroll, stopScroll } from '../effects';
 import type { EffectRef } from '../effects/types';
 import type { Align, BlockMotion, ContentMotion, Flow, TextMode } from '../text/Typesetter';
 import type { Bindings } from './Conductor';
@@ -29,15 +29,16 @@ import { KEEP_CENTRE_CLEAR, type BlockShape, type Mask } from './mask';
  *   rolled within bounds, because per-element reflow several times a bar reads as broken
  *   and continuous following was dropped (§11.5).
  *
- * ## Colour belongs to the preset
+ * ## Colour is a layer like anything else
  *
- * `colourShift` is bound to `enter`, not to `phrase`. On `phrase` it reseats the palette
- * under text that is still on screen — and on a conveyor, where the belt rolls straight
- * through a re-typeset, the text swap is invisible and the colour change is the only thing
- * you see. Words nothing is targeting appear to change on their own.
+ * There is no colouring effect any more. Acid gave every word a colour slot and shifted them
+ * periodically, so words changed colour with nothing driving them — and on a conveyor, where
+ * the belt rolls straight through a re-typeset, that was the only visible event and nothing
+ * motivated it.
  *
- * Once per preset instead: the look holds for as long as the preset does, and colour changes
- * when everything else does.
+ * The scattered colour is rebuilt here out of the ordinary parts: an `accent` layer on
+ * `enter` with no decay. Set when the preset goes live, held for as long as it runs, and
+ * reachable with a target and a trigger like every other look in the app.
  *
  * ## Placement is not a port
  *
@@ -221,6 +222,8 @@ export const PRESETS: readonly VisualPreset[] = [
     flow: 'stack',
     avoidOverlap: true,
     layers: [
+      { treatment: 'accent', target: { slice: 'word', count: 2 }, triggers: { typeset: true }, decayBars: 0 },
+
       // Was `invertBlock({ count: 1 })` — one character, black block behind it.
       {
         treatment: 'invert',
@@ -266,6 +269,12 @@ export const PRESETS: readonly VisualPreset[] = [
     flow: 'stack',
     avoidOverlap: true,
     layers: [
+      // Acid's scattered colour, rebuilt out of the same parts as everything else: a quarter
+      // of the words take a palette colour when the preset goes live, and never fade. What
+      // used to happen to every word whether or not anything had asked for it is now a layer
+      // with a target and a trigger, which is the whole argument of §11.5.
+      { treatment: 'accent', target: { slice: 'word', proportion: 0.25 }, triggers: { typeset: true }, decayBars: 0 },
+
       { treatment: 'invert', target: { slice: 'word', count: 1 }, triggers: { hat: true }, decayBars: FADE.fast },
       { treatment: 'invert', target: { slice: 'word', proportion: 0.05 }, triggers: { kick: true }, decayBars: FADE.fast },
       { treatment: 'invert', target: { slice: 'char', count: 2 }, triggers: { kick: true }, decayBars: FADE.slow },
@@ -280,7 +289,6 @@ export const PRESETS: readonly VisualPreset[] = [
       { treatment: 'underline', target: { slice: 'char', count: 4 }, triggers: { held: true }, decayBars: FADE.fast },
     ],
     bindings: {
-      enter: [colourShift({ accents: 2 })],
       phrase: [retext({ hold: [1, 2] })],
     },
     ambient: [pulse({ amount: 0.012 })],
@@ -314,6 +322,7 @@ export const PRESETS: readonly VisualPreset[] = [
     flow: 'wrapped',
     avoidOverlap: true,
     layers: [
+      { treatment: 'accent', target: { slice: 'word', proportion: 0.4 }, triggers: { typeset: true }, decayBars: 0 },
       { treatment: 'invert', target: { slice: 'word', count: 1 }, triggers: { hat: true }, decayBars: FADE.instant },
       { treatment: 'underline', target: { slice: 'char', count: 1 }, triggers: { hat: true }, decayBars: FADE.instant },
       { treatment: 'invert', target: { slice: 'word', proportion: 0.12 }, triggers: { kick: true }, decayBars: FADE.instant },
@@ -334,7 +343,6 @@ export const PRESETS: readonly VisualPreset[] = [
       { treatment: 'invert', target: { slice: 'char', count: 8 }, triggers: { held: true }, decayBars: FADE.medium },
     ],
     bindings: {
-      enter: [colourShift({ accents: 3 })],
       phrase: [retext({ hold: [1, 2] })],
     },
     // Hard on the beat, falling away fast. Reads as the kick.
@@ -366,6 +374,7 @@ export const PRESETS: readonly VisualPreset[] = [
     // Whole words, not characters — `splitChars` is false, so `char` targets would find
     // nothing here.
     layers: [
+      { treatment: 'accent', target: { slice: 'word', proportion: 0.15 }, triggers: { typeset: true }, decayBars: 0 },
       { treatment: 'invert', target: { slice: 'word', proportion: 0.03 }, triggers: { kick: true }, decayBars: FADE.fast },
       { treatment: 'underline', target: { slice: 'word', count: 2 }, triggers: { snare: true }, decayBars: FADE.fast },
       { treatment: 'invert', target: { slice: 'word', count: 1 }, triggers: { bar: true }, decayBars: FADE.fast },

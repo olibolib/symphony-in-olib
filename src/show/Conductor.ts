@@ -26,15 +26,18 @@ export type Lane = 'kick' | 'snare' | 'hat' | 'beat' | 'bar' | 'phrase';
  * it or the second phrase reads as a stall. `always` fires every frame, for anything that
  * should be continuously present rather than struck.
  *
- * `enter` fires once, when a preset goes live. It is where anything that should hold for the
- * preset's whole run belongs — the palette, most obviously. A setting bound to `phrase`
- * changes under text that is still on screen, and on a conveyor that is text the audience is
- * still reading.
+ * `typeset` fires when new text has been laid out, before anything else has touched it. It is
+ * where a text's *settled* look belongs — colour most obviously — and it is the only trigger
+ * that can express "applied once, then left alone", by pairing it with a decay of zero.
+ *
+ * It has to be a trigger rather than something a preset does on activation, because the text
+ * is rebuilt every phrase or two and a look established once would be destroyed with the
+ * elements carrying it.
  *
  * None of the three is a real lane: no audio event produces them and they are dispatched by
  * the engine alongside the lanes they shadow.
  */
-export type LayerTrigger = Lane | 'held' | 'always' | 'enter';
+export type LayerTrigger = Lane | 'held' | 'always' | 'typeset';
 
 export type Bindings = Partial<Record<LayerTrigger, readonly EffectRef[]>>;
 

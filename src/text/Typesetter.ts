@@ -185,9 +185,6 @@ const DEFAULT_SHAPES: readonly BlockShape[] = [
   { cols: { min: 5, max: 5 }, rows: { min: 3, max: 3 } },
 ];
 
-/** Number of colour slots. Must match the `--c0`..`--c7` variables in CSS (§12.5). */
-const COLOUR_SLOTS = 8;
-
 const DEFAULT_MAX_ELEMENTS = 6000;
 
 export class Typesetter {
@@ -315,19 +312,10 @@ export class Typesetter {
       // holding three screens of text would scroll three times as far for the same setting.
       const boxH = (box.height / 100) * this.stage.height;
 
-      // The palette is baked into the block, not left on the stage for everything to inherit.
-      // Eight declarations per block rather than one per element — still the mechanism §12.5
-      // exists for — but scoped so that changing the palette affects the *next* text rather
-      // than recolouring the one being read.
-      const palette = this.stage.slotColours
-        .map((colour, slot) => `--c${slot}:${colour};`)
-        .join('');
-
       const style =
         `left:${box.left.toFixed(3)}%;top:${box.top.toFixed(3)}%;` +
         `width:${box.width.toFixed(3)}%;height:${box.height.toFixed(3)}%;` +
-        `--box-h:${boxH.toFixed(2)}px;--box-hr:${(box.height / 100).toFixed(5)};` +
-        palette;
+        `--box-h:${boxH.toFixed(2)}px;--box-hr:${(box.height / 100).toFixed(5)};`;
 
       const built = this.build(lines, options, budgetPerBlock);
 
@@ -731,8 +719,14 @@ export class Typesetter {
 
         for (const word of line) {
           // `data-len` lets CSS treat long and short words differently, as Acid does.
+          //
+          // No colour slot any more. Acid gave every word one and coloured it whether anything
+          // had targeted it or not; colour now reaches a word only through an `accent` layer,
+          // so an untouched word is the stage foreground and nothing else. The scattered
+          // colour that slot gave for free is still available — as a layer, on `enter`, with
+          // no decay — and having to ask for it is the point.
           const long = word.length >= 4 ? '1' : '0';
-          parts.push(`<w data-len="${long}" data-slot="${slot % COLOUR_SLOTS}">`);
+          parts.push(`<w data-len="${long}">`);
 
           if (options.splitChars) {
             for (const char of word) {

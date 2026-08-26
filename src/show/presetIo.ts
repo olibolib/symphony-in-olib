@@ -35,7 +35,9 @@ const MODES = new Set<string>([
 const ALIGNS = new Set<string>(['left', 'centre', 'right', 'justify']);
 const FLOWS = new Set<string>(['stack', 'run-on', 'grid', 'wrapped', 'columns']);
 const ENERGIES = new Set<string>(['sparse', 'mid', 'peak', 'any']);
-const TRIGGERS = new Set<string>(['kick', 'snare', 'hat', 'beat', 'bar', 'phrase', 'held', 'always']);
+const TRIGGERS = new Set<string>([
+  'typeset', 'kick', 'snare', 'hat', 'beat', 'bar', 'phrase', 'held', 'always',
+]);
 
 /**
  * Parse one preset file against a fallback.

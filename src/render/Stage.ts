@@ -204,22 +204,23 @@ export class Stage {
   private motions: Animation[] = [];
 
   /**
-   * Which colour each slot currently means.
+   * Publish the chosen palette as the eight colour slots.
    *
-   * Held here rather than written to the stage element, because writing it there recolours
-   * **text that is already on screen**. A word's base colour should behave the way its base
-   * size does — decided when it is typeset and then left alone unless a layer takes the
-   * channel. Otherwise words nothing is targeting change colour on their own, out of time
-   * with anything, which reads as a fault. It is worst on a conveyor, where the same words
-   * come round again looking different.
+   * Written to the stage, and that is now correct rather than a bug: the palette only changes
+   * when the VJ picks a different one, which is a deliberate act like switching the
+   * background, and should take effect at once. Nothing else moves it — colour reaches a word
+   * only through an `accent` layer, which has a target and a trigger like everything else.
    *
-   * The typesetter copies these onto each block as it builds it, so a change lands on the
-   * next typeset — a phrase boundary — and existing text keeps what it had.
-   *
-   * `var(--stage-fg)` rather than a colour for the unaccented slots, so switching to a black
-   * or transparent background still makes the text readable.
+   * Short palettes repeat rather than leaving slots empty, so `accent` can pick any slot and
+   * always get a colour. An empty palette leaves every slot on the stage foreground, which is
+   * what `none` is for.
    */
-  slotColours: readonly string[] = Array.from({ length: 8 }, () => 'var(--stage-fg)');
+  setPalette(colours: readonly string[]): void {
+    for (let slot = 0; slot < 8; slot++) {
+      const colour = colours.length === 0 ? 'var(--stage-fg)' : colours[slot % colours.length];
+      this.el.style.setProperty(`--c${slot}`, colour ?? 'var(--stage-fg)');
+    }
+  }
 
   /** Sets the base font size all preset sizing is relative to. Mirrors Acid's `--fs`. */
   setFontScale(px: number): void {

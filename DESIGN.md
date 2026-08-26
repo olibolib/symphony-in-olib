@@ -1020,7 +1020,7 @@ text and stage settings.
 | Slice | `char` · `word` · `sentence` · `paragraph` · `block` — a `<p>` is a *line*, so a sentence gets its own wrapper |
 | Text | any mode, plus `continuous` to read it in order rather than sample it |
 | Treatment | `invert` · `accent` · `dingbat` · `underline` · `strike` · `outline` · `swell` · `flicker` · `blank` |
-| Trigger | `kick` · `snare` · `hat` · `beat` · `bar` · `phrase` · `held` · `always` · `enter` |
+| Trigger | `typeset` · `kick` · `snare` · `hat` · `beat` · `bar` · `phrase` · `held` · `always` |
 
 Four targets by nine treatments is thirty-six combinations from thirteen primitives, and most
 of them cannot be expressed today. The point is not that all thirty-six are good — it is that
@@ -1102,15 +1102,29 @@ actually lit.
 
 #### Static means static: colour is decided at typeset
 
-There is an `enter` trigger for this, fired once when a preset goes live and before its first
-typeset. Anything that should hold for a preset's whole run belongs there rather than on
-`phrase` — the palette most of all.
+**There is no colouring effect any more.** Acid gave every word a colour slot and shifted
+those slots periodically, so words changed colour with nothing driving them — no target, no
+trigger, nothing to turn off. On a looping conveyor that was the only visible event, since the
+belt rolls straight through a re-typeset and hides the text swap entirely.
 
-Bound to `phrase`, `colourShift` reseats the colours of text that is **still on screen**. A
-preset with no layers then appears to change colour entirely on its own, out of time with
-anything; and on a looping conveyor it is worse, because the belt rolls straight through the
-re-typeset, so the colour change is the only visible event and nothing motivates it. That is
-what a user-made preset was doing: new presets bound the palette to `phrase`.
+Colour reaches a word through an **`accent` layer** and no other way. Target, trigger, decay,
+channel ownership, conveyor mirroring — the same rules as every other look.
+
+The scattered colour Acid gave for free is rebuilt out of those parts: `accent` on a
+proportion of words, trigger `typeset`, `decayBars: 0`. Applied when the text is laid out,
+held until it is replaced. Having to ask for it is the point — a word nothing has targeted is
+now the stage foreground and stays there.
+
+This needed one new trigger. **`typeset`** fires when new text has been laid out, before any
+beat has touched it, and it is the only way to say "applied once, then left alone" — every
+other trigger is an event that recurs. It has to be a trigger rather than something a preset
+does when it goes live, because the text is rebuilt every phrase or two and a look established
+once would be destroyed with the elements carrying it.
+
+The palette itself is written to the stage when the VJ picks one, which is a deliberate act
+like switching the background and should take effect at once. `--c0`..`--c7` are now simply
+the chosen palette: the values a layer may pick from, rather than a colouring applied to
+everything.
 
 A word's base colour behaves the way its base size does — **decided when the text is typeset
 and then left alone unless a layer takes the channel**. It is the same rule §11.5 already
