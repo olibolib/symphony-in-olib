@@ -8,7 +8,9 @@
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
     "preview": "electron-vite preview",
-    "typecheck": "tsc --noEmit && node scripts/check-ids.mjs && node scripts/check-animations.mjs",
+    "typecheck": "tsc --noEmit && node scripts/check-ids.mjs && node scripts/check-animations.mjs && vitest run --silent",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "dist": "npm run build && electron-builder --win",
     "dist:dir": "npm run build && electron-builder --win --dir",
     "check": "node scripts/check-ids.mjs"
@@ -20,7 +22,8 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^5.9.3",
-    "vite": "^7.3.6"
+    "vite": "^7.3.6",
+    "vitest": "^4.1.11"
   },
   "allowScripts": {
     "electron@43.4.1": true,

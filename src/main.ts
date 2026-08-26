@@ -54,7 +54,8 @@ import { Channels } from './show/Channels';
 import { Layer, type LayerSpec } from './show/Layer';
 type BackgroundMode = 'white' | 'black' | 'transparent';
 import { PALETTES, type PaletteName } from './render/palette';
-import { anchors, FULL, intersect, normalise, type Mask } from './show/mask';
+import { FULL, intersect, normalise, type Mask } from './show/mask';
+import { blockedMessage, motionOptions, needsRetypeset, textsForBlocks } from './show/wiring';
 
 /**
  * Increment 1 complete.
@@ -364,19 +365,6 @@ async function loadPinnedTexts(): Promise<void> {
  * fresh each time and keeps following the menu as it changes. Each block rolls independently,
  * which is what puts two different passages side by side (§11.7).
  */
-function textsForBlocks(preset: VisualPreset, blocks: number): readonly TextPreset[] {
-  const options = preset.texts.length > 0 ? preset.texts : ['default'];
-
-  const resolve = (name: string): TextPreset =>
-    name === 'default' ? activeText : (pinnedTexts.get(name) ?? activeText);
-
-  const out: TextPreset[] = [];
-  for (let i = 0; i < blocks; i++) {
-    out.push(resolve(options[Math.floor(Math.random() * options.length)] ?? 'default'));
-  }
-  return out;
-}
-
 /**
  * Where this preset may anchor (§11.6).
  *
@@ -418,78 +406,15 @@ function reportBlocked(name: string, spawn: Mask): void {
     return;
   }
 
-  if (anchors(globalMask).length === 0) {
-    hud.setStatus(
-      'The global mask has no cells, so nothing can be placed — allow some in the Canvas tab',
-      true,
-    );
-    return;
-  }
-
-  if (anchors(normalise(spawn)).length === 0) {
-    hud.setStatus(
-      `"${name}" has no cells of its own — allow it some in the Presets tab`,
-      true,
-    );
-    return;
-  }
-
-  hud.setStatus(
-    `The global mask is blocking "${name}" — allow it some cells in the Canvas tab`,
-    true,
-  );
-}
-
-/**
- * Pull the motion settings out of the layer list.
- *
- * Motion is authored as a layer so a preset is described in one place, but it is applied by
- * the typesetter rather than by writing to elements — so it has to be found again here.
- *
- * **The last one wins**, which is the same rule channels follow: layers are ordered and later
- * ones sit on top. Two scroll layers is not a sensible preset, but it is an easy one to end up
- * with while experimenting, and silently using the first would be the surprising answer.
- */
-function motionOptions(layers: readonly LayerSpec[]): {
-  contentMotion?: ContentMotion;
-  blockMotion?: BlockMotion;
-} {
-  let content: ContentMotion | undefined;
-  let block: BlockMotion | undefined;
-
-  for (const layer of layers) {
-    const motion = layer.motion;
-    if (!motion || motion.speed <= 0) continue;
-
-    if (layer.treatment === 'scroll' && (motion.direction === 'up' || motion.direction === 'down')) {
-      content = {
-        direction: motion.direction,
-        speed: motion.speed,
-        continuous: motion.continuous !== false,
-      };
-    } else if (layer.treatment === 'travel') {
-      // Only the axis being travelled along can wrap, so the other toggle is simply not
-      // consulted — it is there for when the direction changes.
-      const sideways = motion.direction === 'left' || motion.direction === 'right';
-      block = {
-        direction: motion.direction,
-        speed: motion.speed,
-        continuous: (sideways ? motion.wrapSide : motion.wrapTop) !== false,
-      };
-    }
-  }
-
-  return {
-    ...(content ? { contentMotion: content } : {}),
-    ...(block ? { blockMotion: block } : {}),
-  };
+  const message = blockedMessage(name, spawn, globalMask);
+  if (message !== null) hud.setStatus(message, true);
 }
 
 /** Render the current preset's text selection. */
 function typesetNext(): void {
   const preset = bank.current;
 
-  typesetter.render(textsForBlocks(preset, preset.text.blocks), {
+  typesetter.render(textsForBlocks(preset.texts, preset.text.blocks, activeText, pinnedTexts), {
     slice: preset.text.slice,
     splitChars: preset.text.splitChars,
     take: preset.text.take,
@@ -594,7 +519,7 @@ function applyEdit(doc: PresetDoc): void {
   // is already done — it will be built fresh when it goes live.
   if (bank.current.name !== doc.name) return;
 
-  if (layoutChanged(before, doc)) {
+  if (needsRetypeset(before, doc)) {
     // Placement and text settings are only visible in a re-typeset, so there is nothing to
     // do in place — and doing it now rather than at the phrase is what makes dragging the
     // block-shape numbers legible.
@@ -606,17 +531,6 @@ function applyEdit(doc: PresetDoc): void {
 }
 
 /** Whether anything that only a re-typeset can show has changed. */
-function layoutChanged(before: PresetDoc, after: PresetDoc): boolean {
-  return (
-    JSON.stringify(before.text) !== JSON.stringify(after.text) ||
-    JSON.stringify(before.spawn) !== JSON.stringify(after.spawn) ||
-    JSON.stringify(before.blockShapes) !== JSON.stringify(after.blockShapes) ||
-    before.align !== after.align ||
-    before.flow !== after.flow ||
-    before.avoidOverlap !== after.avoidOverlap
-  );
-}
-
 /**
  * Push new layer settings into the running stack.
  *
