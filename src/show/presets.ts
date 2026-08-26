@@ -55,6 +55,16 @@ export interface VisualPreset {
   readonly text: {
     readonly mode: TextMode;
     readonly count: number;
+
+    /**
+     * Read the text in order rather than sampling it (§12.3).
+     *
+     * A modifier on whichever mode is chosen, not a mode of its own — so `sentence` reads a
+     * line at a time, `longSentences` walks the long ones in order, `word` reads word by
+     * word. None of those existed while it was a seventh mode with one fixed pool.
+     */
+    readonly continuous: boolean;
+
     readonly splitChars: boolean;
     readonly blocks: 1 | 2 | 3;
 
@@ -162,6 +172,7 @@ export function toDoc(preset: VisualPreset): PresetDoc {
     text: {
       mode: preset.text.mode,
       count: preset.text.count,
+      continuous: preset.text.continuous,
       splitChars: preset.text.splitChars,
       blocks: preset.text.blocks,
       size: preset.text.size,
@@ -190,7 +201,7 @@ export const PRESETS: readonly VisualPreset[] = [
   {
     name: 'still',
     energy: 'sparse',
-    text: { mode: 'sentence', count: 1, splitChars: true, blocks: 1, size: { min: 36, max: 44 } },
+    text: { mode: 'sentence', count: 1, continuous: false, splitChars: true, blocks: 1, size: { min: 36, max: 44 } },
     texts: ['default'],
     spawn: KEEP_CENTRE_CLEAR,
     // One large statement. Wide rather than tall, because a single sentence set big wants
@@ -233,7 +244,7 @@ export const PRESETS: readonly VisualPreset[] = [
   {
     name: 'scatter',
     energy: 'mid',
-    text: { mode: 'shortSentences', count: 5, splitChars: true, blocks: 2, size: { min: 24, max: 32 } },
+    text: { mode: 'shortSentences', count: 5, continuous: false, splitChars: true, blocks: 2, size: { min: 24, max: 32 } },
     texts: ['default'],
     spawn: KEEP_CENTRE_CLEAR,
     // A column and a band, so two blocks on stage rarely look like the same thing twice.
@@ -274,6 +285,7 @@ export const PRESETS: readonly VisualPreset[] = [
     text: {
       mode: 'sentences',
       count: 8,
+      continuous: false,
       splitChars: true,
       blocks: 2,
       size: { min: 20, max: 30 },
@@ -322,7 +334,7 @@ export const PRESETS: readonly VisualPreset[] = [
   {
     name: 'drift',
     energy: 'mid',
-    text: { mode: 'longSentences', count: 3, splitChars: false, blocks: 1, size: { min: 26, max: 34 } },
+    text: { mode: 'longSentences', count: 3, continuous: false, splitChars: false, blocks: 1, size: { min: 26, max: 34 } },
     texts: ['default'],
     spawn: KEEP_CENTRE_CLEAR,
     // A tall column or a wide band, never the square in between — the reason shapes are a
@@ -333,7 +345,7 @@ export const PRESETS: readonly VisualPreset[] = [
     ],
     // The conveyor rather than the old stage-wide scroll: the block stays where it was
      // anchored and the text moves through it, which is the look `drift` was always after.
-    contentMotion: { direction: 'up', speed: 0.12 },
+    contentMotion: { direction: 'up', speed: 0.12, continuous: true },
     align: 'justify',
     // Paragraphs run together into a single justified slab. Was layout 7, and it suits long
     // sentences better than anything else in the old table did.

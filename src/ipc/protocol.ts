@@ -46,6 +46,16 @@ export interface PresetDoc {
   readonly text: {
     readonly mode: TextMode;
     readonly count: number;
+
+    /**
+     * Read the text in order rather than sampling it (§12.3).
+     *
+     * A modifier on whichever mode is chosen, not a mode of its own — so `sentence` reads a
+     * line at a time, `longSentences` walks the long ones in order, `word` reads word by
+     * word. None of those existed while it was a seventh mode with one fixed pool.
+     */
+    readonly continuous: boolean;
+
     readonly splitChars: boolean;
     readonly blocks: 1 | 2 | 3;
     readonly size: { readonly min: number; readonly max: number };

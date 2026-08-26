@@ -191,23 +191,74 @@ sn {
    empty most of the time — so its duration is scaled by the box's share of the canvas
    (`--box-hr`), which is what keeps the velocity honest. */
 
-#container[data-content-motion] .block-content {
-  animation-duration: calc(var(--bar, 2s) * 2 * var(--box-hr, 1) / var(--content-speed, 0.25));
+/* A conveyor block lays its copies out itself, so it opts out of the vertical centring the
+   other blocks use. */
+.block[data-conveyor] {
+  display: block;
+}
+
+.block[data-conveyor] .loop {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+}
+
+/* The second copy sits exactly one travel below the first. One cycle moves exactly that far,
+   so at the wrap it lands where the first began — which is the whole trick. */
+.block[data-conveyor='loop'] .loop[data-copy] {
+  top: var(--travel, 100%);
+}
+
+.block[data-conveyor] .block-content {
+  animation-duration: calc(var(--bar, 2s) * var(--travelr, 1) / var(--content-speed, 0.25));
   animation-timing-function: linear;
+}
+
+/* Looping: a belt that never stops. */
+.block[data-conveyor='loop'] .block-content {
   animation-iteration-count: infinite;
 }
 
-#container[data-content-motion='up'] .block-content { animation-name: olib-content-up; }
-#container[data-content-motion='down'] .block-content { animation-name: olib-content-down; }
-
-@keyframes olib-content-up {
-  from { transform: translateY(var(--box-h, 100%)); }
-  to { transform: translateY(calc(-1 * var(--box-h, 100%))); }
+#container[data-content-motion='up'] .block[data-conveyor='loop'] .block-content {
+  animation-name: olib-loop-up;
+}
+#container[data-content-motion='down'] .block[data-conveyor='loop'] .block-content {
+  animation-name: olib-loop-down;
 }
 
-@keyframes olib-content-down {
-  from { transform: translateY(calc(-1 * var(--box-h, 100%))); }
-  to { transform: translateY(var(--box-h, 100%)); }
+@keyframes olib-loop-up {
+  from { transform: translateY(0); }
+  to { transform: translateY(calc(-1 * var(--travel))); }
+}
+
+@keyframes olib-loop-down {
+  from { transform: translateY(calc(-1 * var(--travel))); }
+  to { transform: translateY(0); }
+}
+
+/* Single pass: in from below the box, out past the top, and gone until the next typeset.
+   `forwards` so it holds where it finished rather than snapping back into view. */
+.block[data-conveyor='once'] .block-content {
+  animation-iteration-count: 1;
+  animation-fill-mode: forwards;
+}
+
+#container[data-content-motion='up'] .block[data-conveyor='once'] .block-content {
+  animation-name: olib-sweep-up;
+}
+#container[data-content-motion='down'] .block[data-conveyor='once'] .block-content {
+  animation-name: olib-sweep-down;
+}
+
+@keyframes olib-sweep-up {
+  from { transform: translateY(var(--box-h)); }
+  to { transform: translateY(calc(-1 * var(--text-h))); }
+}
+
+@keyframes olib-sweep-down {
+  from { transform: translateY(calc(-1 * var(--text-h))); }
+  to { transform: translateY(var(--box-h)); }
 }
 
 /* Block motion travels two canvases, entering from off one edge and leaving off the other,

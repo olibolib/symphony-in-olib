@@ -30,7 +30,7 @@ export interface ParseResult {
 const TREATMENTS = new Set<string>(Object.keys(CHANNELS));
 const SLICES = new Set(['char', 'word', 'sentence', 'paragraph', 'block']);
 const MODES = new Set<string>([
-  'whole', 'continuous', 'sentence', 'sentences', 'shortSentences', 'longSentences', 'word',
+  'whole', 'sentence', 'sentences', 'shortSentences', 'longSentences', 'word',
 ]);
 const ALIGNS = new Set<string>(['left', 'centre', 'right', 'justify']);
 const FLOWS = new Set<string>(['stack', 'run-on', 'grid', 'wrapped', 'columns']);
@@ -66,13 +66,26 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
   const size = isRecord(text['size']) ? text['size'] : {};
   const varyBy = text['varyBy'];
 
+  // `continuous` used to be a seventh mode and is now a modifier on all of them (§12.3).
+  // A preset saved before that would otherwise fail its mode check and silently revert to
+  // random selection — the reading it was written for, quietly gone. Migrated instead, and
+  // said out loud so the file gets rewritten with the current shape on the next edit.
+  let mode = text['mode'];
+  let continuous = bool(text['continuous'], fallback.text.continuous);
+  if (mode === 'continuous') {
+    mode = 'sentences';
+    continuous = true;
+    say('mode "continuous" is now a modifier — migrated to sentences, read in order');
+  }
+
   const doc: PresetDoc = {
     name,
     energy: pickFrom(o['energy'], ENERGIES, fallback.energy, 'energy', say) as PresetDoc['energy'],
 
     text: {
-      mode: pickFrom(text['mode'], MODES, fallback.text.mode, 'text.mode', say) as TextMode,
+      mode: pickFrom(mode, MODES, fallback.text.mode, 'text.mode', say) as TextMode,
       count: clampNumber(text['count'], 1, 40, fallback.text.count, 'text.count', say),
+      continuous,
       splitChars: bool(text['splitChars'], fallback.text.splitChars),
       blocks: clampNumber(text['blocks'], 1, 3, fallback.text.blocks, 'text.blocks', say) as 1 | 2 | 3,
       size: {
@@ -267,7 +280,7 @@ function motion(
   directions: Set<string>,
   field: string,
   say: Say,
-): Record<string, { direction: string; speed: number }> {
+): Record<string, { direction: string; speed: number; continuous?: boolean }> {
   if (value === undefined) return {};
 
   if (!isRecord(value)) {
@@ -288,7 +301,16 @@ function motion(
   }
 
   // Faster than four canvases a bar is not a look, it is a strobe of unreadable smear.
-  return { [field]: { direction, speed: Math.min(4, speed) } };
+  const clamped = Math.min(4, speed);
+
+  // Only the conveyor has a loop/once choice — a travelling block leaves the frame and comes
+  // back either way. Defaulting to `true` keeps a file written before the modifier existed
+  // behaving as it did.
+  if (field !== 'contentMotion') return { [field]: { direction, speed: clamped } };
+
+  return {
+    [field]: { direction, speed: clamped, continuous: bool(value['continuous'], true) },
+  };
 }
 
 /** Scale bounds for `swell`, in multiples of the base size rather than in cells. */

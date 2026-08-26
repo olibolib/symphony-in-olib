@@ -47,6 +47,7 @@ const NEW_PRESET_DOC: Omit<PresetDoc, 'name'> = {
   text: {
     mode: 'shortSentences',
     count: 3,
+    continuous: false,
     splitChars: true,
     blocks: 1,
     size: { min: 28, max: 34 },

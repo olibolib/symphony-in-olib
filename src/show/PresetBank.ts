@@ -19,14 +19,28 @@ import type { VisualPreset } from './presets';
 const MIN_BARS = 16;
 const MAX_BARS = 32;
 
-const ENABLED_KEY = 'olib.enabledPresets';
+/**
+ * What is switched **off**, not what is on.
+ *
+ * Storing the enabled list looks equivalent and is not: a preset that did not exist when the
+ * list was written is absent from it, so it comes back disabled and never cycles. Since
+ * presets are created and loaded from disk after the bank is built, that happened to every
+ * preset the user made — it would be saved, reappear in the list, and silently never play.
+ *
+ * Recording the exclusions means anything new is on by default, which is the only sensible
+ * answer for a preset nobody has expressed an opinion about.
+ */
+const DISABLED_KEY = 'olib.disabledPresets';
+
+/** The old enabled-list key, read once to carry a previous session's choices over. */
+const LEGACY_ENABLED_KEY = 'olib.enabledPresets';
 
 export class PresetBank {
   private presets: readonly VisualPreset[];
   private index: number;
 
-  /** Names the cycle may choose from. Never empty — see `setEnabled`. */
-  private enabledNames: Set<string>;
+  /** Names excluded from the cycle. Everything else plays — see `setEnabled`. */
+  private disabledNames: Set<string>;
 
   /** Chosen but not yet applied. Applied at the next phrase. */
   private queued: string | null = null;
@@ -40,7 +54,7 @@ export class PresetBank {
     this.presets = presets;
     this.index = 0;
     this.targetBars = randomRange(MIN_BARS, MAX_BARS);
-    this.enabledNames = this.loadEnabled();
+    this.disabledNames = this.loadDisabled();
   }
 
   get all(): readonly VisualPreset[] {
@@ -70,13 +84,15 @@ export class PresetBank {
       this.queued = null;
     }
 
-    // Same for the enabled set — and it must never end up empty, since the cycle would then
-    // have nothing to choose from.
+    // Exclusions for presets that no longer exist would sit there for ever, and would apply
+    // again if a preset were later created with the same name.
     const names = new Set(presets.map((p) => p.name));
-    for (const name of Array.from(this.enabledNames)) {
-      if (!names.has(name)) this.enabledNames.delete(name);
+    for (const name of Array.from(this.disabledNames)) {
+      if (!names.has(name)) this.disabledNames.delete(name);
     }
-    if (this.enabledNames.size === 0) this.enabledNames.add(this.current.name);
+
+    // The cycle must never have nothing to choose from.
+    if (this.enabledCount === 0) this.disabledNames.delete(this.current.name);
   }
 
   get current(): VisualPreset {
@@ -90,7 +106,11 @@ export class PresetBank {
   }
 
   isEnabled(name: string): boolean {
-    return this.enabledNames.has(name);
+    return !this.disabledNames.has(name);
+  }
+
+  private get enabledCount(): number {
+    return this.presets.filter((p) => this.isEnabled(p.name)).length;
   }
 
   /**
@@ -101,14 +121,14 @@ export class PresetBank {
    * failure of exactly the kind §14 rules out. The request is refused instead.
    */
   setEnabled(name: string, enabled: boolean): boolean {
-    if (!enabled && this.enabledNames.size <= 1 && this.enabledNames.has(name)) {
+    if (!enabled && this.enabledCount <= 1 && this.isEnabled(name)) {
       return false;
     }
 
-    if (enabled) this.enabledNames.add(name);
-    else this.enabledNames.delete(name);
+    if (enabled) this.disabledNames.delete(name);
+    else this.disabledNames.add(name);
 
-    this.saveEnabled();
+    this.saveDisabled();
     return true;
   }
 
@@ -158,7 +178,7 @@ export class PresetBank {
     if (!this.timerDue) return null;
 
     const others = this.presets.filter(
-      (p) => this.enabledNames.has(p.name) && p.name !== this.current.name,
+      (p) => this.isEnabled(p.name) && p.name !== this.current.name,
     );
     const next = pick(others);
     if (!next) {
@@ -190,22 +210,37 @@ export class PresetBank {
     this.targetBars = randomRange(MIN_BARS, MAX_BARS);
   }
 
-  private loadEnabled(): Set<string> {
+  /**
+   * Read the exclusions, migrating a previous session's enabled list if that is all there is.
+   *
+   * The migration cannot be perfect — an enabled list only describes the presets that existed
+   * when it was written — but inverting it against the compiled built-ins carries over the
+   * choice that was actually made about them, which is the part worth keeping.
+   */
+  private loadDisabled(): Set<string> {
     try {
-      const raw = localStorage.getItem(ENABLED_KEY);
-      if (raw) {
-        const names = (JSON.parse(raw) as string[]).filter((n) =>
-          this.presets.some((p) => p.name === n),
-        );
-        if (names.length > 0) return new Set(names);
+      const raw = localStorage.getItem(DISABLED_KEY);
+      if (raw !== null) return new Set(JSON.parse(raw) as string[]);
+
+      const legacy = localStorage.getItem(LEGACY_ENABLED_KEY);
+      if (legacy !== null) {
+        const wasEnabled = new Set(JSON.parse(legacy) as string[]);
+        const disabled = this.presets
+          .map((p) => p.name)
+          .filter((name) => !wasEnabled.has(name));
+
+        localStorage.setItem(DISABLED_KEY, JSON.stringify(disabled));
+        localStorage.removeItem(LEGACY_ENABLED_KEY);
+        return new Set(disabled);
       }
     } catch {
-      // Corrupt or absent — fall through to everything enabled.
+      // Corrupt or absent. Everything plays, which is the safe direction to fail in: a
+      // silent bank is much worse than one preset you have to switch off again.
     }
-    return new Set(this.presets.map((p) => p.name));
+    return new Set();
   }
 
-  private saveEnabled(): void {
-    localStorage.setItem(ENABLED_KEY, JSON.stringify([...this.enabledNames]));
+  private saveDisabled(): void {
+    localStorage.setItem(DISABLED_KEY, JSON.stringify([...this.disabledNames]));
   }
 }

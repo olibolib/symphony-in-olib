@@ -20,7 +20,6 @@ import { sentenceLength, type Sentence, type TextPreset } from './TextSource';
  */
 export type TextMode =
   | 'whole'
-  | 'continuous'
   | 'sentence'
   | 'sentences'
   | 'shortSentences'
@@ -33,6 +32,20 @@ export interface TypesetOptions {
   readonly splitChars: boolean;
   /** How many sentences. Never a word or line count. */
   readonly count?: number;
+
+  /**
+   * Read the text in order rather than sampling it.
+   *
+   * A **modifier on every mode**, not a mode of its own. Each mode decides *what* the pool
+   * is — every sentence, the short ones, the long ones, single words — and this decides
+   * whether the next selection is taken at random from that pool or continues from wherever
+   * the last one stopped.
+   *
+   * That is worth more than a seventh mode was: `sentence` + continuous reads a line at a
+   * time, `longSentences` + continuous walks the long ones in order, `word` + continuous
+   * reads word by word. None of those were reachable before.
+   */
+  readonly continuous?: boolean;
   /** Put each line in its own paragraph, rather than running them together. */
   readonly separateLines?: boolean;
   /** Hard ceiling on elements produced. DESIGN.md §14 — presets declare a budget. */
@@ -67,7 +80,11 @@ export interface TypesetOptions {
   readonly align?: Align;
   readonly flow?: Flow;
 
-  /** Text sliding **through** a block that stays put — the conveyor. */
+  /**
+   * Text sliding **through** a block that stays put — the conveyor.
+   *
+   * Looping or single-pass, per `ContentMotion.continuous`.
+   */
   readonly contentMotion?: ContentMotion;
 
   /** The block itself travelling across the canvas. */
@@ -112,6 +129,15 @@ export interface ContentMotion {
   readonly direction: 'up' | 'down';
   /** Fractions of the canvas per four beats — the same unit block motion uses. */
   readonly speed: number;
+
+  /**
+   * Loop for ever, or pass through once.
+   *
+   * On, it is a belt: the text is duplicated so the wrap is invisible and it never stops.
+   * Off, it sweeps through once per typeset and is gone — a different effect worth having,
+   * and the cheaper one, since a single pass needs no second copy.
+   */
+  readonly continuous: boolean;
 }
 
 export interface BlockMotion {
@@ -177,6 +203,14 @@ export class Typesetter {
    * it.
    */
   private readonly cursors = new Map<string, number>();
+
+  /**
+   * Which cursor the selection just made should advance, once the build says how much fitted.
+   *
+   * Selection has to happen before the build and the advance has to happen after it, so the
+   * pool identity is parked here in between rather than being recomputed from the options.
+   */
+  private pending: { key: string; size: number } | null = null;
 
   /** Live registries, refreshed on every render so effects never walk a stale DOM. */
   blocks: readonly HTMLElement[] = [];
@@ -288,18 +322,21 @@ export class Typesetter {
       // The cursor advances by what was *rendered*, not by what was selected. The budget
       // drops whole sentences that will not fit, and advancing past those would skip lines
       // of the text outright — the reading would have holes in it, which is the one thing a
-      // continuous mode must not do.
-      if (options.mode === 'continuous' && text.sentences.length > 0) {
-        const at = this.cursors.get(text.name) ?? 0;
-        this.cursors.set(text.name, (at + built.used) % text.sentences.length);
+      // continuous reading must not do.
+      const pending = this.pending;
+      if (pending && pending.size > 0) {
+        const at = this.cursors.get(pending.key) ?? 0;
+        this.cursors.set(pending.key, (at + built.used) % pending.size);
       }
+      this.pending = null;
 
       parts.push(`<div class="block" data-block="${index}" style="${style}">`);
-      // An inner element so the contents can move while the block stays put — the conveyor
-      // (§11.5). Always present, so starting or stopping it needs no re-typeset.
-      parts.push('<div class="block-content">');
+      // Two nested wrappers: `.block-content` is what moves, `.loop` is one copy of the
+      // text. A stationary block has exactly one copy and the extra element costs nothing;
+      // a conveyor gets a second, which is what makes the loop seamless (see `makeSeamless`).
+      parts.push('<div class="block-content"><div class="loop">');
       parts.push(built.html);
-      parts.push('</div></div>');
+      parts.push('</div></div></div>');
     }
 
     // One assignment, not an append per word. Parsing a single string is dramatically
@@ -323,6 +360,15 @@ export class Typesetter {
 
     this.refresh();
     if (options.varyBy) this.varySizes(options.varyBy, size);
+
+    // After `refresh`, so the registries hold only originals and a layer targeting "5% of
+    // words" cannot pick a copy. After `varySizes`, so the copy inherits the sizes that were
+    // rolled rather than a second, different roll.
+    // Only a looping conveyor needs a second copy. A single pass has nothing to wrap, so it
+    // costs no extra elements at all.
+    const conveyor = options.contentMotion;
+    if (conveyor && conveyor.speed > 0) this.measureConveyor(conveyor.continuous);
+
     this.measureClipping();
   }
 
@@ -333,6 +379,10 @@ export class Typesetter {
   private measureClipping(): void {
     let clipped = 0;
     for (const block of this.blocks) {
+      // A conveyor overflows by design — that is what it is for — so counting it as clipped
+      // would report a fault on every phrase and train you to ignore the number.
+      if (block.dataset['conveyor'] !== undefined) continue;
+
       if (
         block.scrollHeight > block.clientHeight + 1 ||
         block.scrollWidth > block.clientWidth + 1
@@ -342,6 +392,81 @@ export class Typesetter {
     }
     this.clipped = clipped;
   }
+
+  /**
+   * Give every conveyor block a second copy of its text, so the loop never restarts.
+   *
+   * A single copy can only sweep through and jump back. Duplicating is the only way to get a
+   * continuous belt, and the objection to it was never the elements — it was that a layer
+   * lighting "5% of words" would pick words in each copy independently, so the same word
+   * would flicker differently in its two halves and give the trick away.
+   *
+   * So the copy is **not** in the registries, and is never targeted. Instead {@link twinOf}
+   * pairs each original with its counterpart and `Channels` writes to both, which keeps the
+   * two halves identical by construction rather than by luck.
+   *
+   * The travel distance is `max(content, box)`: the second copy sits exactly that far below
+   * the first, and one cycle moves exactly that far, so at the wrap the copy lands where the
+   * original began. Using the content height alone would leave a gap whenever the text is
+   * shorter than its box.
+   */
+  private measureConveyor(seamless: boolean): void {
+    this.twins = new WeakMap();
+
+    for (const block of this.blocks) {
+      const content = block.querySelector<HTMLElement>('.block-content');
+      const original = content?.querySelector<HTMLElement>('.loop');
+      if (!content || !original) continue;
+
+      const textH = original.scrollHeight;
+      const boxH = block.clientHeight;
+      if (textH <= 0 || boxH <= 0) continue;
+
+      block.dataset['conveyor'] = seamless ? 'loop' : 'once';
+
+      if (!seamless) {
+        // One pass: in from below the box, out past the top. Travel is the box plus the text,
+        // because both have to clear the window.
+        const sweep = boxH + textH;
+        block.style.setProperty('--travel', `${sweep.toFixed(2)}px`);
+        block.style.setProperty('--travelr', (sweep / this.stage.height).toFixed(5));
+        block.style.setProperty('--text-h', `${textH.toFixed(2)}px`);
+        continue;
+      }
+
+      // A belt. The copy sits exactly one travel below the original and one cycle moves
+      // exactly that far, so at the wrap the copy lands where the original began and the
+      // seam is never visible.
+      //
+      // `max(text, box)` rather than the text alone: a passage shorter than its box would
+      // otherwise leave a gap between the copies, which is the seam by another name.
+      const loop = Math.max(textH, boxH);
+
+      const copy = original.cloneNode(true) as HTMLElement;
+      copy.dataset['copy'] = '1';
+      // The same words twice — one of them is decoration as far as a reader is concerned.
+      copy.setAttribute('aria-hidden', 'true');
+      content.append(copy);
+
+      pairUp(original, copy, this.twins);
+
+      block.style.setProperty('--travel', `${loop.toFixed(2)}px`);
+      block.style.setProperty('--travelr', (loop / this.stage.height).toFixed(5));
+    }
+  }
+
+  /**
+   * The duplicate of an element in a seamless conveyor, if there is one.
+   *
+   * Consulted on every channel write, so it is a `WeakMap` lookup rather than a query — and
+   * a `WeakMap` in particular because the whole DOM is replaced on every re-typeset and the
+   * entries should go with it.
+   */
+  twinOf(el: HTMLElement): HTMLElement | undefined {
+    return this.twins.get(el);
+  }
+
+  private twins = new WeakMap<HTMLElement, HTMLElement>();
 
   /**
    * Give each word or character its own size within the range.
@@ -379,85 +504,122 @@ export class Typesetter {
     this.chars = Array.from(root.querySelectorAll<HTMLElement>('c'));
   }
 
-  /** Pick which sentences to show. DESIGN.md §12.3. */
+  /**
+   * Pick which sentences to show. DESIGN.md §12.3.
+   *
+   * Two decisions, deliberately separated: the **mode** says what the pool is, and
+   * `continuous` says whether to sample it or read it in order. Every mode gets both
+   * behaviours for free, where a `continuous` *mode* could only ever have had one pool.
+   */
   private select(preset: TextPreset, options: TypesetOptions): readonly Sentence[] {
     const { sentences } = preset;
     if (sentences.length === 0) return [];
 
-    const count = options.count ?? 1;
+    const count = Math.max(1, options.count ?? 1);
+    const continuous = options.continuous === true;
 
     switch (options.mode) {
+      // The whole text every time. There is nothing to sample and nothing to advance, so
+      // the modifier has no meaning here — which is itself the "repeat the whole" case.
       case 'whole':
         return sentences;
 
-      /**
-       * The next `count` sentences, continuing from wherever the last render stopped.
-       *
-       * Every other mode samples: you see a different part of the text each phrase and the
-       * order means nothing. This one *reads* — the passage arrives in sequence, a few
-       * sentences at a time, and wraps back to the beginning at the end.
-       *
-       * Consecutive rather than random is the entire point, so it does not filter by length
-       * or shuffle. It also wraps mid-selection rather than stopping short, so the last
-       * chunk of the text is followed by the first rather than by a gap.
-       */
-      case 'continuous': {
-        const at = this.cursors.get(preset.name) ?? 0;
-        const span = Math.min(count, sentences.length);
-        const out: Sentence[] = [];
-        for (let i = 0; i < span; i++) {
-          const sentence = sentences[(at + i) % sentences.length];
-          if (sentence) out.push(sentence);
-        }
-        return out;
-      }
+      case 'word':
+        return this.selectWord(preset, continuous);
 
-      case 'sentence': {
-        const sentence = pick(sentences);
-        return sentence ? [sentence] : [];
-      }
+      case 'sentence':
+        return this.take(preset, sentences, 1, continuous, 'sentence');
 
-      case 'word': {
-        // The one deliberate fragment: a single word, isolated. Reads as emphasis rather
-        // than as truncation, because there is obviously nothing missing.
-        const sentence = pick(sentences);
-        const line = sentence ? pick(sentence) : undefined;
-        const word = line ? pick(line) : undefined;
-        return word ? [[[word]]] : [];
-      }
-
-      case 'sentences': {
-        // Consecutive, so it reads as a passage rather than a shuffle.
-        const span = Math.min(count, sentences.length);
-        const from = randomInt(Math.max(1, sentences.length - span + 1));
-        return sentences.slice(from, from + span);
-      }
+      case 'sentences':
+        return this.take(preset, sentences, count, continuous, 'sentences');
 
       case 'shortSentences':
-        return this.pickByLength(sentences, count, (x) => sentenceLength(x) <= 12);
+        return this.take(
+          preset,
+          pool(sentences, (x) => sentenceLength(x) <= 12),
+          count,
+          continuous,
+          'short',
+        );
 
       case 'longSentences':
-        return this.pickByLength(sentences, count, (x) => sentenceLength(x) > 12);
+        return this.take(
+          preset,
+          pool(sentences, (x) => sentenceLength(x) > 12),
+          count,
+          continuous,
+          'long',
+        );
 
       default:
         return sentences;
     }
   }
 
-  private pickByLength(
-    sentences: readonly Sentence[],
+  /**
+   * Take `count` from a pool, in order or at random.
+   *
+   * Both paths wrap rather than stopping short, so the end of a text is followed by its
+   * beginning instead of by a gap.
+   *
+   * The cursor is keyed by text **and** by pool: a position among the long sentences means
+   * nothing to a reading of the short ones, so sharing one cursor would make a preset change
+   * jump to an unrelated point. Within the same pool two presets do share the thread, which
+   * is what makes switching preset mid-poem change how it looks rather than where it is.
+   */
+  private take(
+    preset: TextPreset,
+    from: readonly Sentence[],
     count: number,
-    matches: (sentence: Sentence) => boolean,
+    continuous: boolean,
+    pool: string,
   ): readonly Sentence[] {
-    const pool = sentences.filter(matches);
-    if (pool.length === 0) return sentences.slice(0, count);
+    if (from.length === 0) return [];
+    const span = Math.min(count, from.length);
+
+    const start = continuous
+      ? (this.cursors.get(`${preset.name}|${pool}`) ?? 0) % from.length
+      : randomInt(from.length);
 
     const out: Sentence[] = [];
-    for (let i = 0; i < count; i++) {
-      const sentence = pick(pool);
+    for (let i = 0; i < span; i++) {
+      const sentence = from[(start + i) % from.length];
       if (sentence) out.push(sentence);
     }
+
+    // Where the reading resumes is decided after the build, by how much actually fitted —
+    // see `render`. Recording the pool here is what lets it find the right cursor.
+    this.pending = continuous ? { key: `${preset.name}|${pool}`, size: from.length } : null;
     return out;
+  }
+
+  /**
+   * A single word, isolated.
+   *
+   * The one deliberate fragment: it reads as emphasis rather than as truncation, because
+   * there is obviously nothing missing. Continuous walks the text word by word, which is a
+   * different thing again — the passage arrives one word per phrase.
+   */
+  private selectWord(preset: TextPreset, continuous: boolean): readonly Sentence[] {
+    const words: string[] = [];
+    for (const sentence of preset.sentences) {
+      for (const line of sentence) words.push(...line);
+    }
+    if (words.length === 0) return [];
+
+    if (!continuous) {
+      const word = pick(words);
+      this.pending = null;
+      return word ? [[[word]]] : [];
+    }
+
+    const key = `${preset.name}|word`;
+    const at = (this.cursors.get(key) ?? 0) % words.length;
+    this.cursors.set(key, (at + 1) % words.length);
+    this.pending = null;
+
+    const word = words[at];
+    return word ? [[[word]]] : [];
   }
 
   /**
@@ -521,6 +683,43 @@ export class Typesetter {
     }
 
     return { html: parts.join(''), used };
+  }
+}
+
+/**
+ * Sentences matching a filter, falling back to all of them.
+ *
+ * A text with no long sentences in it should still show something. Returning an empty pool
+ * would leave the stage blank with nothing to explain it.
+ */
+function pool(
+  sentences: readonly Sentence[],
+  matches: (sentence: Sentence) => boolean,
+): readonly Sentence[] {
+  const filtered = sentences.filter(matches);
+  return filtered.length > 0 ? filtered : sentences;
+}
+
+/**
+ * Walk two identical trees together, pairing element to element.
+ *
+ * The copy is a `cloneNode(true)` of the original, so the two are structurally identical and
+ * a parallel walk pairs them exactly. Cheaper and steadier than matching on an index
+ * attribute, which would need writing during the build and querying afterwards.
+ */
+function pairUp(
+  original: HTMLElement,
+  copy: HTMLElement,
+  twins: WeakMap<HTMLElement, HTMLElement>,
+): void {
+  const from = original.querySelectorAll<HTMLElement>('w, c');
+  const to = copy.querySelectorAll<HTMLElement>('w, c');
+  const count = Math.min(from.length, to.length);
+
+  for (let i = 0; i < count; i++) {
+    const a = from[i];
+    const b = to[i];
+    if (a && b) twins.set(a, b);
   }
 }
 

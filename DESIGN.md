@@ -1018,6 +1018,7 @@ text and stage settings.
 |---|---|
 | Target | everything matching a string · a proportion of a slice · exactly N of a slice · every Nth |
 | Slice | `char` · `word` · `sentence` · `paragraph` · `block` — a `<p>` is a *line*, so a sentence gets its own wrapper |
+| Text | any mode, plus `continuous` to read it in order rather than sample it |
 | Treatment | `invert` · `accent` · `dingbat` · `underline` · `strike` · `outline` · `swell` · `flicker` · `blank` |
 | Trigger | `kick` · `snare` · `hat` · `beat` · `bar` · `phrase` · `held` · `always` |
 
@@ -1099,6 +1100,32 @@ re-typeset, and a central registry would need invalidating each time; attributes
 the elements that carried them. Self-healing, and the decay loop stays proportional to what is
 actually lit.
 
+#### Continuous is a modifier, not a mode
+
+`continuous` was added as a seventh selection mode, and that was the wrong shape. It bundled
+*what* the pool is with *how* it is taken from, so reading in order was only available over
+every sentence — never over the short ones, the long ones, or word by word.
+
+It is now a **boolean on every mode**. The mode says what the pool is; `continuous` says
+whether the next selection is sampled from it or continues from where the last one stopped.
+
+| Mode | Sampled | Continuous |
+|---|---|---|
+| `sentence` | a random line | the next line |
+| `sentences` | a random run of N | the next N |
+| `shortSentences` | N short ones at random | the short ones in order |
+| `longSentences` | N long ones at random | the long ones in order |
+| `word` | a random word | the next word |
+| `whole` | the whole text | the whole text — nothing to advance |
+
+The cursor is keyed by text **and** by pool: a position among the long sentences means
+nothing to a reading of the short ones. Within the same pool two presets share the thread, so
+switching preset mid-poem changes how it looks rather than where it is.
+
+*Migration:* a saved preset with `mode: "continuous"` becomes `sentences` plus the modifier,
+and says so. Without that it would fail its mode check and silently revert to random
+selection — the reading it was written for, quietly gone.
+
 #### Motion, in two kinds
 
 Omitted from this section when the proposal was folded in, and therefore never built until
@@ -1147,11 +1174,30 @@ divide a length by a length — the duration needs the ratio as a plain number.
 Not `translateY(100%)`, which resolves against the *content's* own height: a block holding
 three screens of text would scroll three times as far for the same setting.
 
-*Accepted:* neither loops seamlessly. Content sweeps from below the box to above it and
-restarts; a block travels two canvases, entering off one edge and leaving off the other, so
-the restart happens out of frame. A seamless conveyor needs the content duplicated, which
-doubles that block's elements — and worse, layers would light each copy independently, so the
-same word would flicker differently in its two halves.
+#### The conveyor loops, or passes through once
+
+The same modifier again, on `contentMotion`. **Continuous** is a belt that never stops — the
+point of a conveyor. **Off** is a single pass: the text enters from below the box, leaves past
+the top, and is gone until the next typeset, which is a different effect worth having and the
+cheaper one.
+
+A seamless loop needs the text duplicated; there is no way round that. The objection was never
+the elements — it was that a layer lighting 5% of words would pick words in each copy
+independently, so the same word would flicker differently in its two halves and give the trick
+away. So the copy is **not** in the registries and is never targeted; `Channels` mirrors every
+write and every clear into it, which keeps the halves identical by construction rather than by
+luck.
+
+Travel is `max(text, box)`, and the copy sits exactly that far below the original, so at the
+wrap it lands where the original began. Using the text height alone would leave a gap whenever
+a passage is shorter than its box — the seam by another name. Verified: text taller than its
+box and text shorter than it both land the copy at the original's start position, both moving
+at the same velocity.
+
+A single pass needs no copy at all, so it costs nothing extra.
+
+*Block motion does not take the modifier.* A travelling block leaves the frame and re-enters
+from the other side either way, so there is nothing to choose.
 
 *Not built:* per-element motion. Moving a block is one transform; making individual words
 drift is one per element, and at a few thousand elements that is where the frame rate goes.

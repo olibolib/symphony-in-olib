@@ -354,6 +354,7 @@ function typesetNext(): void {
     mode: preset.text.mode,
     splitChars: preset.text.splitChars,
     count: preset.text.count,
+    continuous: preset.text.continuous,
     blocks: preset.text.blocks,
     // The VJ's mask wins: a preset can only ever be more restricted, never less (§11.6).
     mask: intersect(globalMask, preset.spawn),

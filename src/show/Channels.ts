@@ -27,23 +27,45 @@ export class Channels {
    */
   private readonly owned = new Map<number, Set<HTMLElement>>();
 
+  /**
+   * Where a seamless conveyor's duplicate elements are, so both halves get written.
+   *
+   * Set after every typeset. Without it the copy would scroll into view carrying none of the
+   * treatments the original had, and the belt would visibly be two different pieces of text.
+   */
+  private mirror: ((el: HTMLElement) => HTMLElement | undefined) | null = null;
+
+  setMirror(lookup: ((el: HTMLElement) => HTMLElement | undefined) | null): void {
+    this.mirror = lookup;
+  }
+
   /** Write one channel, recording the owner. */
   set(el: HTMLElement, channel: Channel, value: string, owner: number): void {
-    if (isScalar(channel)) {
-      el.style.setProperty(`--${channel}`, value);
-      el.dataset[channel] = '1';
-    } else {
-      el.dataset[channel] = value;
-    }
+    this.write(el, channel, value, owner);
 
-    el.dataset[`${channel}By`] = String(owner);
+    // The conveyor's second copy takes the same value, so the belt reads as one continuous
+    // piece of text rather than two that happen to say the same words.
+    const twin = this.mirror?.(el);
+    if (twin) this.write(twin, channel, value, owner);
 
     let set = this.owned.get(owner);
     if (!set) {
       set = new Set();
       this.owned.set(owner, set);
     }
+    // Only the original is tracked. Decay walks what it owns and clears the twin alongside,
+    // so the copy never needs to be a member in its own right.
     set.add(el);
+  }
+
+  private write(el: HTMLElement, channel: Channel, value: string, owner: number): void {
+    if (isScalar(channel)) {
+      el.style.setProperty(`--${channel}`, value);
+      el.dataset[channel] = '1';
+    } else {
+      el.dataset[channel] = value;
+    }
+    el.dataset[`${channel}By`] = String(owner);
   }
 
   /**
@@ -56,10 +78,17 @@ export class Channels {
   private clearIfOwned(el: HTMLElement, channel: Channel, owner: number): boolean {
     if (el.dataset[`${channel}By`] !== String(owner)) return false;
 
+    this.wipe(el, channel);
+
+    const twin = this.mirror?.(el);
+    if (twin) this.wipe(twin, channel);
+    return true;
+  }
+
+  private wipe(el: HTMLElement, channel: Channel): void {
     delete el.dataset[channel];
     delete el.dataset[`${channel}By`];
     if (isScalar(channel)) el.style.removeProperty(`--${channel}`);
-    return true;
   }
 
   /**
