@@ -574,7 +574,11 @@ export class Typesetter {
     this.lines = [];
     if (!enabled) return;
 
-    for (const block of this.blocks) {
+    // Every block on the stage, not just the originals: a wrapping `travel` adds copies after
+    // the registries were built, and a copy has to decide for itself which of its lines fit.
+    // Inheriting the original's decision is only right by accident — the conveyor's own
+    // repeats sit at different heights, so a line that fits in one does not fit in another.
+    for (const block of this.stage.container.querySelectorAll<HTMLElement>('.block')) {
       const boxHeight = block.clientHeight;
       const content = block.querySelector<HTMLElement>('.block-content');
       const blockTop = block.getBoundingClientRect().top;
@@ -616,10 +620,8 @@ export class Typesetter {
 
       // `hidden` rather than removal: the element stays in the registries, so a layer that
       // targeted it keeps its ownership and the line comes back intact when it fits again.
-      if (line.el.hidden === whole) {
-        line.el.hidden = !whole;
-        for (const twin of this.twinsOf(line.el)) twin.hidden = !whole;
-      }
+      // No mirroring: every line, in every copy, is measured and decided on its own.
+      if (line.el.hidden === whole) line.el.hidden = !whole;
     }
   }
 
@@ -694,6 +696,12 @@ export class Typesetter {
       copy.setAttribute('aria-hidden', 'true');
       copy.style.setProperty('--wrap', `${back.toFixed(2)}px`);
       container.append(copy);
+
+      // The copy carries its own conveyor, and a CSS animation on a new element starts from
+      // zero — so the copy's text would be scrolling at a different point in its cycle from
+      // the original's. Identical blocks a canvas apart, running the same belt out of step:
+      // the moment the wrap swaps one for the other, the text jumps.
+      syncAnimations(block, copy);
 
       pairUp(block, copy, this.twins);
     }
@@ -981,6 +989,31 @@ function translateY(el: HTMLElement | null): number {
 }
 
 const EMPTY: readonly HTMLElement[] = [];
+
+/**
+ * Start a copy's animations wherever the original's have got to.
+ *
+ * Matched by name, since the two trees are identical. Without it a clone begins every
+ * animation it carries from zero, which for a wrapping block means its conveyor is out of
+ * step with the one it is standing in for — and the swap at the wrap becomes a jump.
+ */
+function syncAnimations(original: HTMLElement, copy: HTMLElement): void {
+  const source = new Map<string, number>();
+
+  for (const animation of original.getAnimations({ subtree: true })) {
+    const name = (animation as CSSAnimation).animationName;
+    if (typeof name === 'string' && !source.has(name)) {
+      source.set(name, Number(animation.currentTime ?? 0));
+    }
+  }
+  if (source.size === 0) return;
+
+  for (const animation of copy.getAnimations({ subtree: true })) {
+    const name = (animation as CSSAnimation).animationName;
+    const at = typeof name === 'string' ? source.get(name) : undefined;
+    if (at !== undefined) animation.currentTime = at;
+  }
+}
 
 /** Elements a sentence will produce, so the budget can be checked before committing to it. */
 function sentenceCost(sentence: Sentence, splitChars: boolean): number {
