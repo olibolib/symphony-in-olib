@@ -112,6 +112,12 @@ export interface VisualPreset {
   readonly align: Align;
   readonly flow: Flow;
 
+  /** Fine placement, in pixels, on top of the anchor cell (§11.6). */
+  readonly offset: { readonly x: number; readonly y: number };
+
+  /** Hide lines that do not fit entirely inside the block. */
+  readonly wholeLines: boolean;
+
   /** Text through a stationary block, and the block itself travelling (§11.5). */
   readonly contentMotion?: ContentMotion;
   readonly blockMotion?: BlockMotion;
@@ -197,6 +203,8 @@ export function toDoc(preset: VisualPreset): PresetDoc {
     align: preset.align,
     flow: preset.flow,
     avoidOverlap: preset.avoidOverlap,
+    offset: preset.offset,
+    wholeLines: preset.wholeLines,
     layers: preset.layers,
   };
 }
@@ -221,6 +229,8 @@ export const PRESETS: readonly VisualPreset[] = [
     align: 'centre',
     flow: 'stack',
     avoidOverlap: true,
+    offset: { x: 0, y: 0 },
+    wholeLines: true,
     layers: [
       { treatment: 'accent', target: { slice: 'word', count: 2 }, triggers: { typeset: true }, decayBars: 0 },
 
@@ -268,6 +278,8 @@ export const PRESETS: readonly VisualPreset[] = [
     align: 'left',
     flow: 'stack',
     avoidOverlap: true,
+    offset: { x: 0, y: 0 },
+    wholeLines: true,
     layers: [
       // Acid's scattered colour, rebuilt out of the same parts as everything else: a quarter
       // of the words take a palette colour when the preset goes live, and never fade. What
@@ -321,6 +333,8 @@ export const PRESETS: readonly VisualPreset[] = [
     align: 'left',
     flow: 'wrapped',
     avoidOverlap: true,
+    offset: { x: 0, y: 0 },
+    wholeLines: true,
     layers: [
       { treatment: 'accent', target: { slice: 'word', proportion: 0.4 }, triggers: { typeset: true }, decayBars: 0 },
       { treatment: 'invert', target: { slice: 'word', count: 1 }, triggers: { hat: true }, decayBars: FADE.instant },
@@ -371,6 +385,8 @@ export const PRESETS: readonly VisualPreset[] = [
     // sentences better than anything else in the old table did.
     flow: 'run-on',
     avoidOverlap: true,
+    offset: { x: 0, y: 0 },
+    wholeLines: true,
     // Whole words, not characters — `splitChars` is false, so `char` targets would find
     // nothing here.
     layers: [

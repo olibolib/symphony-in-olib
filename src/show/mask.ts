@@ -169,6 +169,20 @@ export function place(anchor: Cell, cols: number, rows: number): Box {
   };
 }
 
+/**
+ * Nudge a placed box, in percentages of the stage.
+ *
+ * Applied after the grid has done its work, so it is genuinely fine adjustment rather than a
+ * second placement system. **Clamped to the canvas like the anchor is**: an offset that pushed
+ * a block off the edge would hide the text, and the grid exists precisely so that cannot
+ * happen by accident.
+ */
+export function nudge(box: Box, dx: number, dy: number): Box {
+  const left = Math.min(Math.max(0, box.left + dx), Math.max(0, 100 - box.width));
+  const top = Math.min(Math.max(0, box.top + dy), Math.max(0, 100 - box.height));
+  return { ...box, left, top };
+}
+
 function clampSpan(cells: number): number {
   if (!Number.isFinite(cells)) return 1;
   return Math.min(GRID, Math.max(1, Math.round(cells)));

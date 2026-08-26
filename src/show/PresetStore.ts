@@ -60,6 +60,8 @@ const NEW_PRESET_DOC: Omit<PresetDoc, 'name'> = {
   align: 'centre',
   flow: 'stack',
   avoidOverlap: true,
+  offset: { x: 0, y: 0 },
+  wholeLines: true,
   // One visible layer, so a new preset does something the moment it goes live rather than
   // looking broken until you have added one.
   layers: [

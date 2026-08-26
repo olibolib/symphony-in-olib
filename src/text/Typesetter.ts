@@ -1,5 +1,5 @@
 import type { Stage } from '../render/Stage';
-import { anchors, normalise, placeBlocks, type BlockShape, type Mask } from '../show/mask';
+import { anchors, normalise, nudge, placeBlocks, type BlockShape, type Mask } from '../show/mask';
 import { pick, randomInt, randomRange } from '../util/random';
 import { sentenceLength, type Sentence, type TextPreset } from './TextSource';
 
@@ -79,6 +79,12 @@ export interface TypesetOptions {
 
   readonly align?: Align;
   readonly flow?: Flow;
+
+  /** Fine placement in pixels, on top of the anchor cell. */
+  readonly offset?: { readonly x: number; readonly y: number };
+
+  /** Hide lines that do not fit entirely inside their block. */
+  readonly wholeLines?: boolean;
 
   /**
    * Text sliding **through** a block that stays put — the conveyor.
@@ -295,7 +301,17 @@ export class Typesetter {
 
       // Rolled per block, so a tall column can sit beside a wide band — a composition the
       // 3x3 grid could not produce, since every cell there was the same size (§11.6).
-      const box = boxes[index] ?? boxes[0]!;
+      const rolled = boxes[index] ?? boxes[0]!;
+
+      // Pixels in, percentages out: the offset is authored in pixels because that is the unit
+      // you think in when nudging something off a grid line, but placement is proportional so
+      // the block keeps its position if the stage is ever resized.
+      const offset = options.offset ?? { x: 0, y: 0 };
+      const box = nudge(
+        rolled,
+        (offset.x / this.stage.width) * 100,
+        (offset.y / this.stage.height) * 100,
+      );
 
       // The box's height, twice: as a length and as a fraction of the canvas.
       //
@@ -377,6 +393,9 @@ export class Typesetter {
 
     // After the travel is known, since that is what sets the duration.
     this.applyPhases(phases);
+
+    this.measureLines(options.wholeLines === true);
+    this.trimLines();
 
     this.measureClipping();
   }
@@ -468,6 +487,75 @@ export class Typesetter {
 
       block.style.setProperty('--travel', `${loop.toFixed(2)}px`);
       block.style.setProperty('--travelr', (loop / this.stage.height).toFixed(5));
+    }
+  }
+
+  /**
+   * Where each line sits inside its block, so partial ones can be hidden.
+   *
+   * A conveyor cuts a line in half at the edge it is leaving through, and half a line of type
+   * reads as damage rather than as motion — worst at the top, which is the edge text scrolls
+   * out of.
+   *
+   * Measured once here rather than read per frame. `getBoundingClientRect` on every line every
+   * frame would be a layout flush sixty times a second, which §14 rules out; the positions
+   * only change because the block is being translated, and that translation is known.
+   */
+  private lines: {
+    readonly el: HTMLElement;
+    readonly content: HTMLElement | null;
+    readonly top: number;
+    readonly height: number;
+    readonly boxHeight: number;
+  }[] = [];
+
+  private measureLines(enabled: boolean): void {
+    this.lines = [];
+    if (!enabled) return;
+
+    for (const block of this.blocks) {
+      const boxHeight = block.clientHeight;
+      const content = block.querySelector<HTMLElement>('.block-content');
+      const blockTop = block.getBoundingClientRect().top;
+      const padding = parseFloat(getComputedStyle(block).paddingTop) || 0;
+
+      // The block may already be part-way through its cycle — the phase is carried across a
+      // typeset — so what is measured now includes however far it has been translated.
+      // Recording that and taking it back out leaves the line's position *at rest*, which is
+      // the only value that stays true for the whole cycle.
+      const shift = translateY(content);
+
+      for (const line of block.querySelectorAll<HTMLElement>('p')) {
+        const rect = line.getBoundingClientRect();
+        this.lines.push({
+          el: line,
+          // Only a moving block needs re-checking; a still one is decided here and never again.
+          content: block.dataset['conveyor'] !== undefined ? content : null,
+          top: rect.top - blockTop - padding - shift,
+          height: rect.height,
+          boxHeight: boxHeight - padding * 2,
+        });
+      }
+    }
+  }
+
+  /**
+   * Hide any line that does not fit entirely inside its block.
+   *
+   * Called every frame, but it does no layout work: a line's position is where it was measured
+   * plus however far its block has been translated since, and that comes from the animation
+   * rather than from the DOM. Writing only on a change keeps it off the compositor's back.
+   */
+  trimLines(): void {
+    if (this.lines.length === 0) return;
+
+    for (const line of this.lines) {
+      const top = line.top + translateY(line.content);
+      const whole = top >= -0.5 && top + line.height <= line.boxHeight + 0.5;
+
+      // `hidden` rather than removal: the element stays in the registries, so a layer that
+      // targeted it keeps its ownership and the line comes back intact when it fits again.
+      if (line.el.hidden === whole) line.el.hidden = !whole;
     }
   }
 
@@ -789,6 +877,20 @@ function pairUp(
     const b = to[i];
     if (a && b) twins.set(a, b);
   }
+}
+
+/**
+ * How far an element has been moved down by its transform, in pixels.
+ *
+ * Read from the computed style rather than the animation, because that is the value actually
+ * on screen this frame — the animation's own `currentTime` is a description of where it should
+ * be, and the two can disagree by a frame.
+ */
+function translateY(el: HTMLElement | null): number {
+  if (!el) return 0;
+  const transform = getComputedStyle(el).transform;
+  if (transform === 'none') return 0;
+  return parseFloat(transform.split(',')[5] ?? '0') || 0;
 }
 
 /** Elements a sentence will produce, so the budget can be checked before committing to it. */

@@ -103,6 +103,8 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
     align: pickFrom(o['align'], ALIGNS, fallback.align, 'align', say) as Align,
     flow: pickFrom(o['flow'], FLOWS, fallback.flow, 'flow', say) as Flow,
     avoidOverlap: bool(o['avoidOverlap'], fallback.avoidOverlap),
+    wholeLines: bool(o['wholeLines'], fallback.wholeLines),
+    offset: offset(o['offset'], fallback.offset),
     ...motion(o['contentMotion'], CONTENT_DIRECTIONS, 'contentMotion', say),
     ...motion(o['blockMotion'], BLOCK_DIRECTIONS, 'blockMotion', say),
     layers: layers(o['layers'], say),
@@ -265,6 +267,23 @@ function layers(value: unknown, say: Say): readonly LayerSpec[] {
   });
 
   return out;
+}
+
+/**
+ * A pixel nudge off the anchor.
+ *
+ * Clamped to a stage-sized range: a value beyond that could only push a block off the canvas,
+ * and placement clamps it back anyway, so accepting it would store a number that does nothing.
+ */
+function offset(value: unknown, fallback: { x: number; y: number }): { x: number; y: number } {
+  if (!isRecord(value)) return fallback;
+
+  const read = (key: string, from: number): number => {
+    const raw = value[key];
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) return from;
+    return Math.min(2000, Math.max(-2000, Math.round(raw)));
+  };
+  return { x: read('x', fallback.x), y: read('y', fallback.y) };
 }
 
 const CONTENT_DIRECTIONS = new Set(['up', 'down']);

@@ -81,6 +81,23 @@ export interface PresetDoc {
   readonly flow: Flow;
   readonly avoidOverlap: boolean;
 
+  /**
+   * Nudge every block off its anchor, in pixels (§11.6).
+   *
+   * The grid places a block to the nearest cell, which is a coarse instrument — a seventh of
+   * the frame. This is the fine one: positive `x` moves right, positive `y` moves down.
+   */
+  readonly offset: { readonly x: number; readonly y: number };
+
+  /**
+   * Show only lines that fit entirely inside the block.
+   *
+   * A conveyor cuts a line in half at the edge it is leaving through, and a half-line of type
+   * reads as damage rather than as motion. On by default, because the top edge is the one
+   * text scrolls out of and a clipped top is the least forgivable.
+   */
+  readonly wholeLines: boolean;
+
   /** Text sliding through a stationary block, and the block travelling (§11.5). */
   readonly contentMotion?: ContentMotion;
   readonly blockMotion?: BlockMotion;

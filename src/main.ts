@@ -430,6 +430,8 @@ function typesetNext(): void {
     align: preset.align,
     flow: preset.flow,
     avoidOverlap: preset.avoidOverlap,
+    offset: preset.offset,
+    wholeLines: preset.wholeLines,
     ...(preset.contentMotion ? { contentMotion: preset.contentMotion } : {}),
     ...(preset.blockMotion ? { blockMotion: preset.blockMotion } : {}),
     size: preset.text.size,
@@ -918,6 +920,11 @@ function frame(now: number): void {
   }
 
   conductor.tick(ctx);
+
+  // Hide lines a moving block has carried half out of frame. No layout reads — it works from
+  // the translation the animation has already applied.
+  typesetter.trimLines();
+
   stage.updateScroll(dt);
 
   hud.countFrame(now);
