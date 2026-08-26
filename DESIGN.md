@@ -667,15 +667,33 @@ a pulse.
 |---|---|---|---|
 | under 12% | — | — | absorbed by fine correction, no re-lock |
 | 12% | 0.8× typical | 0.45 | 8 estimates (~2s) |
-| 30% or more | 1.0× typical | 0.80 | 28 estimates (~7s) |
+| 30% or more | 0.95× typical | 0.70 | 14 estimates (~3.5s) |
 
 Ramped between the two, and on top of all of it the proposed tempo must agree with the kicks
 *better than the one already playing does* — otherwise there is no reason to move.
 
 Not a flat refusal at the top end, because a hard cut between genres does happen and the grid
 should follow it. Measured: a genuine 128 → 174 cut with real kicks behind it is taken after
-**11.8 seconds**. That is the price of the top row, and it is the right way round — being eleven
-seconds late to a hard cut costs one transition, being wrong for a whole intro costs the set.
+**7.9 seconds**.
+
+The top row started at 1.0 / 0.80 / 28 and took 11.8 seconds, which a real house-to-drum-and-
+bass change showed to be too long — long enough to be visibly on the wrong grid through a
+transition. **The agreement test is what rejects an intro**; the long hold was belt and braces
+on top of it, and it cost more than it bought. Softening it did not cost any of the cases the
+rule exists for: the hats-and-snares intro still moves nothing, a breakdown still cannot walk
+the tempo, and a beatmatched mix is still absorbed by fine correction rather than re-locking.
+
+#### A tap is also a way out
+
+Detection *agreeing* with a tapped tempo is the track change seen from the other side. So
+manual hands back at that point rather than going on refusing corrections from a tracker that
+has already caught up — which also leaves the phase locked to wherever the taps happened to
+land rather than to the record.
+
+That makes tapping the fast path past a jump the automatic rule is being careful about: tap the
+new tempo once and detection resumes on it immediately. A tap that *disagrees* with what is
+playing still holds, and detection still wins eventually on the ordinary track-change rule
+(§9.4) — a few disagreeing estimates do not undo a tap.
 
 #### Fine correction
 
@@ -1034,7 +1052,7 @@ scatter                                          [live]  [→]
 One row per layer, a dropdown per axis, a slider for amount, a checkbox per trigger, and a
 two-handle range where the treatment takes one. The grid is clickable and drag-selectable.
 
-#### Two rules the editor follows
+#### Three rules the editor follows
 
 **Ranges collapse to one number.** A min and a max, where you nearly always want a single
 value, is two fields to keep in step. Every range shows one value with a `±` toggle; open it and
@@ -1046,8 +1064,25 @@ controls that belong to it and leaves the triggers and decay alone. It used to r
 triggers to `kick` every time, because the row's handlers had closed over a stale copy of the
 layer.
 
+**A typed number is held to its own bounds.** `min` and `max` on a number input are advisory —
+the browser draws the spinner and marks the field invalid, but nothing stops you typing 500 into
+an 8–200 size box, and reading `.value` hands it straight back. Every field in the editor read
+it that way, so a size of 500px or a decay of −3 bars went into the preset unchallenged.
+
+Clearing a field is the same bug from the other side: `.value` is `''` and `Number('')` is
+**0**, so emptying the size box set the type to 0px rather than doing nothing. Empty means
+"still typing", so the last good value stands.
+
+The *ordering* guard was already right in both the editor and the loader, which is why this
+never showed up as a min above a max.
+
 **Space types a space.** Tap tempo is on the space bar and used to fire while you were typing
 into a text field. Key handling checks for a focused field first.
+
+**Units go after the number.** The decay field read `bars [n]`, which put the word between the
+target amount and the number it belonged to and left it looking like a label for the trigger
+checkboxes on its other side — reported as exactly that. It reads `fade [n] bars` now, like
+`every [n] bars` beside it.
 
 #### Open risks
 
@@ -1462,7 +1497,22 @@ The limit on repeats is **elements, not copies**, because that is where the cost
 line needs nineteen repeats and costs almost nothing; a dense paragraph needs three and costs a
 great deal. Capping the copies punished the cheap case and let the expensive one through. Half
 the element budget, so a conveyor can never cost more in repeats than the text itself, with a
-floor of two — one repeat is what makes it a loop at all. Using the text height alone would leave a gap whenever
+floor of two — one repeat is what makes it a loop at all.
+
+**The budget rises as the type gets smaller**, and it has to. A flat cap ran out of copies
+exactly when the text was small: shrinking the type shrinks the text height, so the number of
+copies needed to fill the same box grows, while the elements per copy — the same words — do
+not. The cap bound, the belt stopped covering the box, and a gap crossed the frame once a
+cycle. Reported as scroll losing its smoothness on small text at 1080p, which is where the box
+is tallest.
+
+Inverse in the size, because the cost that matters is pixels painted and that falls as the type
+shrinks, with a ceiling since nothing stops a preset asking for 8px. A dense split-chars passage
+at 360 elements per copy in a 1080px box wanted 19 copies and could afford 8; it can now afford
+29.
+
+Widening the gaps between copies instead would have been cheaper and was rejected outright: a
+conveyor with visible spacing in it is not the effect. Using the text height alone would leave a gap whenever
 a passage is shorter than its box — the seam by another name. Verified: text taller than its
 box and text shorter than it both land the copy at the original's start position, both moving
 at the same velocity.
@@ -1735,19 +1785,39 @@ things, and the shapes in a preset are **authored** rather than arbitrary — so
 non-overlapping arrangement nearly always exists, and finding it costs nothing at typeset
 time.
 
-So `avoidOverlap` is a preset setting, **on by default**. Placement walks every anchor
-against every shape in random order and takes the first arrangement that does not collide.
-Bounded at 49 × shapes and reached only on a re-typeset, so exhaustive is affordable — and
-exhaustive is what makes "no arrangement exists" mean it, rather than meaning the random
-attempts ran out.
-
-Measured over 4000 typesets with the built-in shapes, this is not a marginal fix:
+So `avoidOverlap` is a preset setting, **on by default**. Measured over 4000 typesets with the
+built-in shapes, it is not a marginal fix:
 
 | Preset | Overlapping typesets, off | On |
 |---|---|---|
 | `scatter`, 2 blocks | 46.0% | 0.0% |
 | `swarm`, 2 blocks | 69.3% | 0.7% |
 | `scatter`, 3 blocks | — | 0.1% |
+
+**Placing the blocks one at a time was a bug**, and it survived those numbers because the
+built-in shapes are small enough to hide it. The first block took a blind roll and only later
+blocks searched, so a first block that landed badly could make a clean arrangement impossible —
+and nothing ever went back to move it. Two full-height blocks can only sit side by side; roll
+the first into a middle column and the second has nowhere to go, however exhaustively it looks.
+Found by a preset with two full-height travelling blocks, which is exactly the shape that
+exposes it.
+
+Placement is now **one decision rather than a sequence of independent ones**: random whole
+arrangements first, so the ordinary case draws anchors and sizes exactly as it always did and
+is simply rejected if it collides, then a backtracking search over every distinct box the mask
+and shapes allow, then overlapping. Over 3000 typesets of the case that found it:
+
+| Shapes | One at a time | As an arrangement |
+|---|---|---|
+| two full-height | 13.9% | **0%** |
+| two full-width | 14.5% | **0%** |
+| three full-height | 8.2% | **0%** |
+| two blocks that cannot both fit | 100% | 100% |
+
+The last row is the point of the exercise: an arrangement that genuinely does not exist still
+overlaps. The search considers every size in a shape's range rather than one rolled size,
+because it only runs when the rolled sizes did not fit — and it is bounded by a node budget, so
+a pathological mask cannot stall a frame. Worst case measured at 0.03ms.
 
 **It changes which placement is chosen, never whether one happens.** If nothing fits — the
 mask is tight, the shapes are large, or there are simply too many blocks — the block is
@@ -1783,6 +1853,24 @@ owns the element keeps its ownership and the line returns intact when it fits ag
 **Nudge.** Anchors are grid cells, which is deliberately coarse. Four pixel offsets — up, down,
 left, right — move a block off its anchor without giving up the grid: fine control where you
 want it, nothing to think about where you don't.
+
+#### A mask may be empty, and says which one is empty
+
+Clicking the last allowed cell, or inverting a full grid, used to be refused. The reason given
+was that an empty mask skipped every preset and left the stage blank with nothing to explain
+it — which was true when the only message named the global mask whatever the cause.
+
+There are **three ways to have no cells**, and they are fixed in different tabs:
+
+| | |
+|---|---|
+| The global mask is empty | nothing at all can be placed — Canvas tab |
+| The preset's own grid is empty | only this preset — Presets tab |
+| Both have cells but they do not overlap | the global mask being absolute — Canvas tab |
+
+With those separated, empty is a reachable state, which it should be: clearing the grid is a
+reasonable thing to do on the way to choosing somewhere else, and a control that silently
+declines the last click is worse than one that lets you see what empty looks like.
 
 #### Two masks, intersected
 
@@ -2472,9 +2560,11 @@ heuristics, behaviour through breakdowns and silence.
 
 **Done so far:** the kick decides whether a tempo change is believed (§9.2.4). Strength against
 its own recent typical, agreement between the kicks and the tempo being proposed, and a bar that
-rises with the size of the jump because DJs beatmatch. Two observed failures drove it — a
-breakdown re-locking the grid to a shaker, and a minute-long intro of hats and snares jumping
-130 to 170 on a track that was 130.
+rises with the size of the jump because DJs beatmatch. Three observed failures drove it — a
+breakdown re-locking the grid to a shaker, a minute-long intro of hats and snares jumping 130 to
+170 on a track that was 130, and then the rule being strict enough that a real house-to-DnB
+change did not take. A tap now hands control back to detection when the two agree, which is the
+manual way past the same problem.
 
 ### Increment 4 — palettes
 
@@ -2583,6 +2673,11 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Believing any confident tempo estimate | **Dropped** | Hats through a breakdown genuinely are periodic. The kicks have to agree with the tempo, not merely be loud (§9.2.4) |
 | A one-minute kick history | **Dropped** | A section longer than the window becomes the window's idea of normal. Three minutes (§9.2.4) |
 | Canvas bounds reset on every launch | **Dropped** | OBS captures the window by its rectangle; losing it means re-cropping every time (§13.1) |
+| Placing blocks one at a time | **Dropped** | Greedy: a bad first placement made a clean arrangement impossible and nothing went back to move it. Placement is one decision (§11.6) |
+| Refusing to let a mask reach empty | **Dropped** | Held only while one message named the global mask for all three ways of having no cells. Separate the messages and empty is fine (§11.6) |
+| Widening the gaps between conveyor copies | **Dropped** | Cheaper than raising the budget, and not the effect. A conveyor with visible spacing in it is a different thing (§11.5) |
+| Trusting `min`/`max` on a number input | **Dropped** | Advisory only. Every editor field read straight past them, and an empty field read as 0 (§11.4) |
+| Manual holding after detection agrees with it | **Dropped** | Agreement *is* the track change, seen from the other side. Handing back makes a tap the fast way past a big jump (§9.2.4) |
 
 ---
 
@@ -2599,8 +2694,9 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Q10 | Tempo reads a few percent low and the cause is not yet found. Deferred as good enough for visuals — revisit with a correlation-curve plot before changing the algorithm again | §9.2.3 |
 | Q11 | Block count is currently random 1–2 per re-typeset. Should it correlate with something — energy, for instance — rather than being arbitrary? | §11.6 |
 | Q12 | Are long sentences (up to 27 words) too dense at the new size floor, especially two blocks at once? | §12.4.2 |
-| Q14 | A genuine hard cut of 30%+ now takes ~12s to follow. Right trade, or should the top of the scale be softened? | §9.2.4 |
-| Q15 | Should the control window's position be remembered too? Same few lines, but it hides to the tray rather than closing | §7.3 |
+| ~~Q16~~ | ~~A genuine hard cut of 30%+ takes ~12s to follow. Right trade, or should the top of the scale be softened?~~ **Answered: softened**, to 0.95 / 0.70 / 14 and 7.9s, after a real house-to-DnB change failed to take. A tap now also hands control back | §9.2.4 |
+| Q17 | Should the control window's position be remembered too? Same few lines, but it hides to the tray rather than closing | §7.3 |
+| Q18 | The conveyor budget fix is reasoned from the formula, not measured — the trigger is a rendered text height. Worth confirming on a 1080p stage with small type | §11.5 |
 | Q13 | Pulse amounts are guesses (0.012–0.022). Worth tuning against a projector rather than a monitor — apparent scale changes with viewing distance | §12.2.1 |
 | ~~Q14~~ | ~~Fork on editing a built-in?~~ **Answered: no fork.** Built-ins are editable directly; "Restore defaults" re-seeds them | §11.4 |
 | ~~Q15~~ | ~~Do built-ins stay compiled?~~ **Answered: no.** Everything becomes data, for consistency. Type safety comes from `as const` definitions plus validation on load | §11.4 |

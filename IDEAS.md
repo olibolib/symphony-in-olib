@@ -135,7 +135,7 @@ Notes:
 
 ---
 
-## 6. Bugs
+## 6. Bugs — both patched
 
 - **Mask invert refuses to reach empty.** `MaskGrid.invert()` (`src/hud/MaskGrid.ts`) flips
   every cell but then discards the result if it would leave nothing allowed — a deliberate
@@ -143,6 +143,11 @@ Notes:
   skipped with no visible cause. Report is that empty should be a reachable state — inverting
   a full mask should be allowed to land on empty, not silently no-op. Needs deciding what
   should communicate "mask is empty" instead of just blocking the invert.
+
+  *Answer:* the message did. There are three ways to have no cells — the global mask empty, the
+  preset's own grid empty, or the two not overlapping — and one message named the global mask
+  for all three. Separated, so empty is now reachable by inverting *and* by clicking the last
+  cell, and whichever mask is at fault is named along with the tab it lives in.
 - **Setting a max below the min.** In `rangeField` (`src/hud/PresetEditor.ts`), used for
   every min/max control in the editor — text size, block shapes, layer size — this already
   seems to be guarded: moving max below min pulls min down to match, and moving min above max
@@ -151,24 +156,40 @@ Notes:
   max. Flagging rather than logging as still-open: worth saying where this is still showing up,
   since the obvious spots already push the other value out of the way.
 
+  *Answer:* the ordering guard was right — it is the **bounds** that were not enforced. `min`
+  and `max` on a number input are advisory, so typing 500 into an 8-200 size box passed
+  straight through, and clearing a field read as `Number('') === 0`, setting the type to 0px.
+  Fixed for every field in the editor, not just the ranges.
+
 ---
 
-## 7. Bug — scroll not smooth on tiny text at 1080p
+## 7. Bug — scroll not smooth on tiny text at 1080p — patched
 
 Reported live at 1080p: scroll stops being smooth, and it's suspected some other setting
 change is behind it. Suspicion is that it's caused by small text size specifically.
 
+**Patched.** The suspicion was right. The belt is capped by an element budget; small type
+shrinks the text height so more copies are needed to fill the same box, while the elements per
+copy stay the same. The cap bound, the belt stopped covering the box, and a gap crossed the
+frame once a cycle. The budget now scales inversely with type size. Reasoned from the formula
+rather than measured — worth confirming on a 1080p stage with small type.
+
 ---
 
-## 8. Bug — "bars" label wrong on the layer UI
+## 8. Bug — "bars" label wrong on the layer UI — patched
 
 The label reading "bars" in the layer UI, next to the checkboxes where a time length is
 selected, is wrong — it's not counting bars, it's measuring the length of some other unit
 of time for that selection.
 
+**Patched.** The unit was honest; the *placement* was not. It read `bars [n]`, putting the word
+between the target amount and the number it belonged to, so it looked like a label for the
+trigger checkboxes on its other side — which is why it read as being about the checkboxes. Now
+`fade [n] bars`, unit after the number like `every [n] bars` beside it.
+
 ---
 
-## 9. Bug — avoidOverlap doesn't avoid overlap for travelling blocks
+## 9. Bug — avoidOverlap doesn't avoid overlap for travelling blocks — patched
 
 `avoidOverlap` (§11.6, `mask.ts`'s `placeBlocks`) is meant to search for a non-colliding
 arrangement before falling back to letting blocks overlap. Report is that it isn't finding
@@ -181,14 +202,28 @@ Travelling off part of the time doesn't disqualify a placement — a block that'
 and off screen not being fully visible at any one instant is expected and fine; that's not a
 reason to accept an overlap that a lower/higher or left/right placement would have avoided.
 
+**Patched.** Travel had nothing to do with it — placement never sees it. The bug was that
+blocks were placed **one at a time**: the first took a blind roll and only later blocks
+searched, so a first block landing in a middle column left the second nowhere to go and nothing
+went back to move it. Two full-height blocks is exactly the shape that exposes it. Placement is
+now one decision over all the blocks. Measured over 3000 typesets: 13.9% collided before, 0%
+now, and a genuinely impossible pair still overlaps.
+
 ---
 
-## 10. The big-jump tempo rule is too strong
+## 10. The big-jump tempo rule is too strong — patched
 
 `BeatTracker`'s re-lock rule (DESIGN.md §9.2.3) scales evidence demanded with the size of a
 tempo jump — 30% or more needs 0.80 agreement held for 28 estimates (~7s) before the grid
 moves, measured at 11.8s to actually take a genuine 128→174 cut. Report is that this is too
 strong — it's holding out for too much proof, or too long, on a big jump.
+
+**Patched.** Softened to 0.95 / 0.70 / 14, which takes the same 128-to-174 cut in 7.9s rather
+than 11.8s, with the hats-and-snares intro still moving nothing. The tap idea is in too:
+detection agreeing with a tapped tempo now hands control back, so tapping the new tempo once is
+the manual way past a jump the automatic rule is being careful about.
+
+(The rule lives in `Clock`, not `BeatTracker`, and it is DESIGN.md 9.2.4.)
 
 ---
 
