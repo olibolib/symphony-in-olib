@@ -635,7 +635,16 @@ export class Typesetter {
       if (!Number.isFinite(left) || !Number.isFinite(top)) continue;
 
       const x = shiftInto(left, right, frame.left, frame.right);
-      const y = shiftInto(top, bottom, frame.top, frame.bottom);
+
+      // **Never vertically for a conveyor.** Its content is deliberately several canvases tall
+      // — that is what makes it a belt — and it is deliberately outside its box, which is what
+      // makes the box a window. Measuring all of it and concluding the block is in the wrong
+      // place shoved it hundreds of pixels down the frame until nothing was on screen at all.
+      //
+      // Nothing is lost by leaving it: the axis a conveyor travels is the one axis it does
+      // still clip, so what leaves the box that way was never going to be visible.
+      const scrolling = block.dataset['conveyor'] !== undefined;
+      const y = scrolling ? 0 : shiftInto(top, bottom, frame.top, frame.bottom);
 
       if (x !== 0) block.style.setProperty('--fit-x', `${x.toFixed(2)}px`);
       else block.style.removeProperty('--fit-x');
