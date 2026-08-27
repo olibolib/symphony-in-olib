@@ -614,17 +614,23 @@ export class Typesetter {
     const frame = this.stage.container.getBoundingClientRect();
 
     for (const block of this.blocks) {
-      const lines = block.querySelectorAll<HTMLElement>('p');
-      if (lines.length === 0) continue;
+      // **Words, not lines.** A `<p>` is a block box: it takes the width of its container and
+      // an inline-block child wider than that simply hangs out of it, so the line's rectangle
+      // does not include the word sticking out — which is precisely the thing being measured.
+      //
+      // Only the first copy. A conveyor's repeats are the same words at the same width, so
+      // measuring all of them is the same answer several times over.
+      const words = block.querySelectorAll<HTMLElement>('.loop:not([data-copy]) w');
+      if (words.length === 0) continue;
 
       let left = Infinity;
       let right = -Infinity;
       let top = Infinity;
       let bottom = -Infinity;
 
-      for (const line of lines) {
-        if (line.hidden) continue;
-        const rect = line.getBoundingClientRect();
+      for (const word of words) {
+        const rect = word.getBoundingClientRect();
+        // A word in a trimmed line has no box at all, which is how hidden lines stay out of it.
         if (rect.width === 0 && rect.height === 0) continue;
         left = Math.min(left, rect.left);
         right = Math.max(right, rect.right);
