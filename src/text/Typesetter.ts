@@ -499,6 +499,12 @@ export class Typesetter {
     // typeset's elements.
     this.twins = new WeakMap();
 
+    // **Before the conveyor is measured**, because widening a block re-wraps its text and so
+    // changes its height — and the conveyor's whole geometry is derived from that height. It
+    // was running afterwards, which left every copy positioned for a taller passage than the
+    // one actually there: the belt developed gaps and eventually ran out into black.
+    this.growToContent();
+
     const conveyor = options.contentMotion;
     if (conveyor && conveyor.speed > 0) this.measureConveyor(conveyor.continuous);
 
@@ -508,9 +514,7 @@ export class Typesetter {
     // After the travel is known, since that is what sets the duration.
     this.applyPhases(phases);
 
-    // Widen first, then nudge what is still off the canvas, then measure the lines — each
-    // step reads a layout the one before it settled.
-    this.growToContent();
+    // After the copies exist, so a conveyor is recognised as one and left alone vertically.
     this.fitToCanvas(options.blockMotion !== undefined);
 
     this.measureLines(options.wholeLines === true);
