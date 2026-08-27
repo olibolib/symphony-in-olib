@@ -15,6 +15,7 @@ import type { TextPreset } from '../text/TextSource';
 
 const DOC: PresetDoc = {
   name: 'under-test',
+  version: 1,
   energy: 'any',
   text: {
     slice: 'sentence',

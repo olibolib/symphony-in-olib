@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePreset } from './presetIo';
+import { parsePreset, PRESET_VERSION } from './presetIo';
 import { decayProbability } from './Channels';
 import { FULL } from './mask';
 import type { PresetDoc } from '../ipc/protocol';
@@ -15,6 +15,7 @@ import type { PresetDoc } from '../ipc/protocol';
 
 const BLANK: PresetDoc = {
   name: 'blank',
+  version: PRESET_VERSION,
   energy: 'any',
   text: {
     slice: 'sentence',
@@ -140,17 +141,61 @@ describe('parsePreset: layers', () => {
 });
 
 describe('parsePreset: migration', () => {
+  /** A document as it was written before `version` existed. */
+  const v0 = (over: Record<string, unknown> = {}): Record<string, unknown> => {
+    const doc: Record<string, unknown> = { ...BLANK, ...over };
+    delete doc['version'];
+    return doc;
+  };
+
   it('carries an old text mode across to slice, take and pick', () => {
-    const old = { ...BLANK, text: { ...BLANK.text, mode: 'shortSentences', count: 2 } };
-    delete (old.text as Record<string, unknown>)['slice'];
-    const result = parse(old);
+    const text = { ...BLANK.text, mode: 'shortSentences', count: 2 } as Record<string, unknown>;
+    delete text['slice'];
+
+    const result = parse(v0({ text }));
     expect(result.migrated).toBe(true);
     expect(result.doc.text.slice).toBe('sentence');
     expect(result.doc.text.length).toBe('short');
   });
 
+  it('carries document motion across as a layer', () => {
+    const result = parse(v0({ contentMotion: { direction: 'up', speed: 0.2, continuous: true } }));
+    expect(result.migrated).toBe(true);
+    expect(result.doc.layers.some((l) => l.treatment === 'scroll')).toBe(true);
+  });
+
+  it('validates a migrated layer like any other', () => {
+    // The migration rewrites the raw document, so what it produces goes through the same
+    // checks. It used to append LayerSpec objects past the validator.
+    const result = parse(v0({ contentMotion: { direction: 'sideways', speed: 0.2 } }));
+    expect(result.doc.layers.some((l) => l.treatment === 'scroll')).toBe(false);
+    expect(result.problems.length).toBeGreaterThan(0);
+  });
+
+  it('stamps a versionless document without saying anything about it', () => {
+    const result = parse(v0());
+    expect(result.doc.version).toBe(PRESET_VERSION);
+    expect(result.migrated).toBe(true);
+    // Silently upgraded: only a step that actually rewrote something is worth reporting.
+    expect(result.problems).toEqual([]);
+  });
+
   it('does not claim to have migrated a current document', () => {
     expect(parse(BLANK).migrated).toBe(false);
+    expect(parse(BLANK).doc.version).toBe(PRESET_VERSION);
+  });
+
+  it('does not re-run a migration on a document that already declares the version', () => {
+    // A file claiming to be current keeps its fields even if an older one happens to be there.
+    const result = parse({ ...BLANK, text: { ...BLANK.text, mode: 'shortSentences' } });
+    expect(result.doc.text.slice).toBe(BLANK.text.slice);
+    expect(result.migrated).toBe(false);
+  });
+
+  it('does not run migrations backwards for a document from a newer build', () => {
+    const result = parse({ ...BLANK, version: 99 });
+    expect(result.doc.version).toBe(PRESET_VERSION);
+    expect(result.doc.text.slice).toBe(BLANK.text.slice);
   });
 
   it('round-trips a document it just produced', () => {

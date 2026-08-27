@@ -3,7 +3,7 @@ import type { PresetDoc } from '../ipc/protocol';
 import { retext } from '../effects';
 import { FULL } from './mask';
 import type { Bindings } from './Conductor';
-import { parsePreset } from './presetIo';
+import { PRESET_VERSION, parsePreset } from './presetIo';
 import { PRESETS, toDoc, type VisualPreset } from './presets';
 
 /**
@@ -43,6 +43,7 @@ const NEW_PRESET_PARTS: StageParts = {
 };
 
 const NEW_PRESET_DOC: Omit<PresetDoc, 'name'> = {
+  version: PRESET_VERSION,
   energy: 'any',
   text: {
     slice: 'sentence',

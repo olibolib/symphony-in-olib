@@ -47,6 +47,15 @@ export interface BandSnapshot {
  */
 export interface PresetDoc {
   readonly name: string;
+
+  /**
+   * The document format this was written in. See `presetIo`'s migration chain.
+   *
+   * A file without one is version 0 — everything saved before versions existed. Detecting an
+   * old format by sniffing for a field it happens to have works exactly once; this is what the
+   * second migration is built on instead.
+   */
+  readonly version: number;
   readonly energy: EnergyTag;
 
   readonly text: {

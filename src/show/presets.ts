@@ -10,6 +10,7 @@ import type {
 import type { Bindings } from './Conductor';
 import type { LayerSpec } from './Layer';
 import type { PresetDoc } from '../ipc/protocol';
+import { PRESET_VERSION } from './presetIo';
 import { KEEP_CENTRE_CLEAR, type BlockShape, type Mask } from './mask';
 
 /**
@@ -191,6 +192,7 @@ const FADE = {
 export function toDoc(preset: VisualPreset): PresetDoc {
   return {
     name: preset.name,
+    version: PRESET_VERSION,
     energy: preset.energy,
     text: {
       slice: preset.text.slice,

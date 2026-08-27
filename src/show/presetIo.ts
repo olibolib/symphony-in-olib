@@ -78,6 +78,70 @@ const TRIGGERS = new Set<string>([
  * The fallback is what a field falls back *to*, so re-seeding a built-in that has picked up a
  * bad edit keeps whatever is still valid rather than resetting the whole preset.
  */
+/**
+ * A step from one document version to the next, applied in order.
+ *
+ * Each entry rewrites the **raw record**, before any validation runs, so a migrated field is
+ * then checked exactly like one that was written in the current format. That matters: the motion
+ * migration used to build `LayerSpec` objects and append them past the validator, which is one
+ * more thing that could put an unchecked value on the stage.
+ *
+ * Index `n` takes a version `n` document to version `n + 1`. A file with no `version` at all is
+ * version 0 — everything written before this existed.
+ */
+type Migration = (o: Record<string, unknown>, say: Say) => void;
+
+const MIGRATIONS: readonly Migration[] = [toV1];
+
+/** What this build writes. Bump it and add a migration in the same commit, never one alone. */
+export const PRESET_VERSION = MIGRATIONS.length;
+
+/**
+ * Version 0 to 1: text selection became slice/take/pick, and motion became a layer.
+ *
+ * Both were previously detected by sniffing for a field — `text.mode` for one, `contentMotion`
+ * for the other. Sniffing works for one migration and stops working the moment two have to be
+ * applied in order, or one has to be told apart from a field simply being absent. Version 1
+ * exists so the second one does not have to invent a third sniff.
+ */
+function toV1(o: Record<string, unknown>, say: Say): void {
+  const text = isRecord(o['text']) ? o['text'] : null;
+
+  // `text.mode` bundled the slice, the quantity and a length filter into one dropdown.
+  if (text) {
+    const oldMode = text['mode'];
+    if (typeof oldMode === 'string' && text['slice'] === undefined) {
+      // `continuous` was itself a mode before it was a modifier, so an even older file can
+      // arrive with it here.
+      const reading = oldMode === 'continuous';
+      const mapped = OLD_MODES[reading ? 'sentences' : oldMode];
+
+      if (mapped) {
+        text['slice'] = mapped.slice;
+        text['length'] = mapped.length;
+        text['take'] = mapped.take ?? text['count'];
+        text['pick'] = reading || bool(text['continuous'], false) ? 'order' : 'random';
+        say(`text selection is now slice, take and pick — migrated from "${oldMode}"`);
+      }
+    }
+  }
+
+  // Motion was a pair of fields on the document and is now a layer like anything else (§11.5).
+  // A preset saved before that would otherwise stop moving with no explanation.
+  const migratedLayers = [
+    ...motionLayer(o['contentMotion'], 'scroll', CONTENT_DIRECTIONS, say),
+    ...motionLayer(o['blockMotion'], 'travel', BLOCK_DIRECTIONS, say),
+  ];
+
+  if (migratedLayers.length > 0) {
+    const existing = Array.isArray(o['layers']) ? o['layers'] : [];
+    o['layers'] = [...existing, ...migratedLayers];
+  }
+
+  delete o['contentMotion'];
+  delete o['blockMotion'];
+}
+
 export function parsePreset(name: string, raw: string, fallback: PresetDoc): ParseResult {
   const problems: string[] = [];
   let migrated = false;
@@ -102,44 +166,35 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
     problems.push(`${name}: ${what}`);
   };
 
+  // Bring the document up to date before anything is read from it, so every field the
+  // validator sees is in the current shape whatever version it arrived in.
+  const from =
+    typeof o['version'] === 'number' && Number.isFinite(o['version'])
+      ? Math.max(0, Math.floor(o['version']))
+      : 0;
+
+  for (let v = Math.min(from, MIGRATIONS.length); v < MIGRATIONS.length; v++) {
+    MIGRATIONS[v]?.(o, say);
+  }
+
+  // Stamped rather than reported. A file from before versions existed is upgraded silently;
+  // only a step that actually rewrote something says so, above.
+  migrated = from !== PRESET_VERSION;
+
   const text = isRecord(o['text']) ? o['text'] : {};
   const size = isRecord(text['size']) ? text['size'] : {};
   const varyBy = text['varyBy'];
 
-  // A file written when text selection was a single `mode` dropdown. Carried across rather
-  // than dropped: failing the check would silently revert it to a random sentence, which is
-  // not the text anybody wrote the preset for.
-  let slice = text['slice'];
-  let length = text['length'];
-  let take = text['take'];
-  let pick = text['pick'];
-
-  const oldMode = text['mode'];
-  if (typeof oldMode === 'string' && slice === undefined) {
-    // `continuous` was itself a mode before it was a modifier, so an even older file can
-    // arrive with it here.
-    const reading = oldMode === 'continuous';
-    const mapped = OLD_MODES[reading ? 'sentences' : oldMode];
-
-    if (mapped) {
-      slice = mapped.slice;
-      length = mapped.length;
-      take = mapped.take ?? text['count'];
-      pick = reading || bool(text['continuous'], false) ? 'order' : 'random';
-      migrated = true;
-      say(`text selection is now slice, take and pick — migrated from "${oldMode}"`);
-    }
-  }
-
   const doc: PresetDoc = {
     name,
+    version: PRESET_VERSION,
     energy: pickFrom(o['energy'], ENERGIES, fallback.energy, 'energy', say) as PresetDoc['energy'],
 
     text: {
-      slice: pickFrom(slice, SLICES_TEXT, fallback.text.slice, 'text.slice', say) as TextSlice,
-      take: clampNumber(take, 1, 40, fallback.text.take, 'text.take', say),
-      length: pickFrom(length, LENGTHS, fallback.text.length, 'text.length', say) as TextLength,
-      pick: pickFrom(pick, PICKS, fallback.text.pick, 'text.pick', say) as TextPick,
+      slice: pickFrom(text['slice'], SLICES_TEXT, fallback.text.slice, 'text.slice', say) as TextSlice,
+      take: clampNumber(text['take'], 1, 40, fallback.text.take, 'text.take', say),
+      length: pickFrom(text['length'], LENGTHS, fallback.text.length, 'text.length', say) as TextLength,
+      pick: pickFrom(text['pick'], PICKS, fallback.text.pick, 'text.pick', say) as TextPick,
       position: clampNumber(text['position'], 1, 999, fallback.text.position, 'text.position', say),
       splitChars: bool(text['splitChars'], fallback.text.splitChars),
       blocks: clampNumber(text['blocks'], 1, 3, fallback.text.blocks, 'text.blocks', say) as 1 | 2 | 3,
@@ -158,18 +213,9 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
     avoidOverlap: bool(o['avoidOverlap'], fallback.avoidOverlap),
     wholeLines: bool(o['wholeLines'], fallback.wholeLines),
     offset: offset(o['offset'], fallback.offset),
-    layers: [
-      ...layers(o['layers'], say),
-      // Motion used to be a pair of fields on the document and is now a layer like anything
-      // else (§11.5). A preset saved before that would otherwise stop moving with no
-      // explanation, so it is carried across rather than dropped.
-      ...migrateMotion(o['contentMotion'], 'scroll', CONTENT_DIRECTIONS, say, () => {
-        migrated = true;
-      }),
-      ...migrateMotion(o['blockMotion'], 'travel', BLOCK_DIRECTIONS, say, () => {
-        migrated = true;
-      }),
-    ],
+    // Migrated layers are in here too, because a migration rewrites the raw record before
+    // this runs — so they are validated like any other layer rather than appended past it.
+    layers: layers(o['layers'], say),
   };
 
   // A size range with min above max would silently swap or misbehave downstream; fixing it
@@ -391,13 +437,18 @@ function readMotion(value: unknown, directions: Set<string>): LayerSpec['motion'
 }
 
 /** Turn a document-level motion setting into the layer it is now. */
-function migrateMotion(
+/**
+ * A document-level motion setting, as the layer it would be written as today.
+ *
+ * Returned as a plain record rather than a `LayerSpec`, because it is going back into the raw
+ * document to be validated with everything else.
+ */
+function motionLayer(
   value: unknown,
   treatment: 'scroll' | 'travel',
   directions: Set<string>,
   say: Say,
-  mark: () => void,
-): LayerSpec[] {
+): Record<string, unknown>[] {
   if (value === undefined) return [];
 
   const motion = readMotion(value, directions);
@@ -407,7 +458,6 @@ function migrateMotion(
   }
 
   say(`motion is a layer now — migrated to a "${treatment}" layer`);
-  mark();
   return [
     {
       treatment,
