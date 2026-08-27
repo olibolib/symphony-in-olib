@@ -406,7 +406,8 @@ export class Typesetter {
       const boxH = (box.height / 100) * this.stage.height;
 
       const style =
-        `left:${box.left.toFixed(3)}%;top:${box.top.toFixed(3)}%;` +
+        `left:calc(${box.left.toFixed(3)}% + var(--fit-x, 0px));` +
+        `top:calc(${box.top.toFixed(3)}% + var(--fit-y, 0px));` +
         `width:${box.width.toFixed(3)}%;height:${box.height.toFixed(3)}%;` +
         `--box-h:${boxH.toFixed(2)}px;--box-hr:${(box.height / 100).toFixed(5)};`;
 
@@ -475,6 +476,9 @@ export class Typesetter {
 
     // After the travel is known, since that is what sets the duration.
     this.applyPhases(phases);
+
+    // Before the line measurements, which record where each line sits relative to its block.
+    this.fitToCanvas(options.blockMotion !== undefined);
 
     this.measureLines(options.wholeLines === true);
     this.trimLines();
@@ -580,6 +584,64 @@ export class Typesetter {
 
       block.style.setProperty('--travel', `${textH.toFixed(2)}px`);
       block.style.setProperty('--travelr', (textH / this.stage.height).toFixed(5));
+    }
+  }
+
+  /**
+   * Nudge each block so the text it spills stays on the canvas.
+   *
+   * Blocks spill by design — a long word at a large size is wider than the cell it landed in,
+   * and cutting it off is the app second-guessing a choice you made. But the canvas edge is a
+   * different thing from a block edge: past it there is nothing, and text that leaves is simply
+   * gone.
+   *
+   * **Measured rather than reasoned about.** The obvious approach is to work out which way the
+   * text overhangs from `align` — left spills right, right spills left, centre spills both —
+   * and that is four rules to keep in step with a fifth, `justify`, which behaves like `left`
+   * only for the lines it cannot stretch. Reading the painted rectangle instead is one rule for
+   * all of them, and it comes with `swell` and any other transform already accounted for,
+   * because that is what `getBoundingClientRect` reports.
+   *
+   * The move is the smallest one that works, and never more than bringing the content flush
+   * with the edge it was leaving. Text wider than the whole canvas cannot be helped by moving
+   * it, so it is aligned to the left edge — the beginning is the half you cannot do without.
+   *
+   * Skipped for a travelling block, which is *supposed* to leave the frame.
+   */
+  private fitToCanvas(travelling: boolean): void {
+    if (travelling) return;
+
+    const frame = this.stage.container.getBoundingClientRect();
+
+    for (const block of this.blocks) {
+      const lines = block.querySelectorAll<HTMLElement>('p');
+      if (lines.length === 0) continue;
+
+      let left = Infinity;
+      let right = -Infinity;
+      let top = Infinity;
+      let bottom = -Infinity;
+
+      for (const line of lines) {
+        if (line.hidden) continue;
+        const rect = line.getBoundingClientRect();
+        if (rect.width === 0 && rect.height === 0) continue;
+        left = Math.min(left, rect.left);
+        right = Math.max(right, rect.right);
+        top = Math.min(top, rect.top);
+        bottom = Math.max(bottom, rect.bottom);
+      }
+
+      if (!Number.isFinite(left) || !Number.isFinite(top)) continue;
+
+      const x = shiftInto(left, right, frame.left, frame.right);
+      const y = shiftInto(top, bottom, frame.top, frame.bottom);
+
+      if (x !== 0) block.style.setProperty('--fit-x', `${x.toFixed(2)}px`);
+      else block.style.removeProperty('--fit-x');
+
+      if (y !== 0) block.style.setProperty('--fit-y', `${y.toFixed(2)}px`);
+      else block.style.removeProperty('--fit-y');
     }
   }
 
@@ -987,6 +1049,20 @@ function filterByLength(
  * a parallel walk pairs them exactly. Cheaper and steadier than matching on an index
  * attribute, which would need writing during the build and querying afterwards.
  */
+/**
+ * How far to move a span so it sits inside a container, or 0 if it already does.
+ *
+ * Both ends are checked, and only one can ever need moving — if the span is longer than the
+ * container, bringing one edge in pushes the other out. In that case the start wins: the
+ * beginning of a passage is the half you cannot do without.
+ */
+export function shiftInto(start: number, end: number, low: number, high: number): number {
+  if (end - start > high - low) return low - start;
+  if (start < low) return low - start;
+  if (end > high) return high - end;
+  return 0;
+}
+
 function pairUp(
   original: HTMLElement,
   copy: HTMLElement,
