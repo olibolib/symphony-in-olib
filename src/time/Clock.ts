@@ -161,8 +161,21 @@ export class Clock {
    * stays smooth through a passage with no transients at all.
    */
   phase(now: number): number {
-    if (!this.started) return 0;
-    const p = ((now - this.originMs) / this.periodMs) % 1;
+    return this.phaseIn(1 / BEATS_PER_BAR, now);
+  }
+
+  /**
+   * Position within a cycle of any length, measured in bars. 0 at the start of the cycle.
+   *
+   * The same unit everything else the audience sees is expressed in (§11.5): 0.25 is a beat,
+   * 1 is a bar, 4 is a phrase. Predicted from the grid rather than counted from events, so a
+   * cycle several bars long stays exactly in step through a passage with no transients — which
+   * is the whole reason a slow pulse is worth having at all.
+   */
+  phaseIn(bars: number, now: number): number {
+    if (!this.started || bars <= 0) return 0;
+    const cycleMs = this.periodMs * BEATS_PER_BAR * bars;
+    const p = ((now - this.originMs) / cycleMs) % 1;
     return p < 0 ? p + 1 : p;
   }
 

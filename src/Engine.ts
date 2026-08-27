@@ -340,7 +340,10 @@ export class Engine {
 
     // Read from the grid rather than from a transient, so it keeps breathing through a passage
     // with nothing hitting in it.
-    this.stage.pulse = this.pulse === null ? 0 : pulseAt(this.pulse, this.clock.phase(now));
+    this.stage.pulse =
+      this.pulse === null
+        ? 0
+        : pulseAt(this.pulse, this.clock.phaseIn(this.pulse.rateBars, now));
 
     const ctx = this.effectContext();
 

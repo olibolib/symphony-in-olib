@@ -31,7 +31,11 @@ describe('pulseOptions', () => {
   });
 
   it('reads the amount and shape', () => {
-    expect(pulseOptions([pulseLayer(0.02, 'sine')])).toEqual({ amount: 0.02, shape: 'sine' });
+    expect(pulseOptions([pulseLayer(0.02, 'sine')])).toEqual({
+      amount: 0.02,
+      shape: 'sine',
+      rateBars: 0.25,
+    });
   });
 
   it('lets the last of two win, like channels and motion do', () => {
@@ -41,11 +45,21 @@ describe('pulseOptions', () => {
   it('ignores one with no amount', () => {
     expect(pulseOptions([pulseLayer(0)])).toBeNull();
   });
+
+  it('breathes once a beat unless told otherwise', () => {
+    // What it always did, kept as the default so no existing preset changes.
+    expect(pulseOptions([pulseLayer(0.02)])?.rateBars).toBe(0.25);
+  });
+
+  it('takes a rate in bars, like flicker and decay do', () => {
+    const slow: LayerSpec = { ...pulseLayer(0.02, 'sine'), rateBars: 4 };
+    expect(pulseOptions([slow])?.rateBars).toBe(4);
+  });
 });
 
 describe('pulseAt', () => {
-  const decay: PulseSpec = { amount: 0.02, shape: 'decay' };
-  const sine: PulseSpec = { amount: 0.02, shape: 'sine' };
+  const decay: PulseSpec = { amount: 0.02, shape: 'decay', rateBars: 0.25 };
+  const sine: PulseSpec = { amount: 0.02, shape: 'sine', rateBars: 0.25 };
 
   it('hits hardest on the beat and falls away', () => {
     // Which is what makes `decay` read as a kick.

@@ -62,6 +62,15 @@ export function motionOptions(layers: readonly LayerSpec[]): {
 export interface PulseSpec {
   readonly amount: number;
   readonly shape: 'decay' | 'sine';
+
+  /**
+   * How long one breath is, in bars. 0.25 is a beat, 1 a bar, 4 a phrase.
+   *
+   * The same unit as `flicker`'s rate and as decay, because it is the same kind of decision.
+   * Pulse arrived from Acid welded to the beat and stayed that way while everything around it
+   * learned to be expressed in bars.
+   */
+  readonly rateBars: number;
 }
 
 /**
@@ -81,23 +90,24 @@ export function pulseOptions(layers: readonly LayerSpec[]): PulseSpec | null {
     if (layer.treatment !== 'pulse') continue;
     const spec = layer.pulse;
     if (!spec || spec.amount <= 0) continue;
-    found = { amount: spec.amount, shape: spec.shape };
+    // A beat, unless the layer says otherwise — which is what it always did.
+    found = { amount: spec.amount, shape: spec.shape, rateBars: layer.rateBars ?? 0.25 };
   }
 
   return found;
 }
 
 /**
- * The stage scale for a pulse at this point in the beat.
+ * The stage scale for a pulse at this point in its cycle.
  *
  * Driven by the predicted grid rather than by detected onsets, so it stays smooth and in time
  * through a passage with no transients — and lands *on* the beat rather than just after it.
  */
-export function pulseAt(spec: PulseSpec, beatPhase: number): number {
+export function pulseAt(spec: PulseSpec, phase: number): number {
   const curve =
     spec.shape === 'sine'
-      ? (1 - Math.cos(beatPhase * Math.PI * 2)) / 2
-      : (1 - beatPhase) * (1 - beatPhase);
+      ? (1 - Math.cos(phase * Math.PI * 2)) / 2
+      : (1 - phase) * (1 - phase);
 
   return curve * spec.amount;
 }
