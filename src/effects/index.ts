@@ -22,56 +22,6 @@ import type { EffectContext, EffectRef } from './types';
  * rather than by accident.
  */
 
-// --- layout effects --------------------------------------------------------------------
-
-export const columns = (params: { min: number; max: number }): EffectRef => {
-  return (ctx: EffectContext) => {
-    ctx.stage.container.style.columnCount = String(randomRange(params.min, params.max));
-  };
-};
-
-export const borders = (params: { max: number }): EffectRef => {
-  return (ctx: EffectContext) => {
-    ctx.stage.container.dataset['borders'] = chance(0.5)
-      ? String(randomRange(1, params.max))
-      : '0';
-  };
-};
-
-/**
- * Set a vertical drift. DESIGN.md §12.4.
- *
- * Follows Acid's `randomScrollSpd`: mostly it picks a new speed and direction, but it also
- * has a real chance of stopping altogether. Constant motion stops registering as motion —
- * the stillness is what makes the drift readable when it returns.
- */
-export const scroll = (params: { power: number }): EffectRef => {
-  return (ctx: EffectContext) => {
-    if (chance(0.25)) {
-      ctx.stage.scrollSpeed = 0;
-      return;
-    }
-    const direction = chance(0.7) ? 1 : -1;
-    ctx.stage.scrollSpeed = direction * Math.random() * params.power;
-  };
-};
-
-export const stopScroll = (): EffectRef => {
-  return (ctx: EffectContext) => {
-    ctx.stage.scrollSpeed = 0;
-  };
-};
-
-/**
- * Re-render the text, holding it for a variable number of phrases.
- *
- * `hold: [1, 2]` means the text stays for one phrase or two, chosen fresh each time. A fixed
- * hold is legible but predictable — you start anticipating the change, which is exactly what
- * a generative visual should not let you do.
- *
- * When the text is being warped by a visualiser, a longer hold also gives the warp time to
- * develop before the thing it is warping disappears.
- */
 export const retext = (params: { hold?: readonly [number, number] } = {}): EffectRef => {
   const [min, max] = params.hold ?? [1, 1];
   let target = randomRange(min, max);
@@ -106,45 +56,5 @@ export const pulse = (params: {
         : (1 - phase) * (1 - phase);
 
     ctx.stage.pulse = curve * params.amount;
-  };
-};
-
-export const stopPulse = (): EffectRef => {
-  return (ctx: EffectContext) => {
-    ctx.stage.pulse = 0;
-  };
-};
-
-// --- colour ----------------------------------------------------------------------------
-
-/**
- * Flip the stage background. Rare and heavy — a whole-screen event.
- *
- * No-ops in transparent mode. Painting a background there would silently undo the setting,
- * and the first anyone would know is a solid rectangle appearing on the stream.
- */
-export const background = (params: { accents?: boolean } = {}): EffectRef => {
-  return (ctx: EffectContext) => {
-    // Only flips in the default white mode, where inverting is part of the Acid look.
-    // An explicit black or transparent choice is a decision about output, not a style, and
-    // an effect should not quietly overrule it.
-    if (ctx.stage.backgroundMode !== 'white') return;
-
-    const dark = params.accents === true ? pick(ctx.palette) : chance(0.5) ? '#000000' : '#ffffff';
-    ctx.stage.el.style.background = dark ?? '#ffffff';
-    ctx.stage.el.style.setProperty('--stage-fg', dark === '#000000' ? '#ffffff' : '#000000');
-  };
-};
-
-export const resetStage = (): EffectRef => {
-  return (ctx: EffectContext) => {
-    const el = ctx.stage.container;
-    delete el.dataset['layout'];
-    delete el.dataset['borders'];
-    el.style.removeProperty('column-count');
-    ctx.stage.scrollSpeed = 0;
-    ctx.stage.el.style.removeProperty('background');
-    ctx.stage.el.style.removeProperty('--stage-fg');
-    ctx.channels.clearAll();
   };
 };

@@ -1,4 +1,4 @@
-import { pulse, retext, scroll, stopScroll } from '../effects';
+import { pulse, retext } from '../effects';
 import type { EffectRef } from '../effects/types';
 import type {
   Align,
@@ -264,7 +264,7 @@ export const PRESETS: readonly VisualPreset[] = [
       },
     ],
     bindings: {
-      phrase: [retext({ hold: [1, 2] }), stopScroll()],
+      phrase: [retext({ hold: [1, 2] })],
     },
     minPhrases: 4,
   },
@@ -413,9 +413,6 @@ export const PRESETS: readonly VisualPreset[] = [
     ],
     bindings: {
       phrase: [retext({ hold: [1, 2] })],
-      // Held text drifts instead of sitting still. `held` is a real trigger now, so this
-      // no longer needs a wrapper effect to detect the hold for itself.
-      held: [scroll({ power: 0.14 })],
     },
     // Slow even breathing rather than a hit, to match the pace.
     ambient: [pulse({ amount: 0.016, shape: 'sine' })],

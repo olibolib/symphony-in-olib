@@ -416,7 +416,7 @@ export class Engine {
     // the translation the animation has already applied.
     this.typesetter.trimLines();
 
-    this.stage.updateScroll(dt);
+    this.stage.applyTransform();
 
     this.hud.countFrame(now);
     this.hud.tick(now);
@@ -520,7 +520,6 @@ export class Engine {
     // pulse or scroll would otherwise inherit whatever the previous one left running — and a
     // pulse with nothing driving it freezes at its last value rather than stopping.
     this.stage.pulse = 0;
-    this.stage.scrollSpeed = 0;
 
     this.typesetNext();
     this.hud.setPreset(preset.name, preset.energy);

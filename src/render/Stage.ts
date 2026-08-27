@@ -41,19 +41,11 @@ export class Stage {
   backgroundMode: 'white' | 'black' | 'transparent' = 'white';
 
   /**
-   * Vertical drift, in stage heights per second. Acid scrolled the page; here the stage is
-   * a fixed box, so the container is translated inside it instead — same effect, and it
-   * cannot fight the window or the OBS crop.
-   */
-  scrollSpeed = 0;
-  private scrollOffset = 0;
-
-  /**
    * Extra scale applied to the whole stage, 0 for none.
    *
-   * Lives here rather than in the effect because scroll also writes `transform`. Two
-   * separate writers would silently overwrite each other — the second one to run each frame
-   * would win, and which that was would depend on effect ordering.
+   * Lives here rather than in the effect because the stage is the single writer of
+   * `transform` (§14). Two separate writers would silently overwrite each other — the second
+   * one to run each frame would win, and which that was would depend on effect ordering.
    */
   pulse = 0;
 
@@ -85,34 +77,21 @@ export class Stage {
   }
 
   /**
-   * Advance the scroll. Called once per frame with the elapsed seconds.
+   * Write the composed transform. Called once per frame.
    *
-   * The offset wraps rather than stopping at the end: text that scrolls off the top comes
-   * back from the bottom, so a slow drift can run for an entire set without needing to be
-   * reset or hitting a boundary mid-phrase.
+   * There used to be a stage-wide scroll here as well, inherited from Acid, which translated
+   * the whole container. The `scroll` **treatment** replaced it — text moving through a block
+   * that stays put reads completely differently, and is what `drift` was always after — but the
+   * old one was left wired up underneath, so `drift` ran both at once on held phrases.
    */
-  updateScroll(dt: number): void {
-    if (this.scrollSpeed !== 0) {
-      // The offset wraps rather than stopping at the end: text that scrolls off the top
-      // comes back from the bottom, so a slow drift can run for an entire set.
-      const span = Math.max(this.container.scrollHeight, this.height);
-      this.scrollOffset = (this.scrollOffset + this.scrollSpeed * this.height * dt) % span;
-    } else if (this.scrollOffset !== 0) {
-      this.scrollOffset = 0;
-    }
-
-    this.applyTransform();
-  }
-
-  /** Single writer for `transform`, composing scroll and pulse. */
-  private applyTransform(): void {
-    if (this.scrollOffset === 0 && this.pulse === 0) {
+  applyTransform(): void {
+    if (this.pulse === 0) {
       this.container.style.removeProperty('transform');
       return;
     }
 
     const scale = 1 + this.pulse;
-    this.container.style.transform = `translateY(${-this.scrollOffset}px) scale(${scale})`;
+    this.container.style.transform = `scale(${scale})`;
   }
 
   /**
