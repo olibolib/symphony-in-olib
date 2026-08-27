@@ -95,6 +95,11 @@ c {
 
 [data-outline='1'] { outline: 0.06em solid currentColor; }
 
+/* Room between the rule and the type, so an outlined paragraph reads as a box rather than as a
+   line drawn on the words. Only on a paragraph: padding on a word or a character would push it
+   away from its neighbours and re-wrap the line. */
+p[data-outline='1'] { padding: 0.1em; }
+
 /* Scale rather than a min-width floor: sizing by width reflows the paragraph, and
    re-wrapping several times a bar reads as broken rather than as an effect (§11.5).
    Inline elements need a block display to accept a transform at all. */
@@ -395,33 +400,26 @@ sn {
   line-height: 1.15;
 }
 
-/* A grid of outlined cells. Was layout 6, at a size it was welded to. */
-#container[data-flow='grid'] .block {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(6em, 1fr));
-  align-content: safe center;
-  gap: 0.06em;
-}
-#container[data-flow='grid'] .block p {
-  outline: 0.08em solid currentColor;
-  padding: 0.1em;
-}
+/* Wrapped paragraphs of uneven width, shoving each other about. Was layout 5.
 
-/* Wrapped paragraphs of uneven width, shoving each other about. Was layout 5. */
-#container[data-flow='wrapped'] .block {
+   On `.loop`, not on `.block`. The paragraphs live two levels down — `.block` holds
+   `.block-content`, which holds `.loop`, which holds the text — so a flex container on the
+   block had exactly one child and nothing to wrap. This laid out the wrapper and left the
+   paragraphs stacked, which is why it looked like `stack` with wider gaps. */
+#container[data-flow='wrapped'] .loop {
+  display: flex;
   flex-direction: row;
   flex-wrap: wrap;
   align-content: safe center;
   gap: 0 0.4em;
 }
-#container[data-flow='wrapped'] .block p {
+#container[data-flow='wrapped'] .loop p {
   min-width: 25%;
 }
 
 /* Two columns with a gap. Was layout 12, where the gap *was* the protected middle — it is
    now just a number, on a block sized and placed like any other. */
-#container[data-flow='columns'] .block {
-  display: block;
+#container[data-flow='columns'] .loop {
   column-count: 2;
   column-gap: var(--column-gap, 12%);
 }

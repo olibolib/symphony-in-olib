@@ -287,6 +287,24 @@ describe('parsePreset: migration', () => {
     expect(result.migrated).toBe(true);
   });
 
+  it('turns the grid flow into wrapped plus an outline layer', () => {
+    const old = { ...BLANK, version: 3, flow: 'grid' } as Record<string, unknown>;
+    const result = parsePreset('under-test', JSON.stringify(old), BLANK);
+
+    expect(result.doc.flow).toBe('wrapped');
+    const outline = result.doc.layers.find((l) => l.treatment === 'outline');
+    expect(outline?.target).toEqual({ slice: 'paragraph', proportion: 1 });
+    expect(outline?.triggers).toHaveProperty('typeset', true);
+    expect(outline?.decayBars).toBe(0);
+  });
+
+  it('leaves a flow it understands alone', () => {
+    const old = { ...BLANK, version: 3, flow: 'wrapped' } as Record<string, unknown>;
+    const result = parsePreset('under-test', JSON.stringify(old), BLANK);
+    expect(result.doc.flow).toBe('wrapped');
+    expect(result.doc.layers.some((l) => l.treatment === 'outline')).toBe(false);
+  });
+
   it('does not run migrations backwards for a document from a newer build', () => {
     const result = parse({ ...BLANK, version: 99 });
     expect(result.doc.version).toBe(PRESET_VERSION);

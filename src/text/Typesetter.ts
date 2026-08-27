@@ -204,7 +204,22 @@ export interface BlockMotion {
  * `run-on` was layout 7, `grid` was 6, `wrapped` was 5, and `columns` was 12's two rails.
  * As a setting they combine with any anchor and any size, which none of them could before.
  */
-export type Flow = 'stack' | 'run-on' | 'grid' | 'wrapped' | 'columns';
+/**
+ * How paragraphs arrange inside a block.
+ *
+ * `grid` was here too — a grid of outlined cells, the last survivor of the layout table. It
+ * went for three reasons. It welded an arrangement to a *decoration*, which is the fault §11.5
+ * exists to undo, and the decoration half is `outline`, a treatment that already exists. Its
+ * column count came from `minmax(6em, 1fr)`, so scaling the type for readability silently
+ * changed the layout. And once a block grows to fit its longest word (§11.6), subdividing it
+ * into columns puts that word back outside a cell — measured at an 811px line in a 420px cell,
+ * crossing its own outline.
+ *
+ * `wrapped` gives the side-by-side arrangement, and one `outline` layer over paragraphs gives
+ * the boxes — with the option of outlining only some of them, or on a trigger, or with a fade,
+ * none of which `grid` could do.
+ */
+export type Flow = 'stack' | 'run-on' | 'wrapped' | 'columns';
 
 /**
  * Write a motion setting as attributes CSS can act on.

@@ -66,7 +66,7 @@ const OLD_MODES: Record<string, { slice: TextSlice; length: TextLength; take?: n
   longSentences: { slice: 'sentence', length: 'long' },
 };
 const ALIGNS = new Set<string>(['left', 'centre', 'right', 'justify', 'auto']);
-const FLOWS = new Set<string>(['stack', 'run-on', 'grid', 'wrapped', 'columns']);
+const FLOWS = new Set<string>(['stack', 'run-on', 'wrapped', 'columns']);
 const ENERGIES = new Set<string>(['sparse', 'mid', 'peak', 'any']);
 const TRIGGERS = new Set<string>([
   'typeset', 'kick', 'snare', 'hat', 'beat', 'bar', 'phrase', 'held', 'always',
@@ -91,7 +91,7 @@ const TRIGGERS = new Set<string>([
  */
 type Migration = (o: Record<string, unknown>, say: Say, fallback: PresetDoc) => void;
 
-const MIGRATIONS: readonly Migration[] = [toV1, toV2, toV3];
+const MIGRATIONS: readonly Migration[] = [toV1, toV2, toV3, toV4];
 
 /** What this build writes. Bump it and add a migration in the same commit, never one alone. */
 export const PRESET_VERSION = MIGRATIONS.length;
@@ -187,6 +187,38 @@ function toV3(o: Record<string, unknown>, say: Say, fallback: PresetDoc): void {
   }
 
   if (carried) say('how long text holds is a setting now — carried across');
+}
+
+/**
+ * Version 3 to 4: the `grid` flow became `wrapped` plus an outline layer.
+ *
+ * `grid` welded an arrangement to a decoration, and the decoration half is a treatment that
+ * already exists. Splitting it is what lets you outline only some paragraphs, or on a trigger,
+ * or with a fade — none of which the flow could do.
+ *
+ * The one thing genuinely lost is *even* columns: `wrapped` packs paragraphs at uneven widths.
+ * A flow that does only that, sized in grid cells rather than in `em`, is the way back if it is
+ * missed.
+ */
+function toV4(o: Record<string, unknown>, say: Say): void {
+  if (o['flow'] !== 'grid') return;
+
+  o['flow'] = 'wrapped';
+
+  const layers = Array.isArray(o['layers']) ? o['layers'] : [];
+  o['layers'] = [
+    ...layers,
+    {
+      treatment: 'outline',
+      // Every paragraph, which is what the flow drew a box around.
+      target: { slice: 'paragraph', proportion: 1 },
+      // At typeset and held, so it is the settled look rather than something that happens.
+      triggers: { typeset: true },
+      decayBars: 0,
+    },
+  ];
+
+  say('the grid flow is `wrapped` plus an outline layer now — migrated');
 }
 
 export function parsePreset(name: string, raw: string, fallback: PresetDoc): ParseResult {
