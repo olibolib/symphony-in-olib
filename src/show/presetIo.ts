@@ -89,9 +89,9 @@ const TRIGGERS = new Set<string>([
  * Index `n` takes a version `n` document to version `n + 1`. A file with no `version` at all is
  * version 0 — everything written before this existed.
  */
-type Migration = (o: Record<string, unknown>, say: Say) => void;
+type Migration = (o: Record<string, unknown>, say: Say, fallback: PresetDoc) => void;
 
-const MIGRATIONS: readonly Migration[] = [toV1];
+const MIGRATIONS: readonly Migration[] = [toV1, toV2];
 
 /** What this build writes. Bump it and add a migration in the same commit, never one alone. */
 export const PRESET_VERSION = MIGRATIONS.length;
@@ -142,6 +142,27 @@ function toV1(o: Record<string, unknown>, say: Say): void {
   delete o['blockMotion'];
 }
 
+/**
+ * Version 1 to 2: the stage pulse became a layer.
+ *
+ * It was the last stage effect — a closure held engine-side in a map keyed by preset name, so
+ * it never appeared in the file at all. That is why this migration needs the fallback: the
+ * value being carried across was never in the document to read.
+ *
+ * Only a preset whose compiled namesake had one gets it, which is the same rule the map
+ * followed. A preset you made yourself never had a pulse and does not acquire one here.
+ */
+function toV2(o: Record<string, unknown>, say: Say, fallback: PresetDoc): void {
+  const layers = Array.isArray(o['layers']) ? o['layers'] : [];
+  if (layers.some((l) => isRecord(l) && l['treatment'] === 'pulse')) return;
+
+  const inherited = fallback.layers.find((l) => l.treatment === 'pulse');
+  if (!inherited) return;
+
+  o['layers'] = [...layers, { ...inherited }];
+  say('the stage pulse is a layer now — carried across');
+}
+
 export function parsePreset(name: string, raw: string, fallback: PresetDoc): ParseResult {
   const problems: string[] = [];
   let migrated = false;
@@ -174,7 +195,7 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
       : 0;
 
   for (let v = Math.min(from, MIGRATIONS.length); v < MIGRATIONS.length; v++) {
-    MIGRATIONS[v]?.(o, say);
+    MIGRATIONS[v]?.(o, say, fallback);
   }
 
   // Stamped rather than reported. A file from before versions existed is upgraded silently;
@@ -368,9 +389,15 @@ function layers(value: unknown, say: Say): readonly LayerSpec[] {
     );
     // Not `range` — that clamps to grid cells, and a swell bound is a scale factor.
     const size = scaleRange(item['size']);
+    const stagePulse = pulseSpec(item['pulse']);
 
     if ((treatment === 'scroll' || treatment === 'travel') && !motion) {
       say(`layer ${index + 1} is a ${treatment} with no direction or speed, dropped`);
+      return;
+    }
+
+    if (treatment === 'pulse' && !stagePulse) {
+      say(`layer ${index + 1} is a pulse with no amount, dropped`);
       return;
     }
 
@@ -382,6 +409,7 @@ function layers(value: unknown, say: Say): readonly LayerSpec[] {
       ...(typeof rate === 'number' && rate > 0 ? { rateBars: rate } : {}),
       ...(motion ? { motion } : {}),
       ...(size ? { size } : {}),
+      ...(stagePulse ? { pulse: stagePulse } : {}),
     });
   });
 
@@ -467,6 +495,20 @@ function motionLayer(
       motion,
     },
   ];
+}
+
+/** How hard the stage breathes, for a `pulse` layer. */
+function pulseSpec(value: unknown): { amount: number; shape: 'decay' | 'sine' } | null {
+  if (!isRecord(value)) return null;
+  const amount = value['amount'];
+  if (typeof amount !== 'number' || !Number.isFinite(amount)) return null;
+
+  // Capped well below the point where it stops reading as a pulse and starts reading as a
+  // fault, which is around 0.05 at 720p.
+  return {
+    amount: Math.min(0.2, Math.max(0, amount)),
+    shape: value['shape'] === 'sine' ? 'sine' : 'decay',
+  };
 }
 
 /** Scale bounds for `swell`, in multiples of the base size rather than in cells. */

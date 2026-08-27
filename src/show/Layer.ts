@@ -64,6 +64,15 @@ export interface LayerSpec {
    * precisely so that it stays on the grid when the tempo changes (§11.5).
    */
   readonly rateBars?: number;
+
+  /**
+   * How hard the stage breathes, for `pulse`. A fraction of the frame, so 0.02 is a 2% zoom.
+   *
+   * Small: 0.02 is already clearly visible at 720p, and past about 0.05 it stops reading as a
+   * pulse and starts reading as a fault. `decay` hits hard and falls away, which reads as a
+   * kick; `sine` breathes evenly and suits slower presets.
+   */
+  readonly pulse?: { readonly amount: number; readonly shape: 'decay' | 'sine' };
 }
 
 /**

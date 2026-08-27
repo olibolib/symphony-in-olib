@@ -135,6 +135,31 @@ describe('parsePreset: layers', () => {
     expect(result.doc.layers[0]?.triggers).not.toHaveProperty('wobble');
   });
 
+  it('drops a pulse layer with no amount', () => {
+    const result = parse({
+      ...BLANK,
+      layers: [{ treatment: 'pulse', target: { slice: 'block', count: 1 }, triggers: {}, decayBars: 0 }],
+    });
+    expect(result.doc.layers).toHaveLength(0);
+    expect(result.problems.length).toBeGreaterThan(0);
+  });
+
+  it('caps a pulse well below the point it stops reading as one', () => {
+    const result = parse({
+      ...BLANK,
+      layers: [{
+        treatment: 'pulse',
+        target: { slice: 'block', count: 1 },
+        triggers: {},
+        decayBars: 0,
+        pulse: { amount: 50, shape: 'nonsense' },
+      }],
+    });
+    const pulse = result.doc.layers[0]?.pulse;
+    expect(pulse?.amount).toBeLessThanOrEqual(0.2);
+    expect(pulse?.shape).toBe('decay');
+  });
+
   it('survives a preset with no layers at all', () => {
     expect(parse({ ...BLANK, layers: [] }).doc.layers).toEqual([]);
   });
@@ -190,6 +215,36 @@ describe('parsePreset: migration', () => {
     const result = parse({ ...BLANK, text: { ...BLANK.text, mode: 'shortSentences' } });
     expect(result.doc.text.slice).toBe(BLANK.text.slice);
     expect(result.migrated).toBe(false);
+  });
+
+  it('carries the stage pulse across as a layer', () => {
+    // It was a closure held engine-side, keyed by preset name, so it was never in the file --
+    // which is why this step reads it off the fallback rather than off the document.
+    const withPulse: PresetDoc = {
+      ...BLANK,
+      layers: [
+        ...BLANK.layers,
+        {
+          treatment: 'pulse',
+          target: { slice: 'block', count: 1 },
+          triggers: {},
+          decayBars: 0,
+          pulse: { amount: 0.02, shape: 'sine' },
+        },
+      ],
+    };
+
+    const old = { ...BLANK, version: 1 } as Record<string, unknown>;
+    const result = parsePreset('under-test', JSON.stringify(old), withPulse);
+
+    const pulse = result.doc.layers.find((l) => l.treatment === 'pulse');
+    expect(pulse?.pulse).toEqual({ amount: 0.02, shape: 'sine' });
+    expect(result.migrated).toBe(true);
+  });
+
+  it('does not invent a pulse for a preset that never had one', () => {
+    const result = parsePreset('under-test', JSON.stringify({ ...BLANK, version: 1 }), BLANK);
+    expect(result.doc.layers.some((l) => l.treatment === 'pulse')).toBe(false);
   });
 
   it('does not run migrations backwards for a document from a newer build', () => {

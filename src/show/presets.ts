@@ -1,4 +1,4 @@
-import { pulse, retext } from '../effects';
+import { retext } from '../effects';
 import type { EffectRef } from '../effects/types';
 import type {
   Align,
@@ -307,11 +307,20 @@ export const PRESETS: readonly VisualPreset[] = [
       { treatment: 'invert', target: { slice: 'word', proportion: 0.2 }, triggers: { held: true }, decayBars: FADE.fast },
       { treatment: 'invert', target: { match: '' }, triggers: { held: true }, decayBars: FADE.fast },
       { treatment: 'underline', target: { slice: 'char', count: 4 }, triggers: { held: true }, decayBars: FADE.fast },
+
+      // The stage breathing with the beat. A treatment like anything else now — it has no
+      // target and writes no channel, the same as the motion pair (§11.5).
+      {
+        treatment: 'pulse',
+        target: { slice: 'block', count: 1 },
+        triggers: {},
+        decayBars: 0,
+        pulse: { amount: 0.012, shape: 'decay' },
+      },
     ],
     bindings: {
       phrase: [retext({ hold: [1, 2] })],
     },
-    ambient: [pulse({ amount: 0.012 })],
   },
 
   /**
@@ -365,12 +374,21 @@ export const PRESETS: readonly VisualPreset[] = [
       { treatment: 'invert', target: { slice: 'paragraph', proportion: 0.4 }, triggers: { held: true }, decayBars: FADE.instant },
       { treatment: 'invert', target: { match: '' }, triggers: { held: true }, decayBars: FADE.instant },
       { treatment: 'invert', target: { slice: 'char', count: 8 }, triggers: { held: true }, decayBars: FADE.medium },
+
+      // The stage breathing with the beat. A treatment like anything else now — it has no
+      // target and writes no channel, the same as the motion pair (§11.5).
+      {
+        treatment: 'pulse',
+        target: { slice: 'block', count: 1 },
+        triggers: {},
+        decayBars: 0,
+        pulse: { amount: 0.022, shape: 'decay' },
+      },
     ],
     bindings: {
       phrase: [retext({ hold: [1, 2] })],
     },
     // Hard on the beat, falling away fast. Reads as the kick.
-    ambient: [pulse({ amount: 0.022 })],
     minPhrases: 2,
   },
 
@@ -412,12 +430,21 @@ export const PRESETS: readonly VisualPreset[] = [
       { treatment: 'underline', target: { slice: 'word', count: 2 }, triggers: { snare: true }, decayBars: FADE.fast },
       { treatment: 'invert', target: { slice: 'word', count: 1 }, triggers: { bar: true }, decayBars: FADE.fast },
       { treatment: 'invert', target: { slice: 'word', proportion: 0.08 }, triggers: { held: true }, decayBars: FADE.fast },
+
+      // The stage breathing with the beat. A treatment like anything else now — it has no
+      // target and writes no channel, the same as the motion pair (§11.5).
+      {
+        treatment: 'pulse',
+        target: { slice: 'block', count: 1 },
+        triggers: {},
+        decayBars: 0,
+        pulse: { amount: 0.016, shape: 'sine' },
+      },
     ],
     bindings: {
       phrase: [retext({ hold: [1, 2] })],
     },
     // Slow even breathing rather than a hit, to match the pace.
-    ambient: [pulse({ amount: 0.016, shape: 'sine' })],
     minPhrases: 4,
   },
 ];

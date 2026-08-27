@@ -58,6 +58,50 @@ export function motionOptions(layers: readonly LayerSpec[]): {
   };
 }
 
+/** How the stage breathes, if a preset asks for it. */
+export interface PulseSpec {
+  readonly amount: number;
+  readonly shape: 'decay' | 'sine';
+}
+
+/**
+ * Pull the pulse out of the layer list.
+ *
+ * The same shape as {@link motionOptions}, and for the same reason: `pulse` is authored as a
+ * layer so a preset is described in one place, but it is applied to the stage every frame
+ * rather than written to elements — so it has to be found again here.
+ *
+ * **The last one wins**, like channels and like motion. Two pulse layers is not a sensible
+ * preset but it is an easy one to end up with while experimenting.
+ */
+export function pulseOptions(layers: readonly LayerSpec[]): PulseSpec | null {
+  let found: PulseSpec | null = null;
+
+  for (const layer of layers) {
+    if (layer.treatment !== 'pulse') continue;
+    const spec = layer.pulse;
+    if (!spec || spec.amount <= 0) continue;
+    found = { amount: spec.amount, shape: spec.shape };
+  }
+
+  return found;
+}
+
+/**
+ * The stage scale for a pulse at this point in the beat.
+ *
+ * Driven by the predicted grid rather than by detected onsets, so it stays smooth and in time
+ * through a passage with no transients — and lands *on* the beat rather than just after it.
+ */
+export function pulseAt(spec: PulseSpec, beatPhase: number): number {
+  const curve =
+    spec.shape === 'sine'
+      ? (1 - Math.cos(beatPhase * Math.PI * 2)) / 2
+      : (1 - beatPhase) * (1 - beatPhase);
+
+  return curve * spec.amount;
+}
+
 /**
  * Whether an edit changes where text goes, rather than what happens to it.
  *

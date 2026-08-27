@@ -15,7 +15,15 @@ import { Layer } from './show/Layer';
 import { Look } from './show/Look';
 import { PALETTES } from './render/palette';
 import { FULL, intersect, type Mask } from './show/mask';
-import { blockedMessage, motionOptions, needsRetypeset, textsForBlocks } from './show/wiring';
+import {
+  blockedMessage,
+  motionOptions,
+  needsRetypeset,
+  pulseAt,
+  pulseOptions,
+  textsForBlocks,
+  type PulseSpec,
+} from './show/wiring';
 import type { EffectContext } from './effects/types';
 
 /**
@@ -61,6 +69,9 @@ export class Engine {
 
   /** The preset an error has already been reported for, so it is said once rather than every phrase. */
   private blockedPreset = '';
+
+  /** The live preset's pulse, read from its layers when the preset is applied. */
+  private pulse: PulseSpec | null = null;
 
   /** Throttles the capture readout, which is rewritten with a peak level as it changes. */
   private lastStatusAt = 0;
@@ -327,6 +338,10 @@ export class Engine {
     this.stage.setTargetBar(this.clock.bpm === null ? 2 : (60 / this.clock.bpm) * 4);
     this.stage.tick(dt);
 
+    // Read from the grid rather than from a transient, so it keeps breathing through a passage
+    // with nothing hitting in it.
+    this.stage.pulse = this.pulse === null ? 0 : pulseAt(this.pulse, this.clock.phase(now));
+
     const ctx = this.effectContext();
 
     const analyser = this.sources.analyser;
@@ -516,9 +531,9 @@ export class Engine {
 
     this.publishPresetState();
 
-    // Continuous stage state persists until something sets it, so a preset that does not use
-    // pulse or scroll would otherwise inherit whatever the previous one left running — and a
-    // pulse with nothing driving it freezes at its last value rather than stopping.
+    // Read once per preset, like motion is. A preset without one leaves the stage still rather
+    // than inheriting whatever the last one was doing.
+    this.pulse = pulseOptions(preset.layers);
     this.stage.pulse = 0;
 
     this.typesetNext();
