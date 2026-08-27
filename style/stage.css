@@ -16,6 +16,15 @@ p {
   line-height: 0.95;
 }
 
+/* A line that does not fit its block entirely, hidden rather than shown in half.
+
+   `visibility`, not `display`. The line has to keep its box: a conveyor's travel distance is
+   the height of one copy of the passage, measured once, and taking lines out of the flow after
+   that leaves the belt moving further than there is text to move. */
+.trimmed {
+  visibility: hidden;
+}
+
 /* Words. `w` and `c` are custom tags — legal, and much lighter than spans at scale. */
 w {
   display: inline-block;

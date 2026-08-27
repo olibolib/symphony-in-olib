@@ -550,7 +550,7 @@ export class Typesetter {
   private countHidden(): void {
     let hidden = 0;
     for (const line of this.lines) {
-      if (line.el.hidden) hidden++;
+      if (line.el.classList.contains('trimmed')) hidden++;
     }
     this.clipped = hidden;
   }
@@ -736,7 +736,9 @@ export class Typesetter {
 
       for (const word of words) {
         const rect = word.getBoundingClientRect();
-        // A word in a trimmed line has no box at all, which is how hidden lines stay out of it.
+        // Trimmed lines are included, and should be: they keep their box, and a line that is
+        // hidden now is visible a moment later as the belt moves. Sizing the block to only what
+        // happens to be showing would make it resize as the text scrolled.
         if (rect.width === 0 && rect.height === 0) continue;
         left = Math.min(left, rect.left);
         right = Math.max(right, rect.right);
@@ -836,10 +838,19 @@ export class Typesetter {
       const top = line.top + translateY(line.content);
       const whole = top >= -0.5 && top + line.height <= line.boxHeight + 0.5;
 
-      // `hidden` rather than removal: the element stays in the registries, so a layer that
-      // targeted it keeps its ownership and the line comes back intact when it fits again.
-      // No mirroring: every line, in every copy, is measured and decided on its own.
-      if (line.el.hidden === whole) line.el.hidden = !whole;
+      // **`visibility`, not `display`.** The element has to keep its box: the `hidden`
+      // attribute is `display: none`, which takes the line out of layout and shortens the
+      // passage — and a conveyor's travel distance was measured from that passage's height a
+      // moment earlier. Trimming half the lines left the belt moving 8554px for 811px of text,
+      // so the text scrolled away and did not come back. Measured on `wrapped` and `columns`,
+      // where the trimming bites; `stack` trimmed nothing and so never showed it.
+      //
+      // Hidden rather than removed for the same reason it always was: the element stays in the
+      // registries, so a layer that targeted it keeps its ownership and the line comes back
+      // intact when it fits again.
+      if (line.el.classList.contains('trimmed') === whole) {
+        line.el.classList.toggle('trimmed', !whole);
+      }
     }
 
     this.countHidden();
