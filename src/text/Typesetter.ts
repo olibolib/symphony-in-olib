@@ -430,9 +430,10 @@ export class Typesetter {
       const boxH = (box.height / 100) * this.stage.height;
 
       const style =
-        `left:calc(${box.left.toFixed(3)}% + var(--fit-x, 0px));` +
+        `left:calc(${box.left.toFixed(3)}% + var(--anchor, 0px) + var(--fit-x, 0px));` +
         `top:calc(${box.top.toFixed(3)}% + var(--fit-y, 0px));` +
-        `width:${box.width.toFixed(3)}%;height:${box.height.toFixed(3)}%;` +
+        `width:calc(${box.width.toFixed(3)}% + var(--grow, 0px));` +
+        `height:${box.height.toFixed(3)}%;` +
         `--box-h:${boxH.toFixed(2)}px;--box-hr:${(box.height / 100).toFixed(5)};`;
 
       const built = this.build(lines, options, budgetPerBlock);
@@ -507,7 +508,9 @@ export class Typesetter {
     // After the travel is known, since that is what sets the duration.
     this.applyPhases(phases);
 
-    // Before the line measurements, which record where each line sits relative to its block.
+    // Widen first, then nudge what is still off the canvas, then measure the lines — each
+    // step reads a layout the one before it settled.
+    this.growToContent();
     this.fitToCanvas(options.blockMotion !== undefined);
 
     this.measureLines(options.wholeLines === true);
@@ -614,6 +617,60 @@ export class Typesetter {
 
       block.style.setProperty('--travel', `${textH.toFixed(2)}px`);
       block.style.setProperty('--travelr', (textH / this.stage.height).toFixed(5));
+    }
+  }
+
+  /**
+   * Widen a block until its longest word fits, keeping the edge its alignment is anchored to.
+   *
+   * A cell of the 7x7 grid is a seventh of the frame. At a size chosen to be readable on a
+   * projector, one word can easily be wider than that — so the box is not a container so much
+   * as a **minimum**, which is what anchor semantics always implied (§11.6).
+   *
+   * Without this, one block disagrees with itself line by line. `text-align` positions a line's
+   * content inside its line box, but a word wider than the line box always overflows toward the
+   * **inline end** — rightward — whatever the alignment says. So in a right-aligned block the
+   * lines that fit hug the right edge and the lines that do not start at the left edge and run
+   * off the other side. Measured on a one-cell column: a 274px box holding 400px words, text
+   * running from 1660 to 2058 on a 1920 frame.
+   *
+   * Growing the box removes the disagreement at its source rather than correcting it after the
+   * fact, and it grows **away from the anchored edge** — a right-aligned block keeps its right
+   * edge and extends left, which is also the direction that keeps it on the canvas.
+   */
+  private growToContent(): void {
+    for (const block of this.blocks) {
+      const line = block.querySelector<HTMLElement>('.loop:not([data-copy]) p');
+      const words = block.querySelectorAll<HTMLElement>('.loop:not([data-copy]) w');
+      if (!line || words.length === 0) continue;
+
+      const available = line.getBoundingClientRect().width;
+      if (available <= 0) continue;
+
+      let widest = 0;
+      for (const word of words) {
+        const width = word.getBoundingClientRect().width;
+        if (width > widest) widest = width;
+      }
+
+      // Never wider than the frame: past that, growing cannot help and only pushes the block
+      // further out. What will not fit is handled by the nudge, which keeps the opening.
+      const grow = Math.min(widest, this.stage.width) - available;
+      if (grow <= 1) {
+        block.style.removeProperty('--grow');
+        block.style.removeProperty('--anchor');
+        continue;
+      }
+
+      block.style.setProperty('--grow', `${grow.toFixed(2)}px`);
+
+      // Which edge stays put. `justify` behaves like `left` for a line it cannot stretch, so it
+      // anchors the same way.
+      const align = block.dataset['align'];
+      const anchor = align === 'right' ? -grow : align === 'centre' ? -grow / 2 : 0;
+
+      if (anchor !== 0) block.style.setProperty('--anchor', `${anchor.toFixed(2)}px`);
+      else block.style.removeProperty('--anchor');
     }
   }
 
