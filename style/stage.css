@@ -373,10 +373,12 @@ sn {
    Was bundled into layouts 1, 2 and 8 along with a font size and a line height. On its own
    it combines with any anchor, any shape and any flow. */
 
-#container[data-align='left'] { text-align: left; }
-#container[data-align='centre'] { text-align: center; }
-#container[data-align='right'] { text-align: right; }
-#container[data-align='justify'] { text-align: justify; }
+/* Per block rather than per stage, because `auto` gives each one its own answer. `text-align`
+   inherits, so this is the same one declaration it always was, one level down. */
+.block[data-align='left'] { text-align: left; }
+.block[data-align='centre'] { text-align: center; }
+.block[data-align='right'] { text-align: right; }
+.block[data-align='justify'] { text-align: justify; }
 
 /* --- flow (§11.6) ---------------------------------------------------------------------
    How paragraphs arrange inside a block — the part of the old layout table that was neither

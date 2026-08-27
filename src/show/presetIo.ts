@@ -65,7 +65,7 @@ const OLD_MODES: Record<string, { slice: TextSlice; length: TextLength; take?: n
   shortSentences: { slice: 'sentence', length: 'short' },
   longSentences: { slice: 'sentence', length: 'long' },
 };
-const ALIGNS = new Set<string>(['left', 'centre', 'right', 'justify']);
+const ALIGNS = new Set<string>(['left', 'centre', 'right', 'justify', 'auto']);
 const FLOWS = new Set<string>(['stack', 'run-on', 'grid', 'wrapped', 'columns']);
 const ENERGIES = new Set<string>(['sparse', 'mid', 'peak', 'any']);
 const TRIGGERS = new Set<string>([

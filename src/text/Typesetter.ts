@@ -128,7 +128,31 @@ export interface TypesetOptions {
   readonly varyBy?: 'word' | 'char';
 }
 
-export type Align = 'left' | 'centre' | 'right' | 'justify';
+export type Align = 'left' | 'centre' | 'right' | 'justify' | 'auto';
+
+/** Blocks closer to the middle than this fraction of the canvas are centred. */
+const AUTO_DEAD_ZONE = 0.06;
+
+/**
+ * Which way a block should set its text, when the preset says to work it out.
+ *
+ * **Toward the nearer edge**, so the text throws inward. A block anchored at the left of the
+ * grid sets left, and a long word extends into the canvas rather than out of it; a block at the
+ * right sets right and spills the other way. It is the placement grid's own logic applied to
+ * typography — the anchor already says which side of the frame this block belongs to.
+ *
+ * A dead zone in the middle, or a block straddling the centre would flip between left and right
+ * on every re-typeset for a difference of a few pixels.
+ *
+ * Takes the block's centre rather than its edges, so a wide block and a narrow one anchored in
+ * the same place agree.
+ */
+export function alignFor(left: number, width: number): Align {
+  const centre = (left + width / 2) / 100;
+  if (centre < 0.5 - AUTO_DEAD_ZONE) return 'left';
+  if (centre > 0.5 + AUTO_DEAD_ZONE) return 'right';
+  return 'centre';
+}
 
 /**
  * Motion, in two kinds. DESIGN.md §11.5.
@@ -424,7 +448,12 @@ export class Typesetter {
       }
       this.pending = null;
 
-      parts.push(`<div class="block" data-block="${index}" style="${style}">`);
+      const align = options.align ?? 'centre';
+      const blockAlign = align === 'auto' ? alignFor(box.left, box.width) : align;
+
+      parts.push(
+        `<div class="block" data-block="${index}" data-align="${blockAlign}" style="${style}">`,
+      );
       // Two nested wrappers: `.block-content` is what moves, `.loop` is one copy of the
       // text. A stationary block has exactly one copy and the extra element costs nothing;
       // a conveyor gets a second, which is what makes the loop seamless (see `makeSeamless`).
@@ -443,6 +472,7 @@ export class Typesetter {
     this.stage.setFontScale(this.fontPx);
 
     const container = this.stage.container;
+    // Kept for anything still reading it, but the per-block attribute is what styles the text.
     container.dataset['align'] = options.align ?? 'centre';
     container.dataset['flow'] = options.flow ?? 'stack';
 
