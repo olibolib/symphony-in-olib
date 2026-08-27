@@ -138,7 +138,17 @@ c {
      against the *padding* box — they have to be inset by hand to match. */
   --pad: calc(var(--fs) * 0.28);
   padding: var(--pad);
-  overflow: hidden;
+
+  /* Text may leave its box rather than be cut off by it.
+
+     A block sizes to a grid cell, and the type size is chosen independently — so a long word
+     at a large size is simply wider than the box it landed in, and that is not a mistake to
+     punish. Clipping it meant a word, and sometimes a whole line, silently did not appear;
+     a `swell` on a word near an edge got its top or its side sliced off.
+
+     The grid decides where a block *starts*, which is the anchor semantics the whole of §11.6
+     rests on. It was never meant to decide what fits. */
+  overflow: visible;
 
   /* Vertically centred within its own box, which is what the table-cell used to do for the
      whole stage — now per block, so a short passage sits in the middle of its band.
@@ -163,6 +173,16 @@ sn {
 /* The conveyor's moving part. Fills the block, so a stationary preset is unaffected. */
 .block-content {
   width: 100%;
+}
+
+/* A conveyor is a window, so it does have to clip — but only on the axis the text travels.
+
+   `clip-path` rather than `overflow`, because CSS will not give one axis `hidden` and the
+   other `visible`: setting either turns the other into `auto`, which clips just the same. An
+   inset with negative sides clips top and bottom at the box edge and not at all sideways, so
+   a long word still leaves the box the way it does anywhere else. */
+.block[data-conveyor] {
+  clip-path: inset(0 -100vw);
 }
 
 /* Every keyframe that moves something is `olib-move-…`, and the engine matches on that

@@ -478,29 +478,25 @@ export class Typesetter {
 
     this.measureLines(options.wholeLines === true);
     this.trimLines();
-
-    this.measureClipping();
   }
 
   /**
-   * One layout read per block, once per re-typeset — a few times a minute, not per frame.
-   * That is well inside the §14 rule against reading layout in a loop.
+   * How many lines are on the stage but not visible. §14 — nothing is lost silently.
+   *
+   * It used to count blocks whose content overflowed, which was the same question while a
+   * block clipped its content. Blocks spill now, so overflowing costs nothing and reporting it
+   * would be a warning about something that is working — the fastest way to teach someone to
+   * ignore a readout.
+   *
+   * What can still take text off the stage is `wholeLines`, which hides a line rather than
+   * showing half of one. That is a real omission and it is what this counts.
    */
-  private measureClipping(): void {
-    let clipped = 0;
-    for (const block of this.blocks) {
-      // A conveyor overflows by design — that is what it is for — so counting it as clipped
-      // would report a fault on every phrase and train you to ignore the number.
-      if (block.dataset['conveyor'] !== undefined) continue;
-
-      if (
-        block.scrollHeight > block.clientHeight + 1 ||
-        block.scrollWidth > block.clientWidth + 1
-      ) {
-        clipped++;
-      }
+  private countHidden(): void {
+    let hidden = 0;
+    for (const line of this.lines) {
+      if (line.el.hidden) hidden++;
     }
-    this.clipped = clipped;
+    this.clipped = hidden;
   }
 
   /**
@@ -648,7 +644,10 @@ export class Typesetter {
    * rather than from the DOM. Writing only on a change keeps it off the compositor's back.
    */
   trimLines(): void {
-    if (this.lines.length === 0) return;
+    if (this.lines.length === 0) {
+      this.clipped = 0;
+      return;
+    }
 
     for (const line of this.lines) {
       const top = line.top + translateY(line.content);
@@ -659,6 +658,8 @@ export class Typesetter {
       // No mirroring: every line, in every copy, is measured and decided on its own.
       if (line.el.hidden === whole) line.el.hidden = !whole;
     }
+
+    this.countHidden();
   }
 
   /**
