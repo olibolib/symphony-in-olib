@@ -24,7 +24,8 @@ import {
   textsForBlocks,
   type PulseSpec,
 } from './show/wiring';
-import type { EffectContext } from './effects/types';
+import type { EffectContext } from './show/context';
+import { randomRange } from './util/random';
 
 /**
  * The show. DESIGN.md §7.1 — this is the output window's half of the app.
@@ -58,6 +59,15 @@ export class Engine {
 
   /** Phrases the current text has been on screen. Drives held-text behaviour. */
   private textAge = 0;
+
+  /**
+   * Phrases the current passage is allowed before it is replaced, rolled at each typeset.
+   *
+   * Was a closure inside a `retext` effect bound to the phrase trigger — identical in every
+   * preset, because it was written in TypeScript where nobody could change it. It is a text
+   * setting now (§11.2), and the roll lives here rather than hidden in a closure.
+   */
+  private holdFor = 1;
 
   /**
    * Seconds since the previous frame, shared with the effect context.
@@ -407,6 +417,14 @@ export class Engine {
       if (beat.isPhraseStart) {
         this.conductor.fire('phrase', ctx);
 
+        // Text holds for a phrase or two, chosen fresh each time (§11.2). A fixed hold is
+        // legible but predictable — you begin anticipating the change, which is exactly what a
+        // generative visual should not allow.
+        //
+        // Before the `held` check below, because that check asks whether the text survived
+        // this phrase and this is what decides it.
+        if (this.textAge >= this.holdFor) this.typesetNext();
+
         // `held` fires only where the text was *not* replaced this phrase — static text for two
         // phrases needs more happening to it, or the second phrase reads as a stall.
         //
@@ -442,21 +460,20 @@ export class Engine {
 
   // --- the show ----------------------------------------------------------------------------
 
-  /** Built fresh each frame so effects always see current levels. */
+  /**
+   * Built fresh each frame, so a layer always sees current values.
+   *
+   * Four fields. It carried ten until the stage effects were deleted — the palette, the levels,
+   * the beat phase, the text age and a `retext` callback reaching back into here, none of which
+   * a layer ever read.
+   */
   private effectContext(): EffectContext {
     return {
-      stage: this.stage,
       typesetter: this.typesetter,
       channels: this.channels,
-      energy: this.sources.analyser?.energy ?? 0,
-      bass: this.sources.analyser?.bass ?? 0,
-      palette: PALETTES[this.look.palette],
-      beatPhase: this.clock.phase(performance.now()),
-      textAge: this.textAge,
       dt: this.frameDelta,
       // The smoothed tempo, not the raw estimate, so decay agrees with what is on screen.
       barSeconds: this.stage.barSeconds,
-      retext: () => this.typesetNext(),
     };
   }
 
@@ -490,6 +507,7 @@ export class Engine {
     // The tracked elements no longer exist after a re-render.
     this.channels.forget();
     this.textAge = 0;
+    this.holdFor = randomRange(preset.text.hold.min, preset.text.hold.max);
 
     // New blocks mean new animations, and they start at the nominal rate rather than the live
     // one. Cheap: a handful of animations, a few times a minute.
@@ -523,8 +541,6 @@ export class Engine {
     // invalidation logic.
     this.conductor.load({
       layers: preset.layers.map((spec, index) => new Layer(index, spec)),
-      bindings: preset.bindings,
-      ...(preset.ambient ? { ambient: preset.ambient } : {}),
     });
 
     // The outgoing preset's layers own values on elements that are about to be re-typeset

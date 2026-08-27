@@ -1,8 +1,5 @@
-import type { EffectRef } from '../effects/types';
 import type { PresetDoc } from '../ipc/protocol';
-import { retext } from '../effects';
 import { FULL } from './mask';
-import type { Bindings } from './Conductor';
 import { PRESET_VERSION, parsePreset } from './presetIo';
 import { PRESETS, toDoc, type VisualPreset } from './presets';
 
@@ -23,25 +20,6 @@ import { PRESETS, toDoc, type VisualPreset } from './presets';
  * seed from again.
  */
 
-interface StageParts {
-  readonly bindings: Bindings;
-  readonly ambient?: readonly EffectRef[];
-  readonly minPhrases?: number;
-}
-
-/**
- * What a brand-new preset gets.
- *
- * Not empty: a preset with no bindings never re-typesets, so the text would freeze on
- * whatever was on screen when it went live and never change again. That reads as a crash,
- * not as a blank canvas — so a new preset arrives able to do the one thing every preset must.
- */
-const NEW_PRESET_PARTS: StageParts = {
-  bindings: {
-    phrase: [retext({ hold: [1, 2] })],
-  },
-};
-
 const NEW_PRESET_DOC: Omit<PresetDoc, 'name'> = {
   version: PRESET_VERSION,
   energy: 'any',
@@ -51,6 +29,7 @@ const NEW_PRESET_DOC: Omit<PresetDoc, 'name'> = {
     length: 'short',
     pick: 'random',
     position: 1,
+    hold: { min: 1, max: 2 },
     splitChars: true,
     blocks: 1,
     // One size, not a range. The editor opens a range only when you ask for it, and a new
@@ -58,6 +37,7 @@ const NEW_PRESET_DOC: Omit<PresetDoc, 'name'> = {
     size: { min: 30, max: 30 },
   },
   texts: ['default'],
+  minPhrases: 0,
   spawn: FULL,
   blockShapes: [{ cols: { min: 4, max: 4 }, rows: { min: 3, max: 3 } }],
   align: 'centre',
@@ -88,7 +68,7 @@ const NEW_PRESET_DOC: Omit<PresetDoc, 'name'> = {
 
 export class PresetStore {
   private docs: PresetDoc[];
-  private readonly parts = new Map<string, StageParts>();
+
 
   /** Names with unsaved changes, and the timer that will flush them. */
   private readonly dirty = new Set<string>();
@@ -99,13 +79,6 @@ export class PresetStore {
 
   constructor() {
     this.docs = PRESETS.map(toDoc);
-    for (const preset of PRESETS) {
-      this.parts.set(preset.name, {
-        bindings: preset.bindings,
-        ...(preset.ambient ? { ambient: preset.ambient } : {}),
-        ...(preset.minPhrases !== undefined ? { minPhrases: preset.minPhrases } : {}),
-      });
-    }
   }
 
   /**
@@ -229,17 +202,16 @@ export class PresetStore {
     return this.docs;
   }
 
-  /** Rebuild the runnable presets. Called whenever a document changes. */
+  /**
+   * The runnable presets.
+   *
+   * A document *is* a preset now, so there is nothing to merge and nothing to assert. This
+   * used to glue each document to a `StageParts` record held in a map keyed by name, with an
+   * `as VisualPreset` because the merge could not be proved sound — and every awkward thing in
+   * this class came from that seam.
+   */
   resolve(): readonly VisualPreset[] {
-    return this.docs.map((doc) => {
-      const parts = this.parts.get(doc.name) ?? NEW_PRESET_PARTS;
-      return {
-        ...doc,
-        bindings: parts.bindings,
-        ...(parts.ambient ? { ambient: parts.ambient } : {}),
-        ...(parts.minPhrases !== undefined ? { minPhrases: parts.minPhrases } : {}),
-      } as VisualPreset;
-    });
+    return this.docs;
   }
 
   find(name: string): PresetDoc | undefined {
@@ -285,23 +257,22 @@ export class PresetStore {
     if (index === -1) return false;
 
     this.docs.splice(index, 1);
-    this.parts.delete(name);
     this.dirty.delete(name);
     void window.olib.presets.remove(name);
     return true;
   }
 
-  /** Rename, carrying the stage effects across so the preset keeps working. */
+  /**
+   * Rename.
+   *
+   * This used to have to migrate the parts map by hand, or the preset would keep its layers and
+   * quietly lose its ability to change text. There is nothing keyed by name any more.
+   */
   rename(from: string, to: string): string | null {
     const doc = this.find(from);
     if (!doc || from === to) return null;
 
     const name = this.uniqueName(to.trim() === '' ? from : to.trim());
-    const parts = this.parts.get(from);
-    if (parts) {
-      this.parts.delete(from);
-      this.parts.set(name, parts);
-    }
 
     const index = this.docs.findIndex((existing) => existing.name === from);
     if (index !== -1) this.docs[index] = { ...doc, name };

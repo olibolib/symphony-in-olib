@@ -91,7 +91,7 @@ const TRIGGERS = new Set<string>([
  */
 type Migration = (o: Record<string, unknown>, say: Say, fallback: PresetDoc) => void;
 
-const MIGRATIONS: readonly Migration[] = [toV1, toV2];
+const MIGRATIONS: readonly Migration[] = [toV1, toV2, toV3];
 
 /** What this build writes. Bump it and add a migration in the same commit, never one alone. */
 export const PRESET_VERSION = MIGRATIONS.length;
@@ -163,6 +163,32 @@ function toV2(o: Record<string, unknown>, say: Say, fallback: PresetDoc): void {
   say('the stage pulse is a layer now — carried across');
 }
 
+/**
+ * Version 2 to 3: text hold and `minPhrases` became fields.
+ *
+ * `retext({ hold: [1, 2] })` was a closure bound to the phrase trigger and identical in every
+ * preset — not because that suits all of them, but because it was written in TypeScript where
+ * nobody could reach it. `minPhrases` was in the same record for the same reason.
+ *
+ * Both come off the fallback, like the pulse did, because neither was ever in the document.
+ */
+function toV3(o: Record<string, unknown>, say: Say, fallback: PresetDoc): void {
+  const text = isRecord(o['text']) ? o['text'] : null;
+  let carried = false;
+
+  if (text && text['hold'] === undefined) {
+    text['hold'] = { ...fallback.text.hold };
+    carried = true;
+  }
+
+  if (o['minPhrases'] === undefined) {
+    o['minPhrases'] = fallback.minPhrases;
+    carried = true;
+  }
+
+  if (carried) say('how long text holds is a setting now — carried across');
+}
+
 export function parsePreset(name: string, raw: string, fallback: PresetDoc): ParseResult {
   const problems: string[] = [];
   let migrated = false;
@@ -217,6 +243,7 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
       length: pickFrom(text['length'], LENGTHS, fallback.text.length, 'text.length', say) as TextLength,
       pick: pickFrom(text['pick'], PICKS, fallback.text.pick, 'text.pick', say) as TextPick,
       position: clampNumber(text['position'], 1, 999, fallback.text.position, 'text.position', say),
+      hold: holdRange(text['hold'], fallback.text.hold, say),
       splitChars: bool(text['splitChars'], fallback.text.splitChars),
       blocks: clampNumber(text['blocks'], 1, 3, fallback.text.blocks, 'text.blocks', say) as 1 | 2 | 3,
       size: {
@@ -227,6 +254,7 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
     },
 
     texts: stringList(o['texts'], fallback.texts),
+    minPhrases: clampNumber(o['minPhrases'], 0, 64, fallback.minPhrases, 'minPhrases', say),
     spawn: mask(o['spawn'], fallback.spawn, say),
     blockShapes: shapes(o['blockShapes'], fallback.blockShapes, say),
     align: pickFrom(o['align'], ALIGNS, fallback.align, 'align', say) as Align,
@@ -495,6 +523,24 @@ function motionLayer(
       motion,
     },
   ];
+}
+
+/**
+ * How many phrases a passage holds, in whole phrases.
+ *
+ * A hold of zero would replace the text every phrase and then some, so the floor is one — and
+ * the ceiling is high enough for a preset that wants a passage to stay for a couple of minutes.
+ */
+function holdRange(
+  value: unknown,
+  fallbackHold: { readonly min: number; readonly max: number },
+  say: Say,
+): { min: number; max: number } {
+  if (!isRecord(value)) return { ...fallbackHold };
+
+  const lo = clampNumber(value['min'], 1, 64, fallbackHold.min, 'text.hold.min', say);
+  const hi = clampNumber(value['max'], 1, 64, fallbackHold.max, 'text.hold.max', say);
+  return { min: Math.min(lo, hi), max: Math.max(lo, hi) };
 }
 
 /** How hard the stage breathes, for a `pulse` layer. */

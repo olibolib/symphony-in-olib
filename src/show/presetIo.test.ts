@@ -23,11 +23,13 @@ const BLANK: PresetDoc = {
     length: 'short',
     pick: 'random',
     position: 1,
+    hold: { min: 1, max: 2 },
     splitChars: true,
     blocks: 1,
     size: { min: 30, max: 30 },
   },
   texts: ['default'],
+  minPhrases: 0,
   spawn: FULL,
   blockShapes: [{ cols: { min: 4, max: 4 }, rows: { min: 3, max: 3 } }],
   align: 'centre',
@@ -76,6 +78,24 @@ describe('parsePreset: surviving bad input', () => {
     // One bad field must not cost the other twenty.
     const result = parse({ ...BLANK, align: 'sideways', text: { ...BLANK.text, take: 7 } });
     expect(result.doc.text.take).toBe(7);
+  });
+});
+
+describe('parsePreset: the text hold', () => {
+  it('never lets a passage hold for less than a phrase', () => {
+    // Zero would replace the text every phrase and then some.
+    const result = parse({ ...BLANK, text: { ...BLANK.text, hold: { min: 0, max: 0 } } });
+    expect(result.doc.text.hold.min).toBeGreaterThanOrEqual(1);
+  });
+
+  it('sorts a hold that arrived the wrong way round', () => {
+    const result = parse({ ...BLANK, text: { ...BLANK.text, hold: { min: 6, max: 2 } } });
+    expect(result.doc.text.hold).toEqual({ min: 2, max: 6 });
+  });
+
+  it('falls back rather than dropping the field', () => {
+    const result = parse({ ...BLANK, text: { ...BLANK.text, hold: 'forever' } });
+    expect(result.doc.text.hold).toEqual(BLANK.text.hold);
   });
 });
 
@@ -245,6 +265,26 @@ describe('parsePreset: migration', () => {
   it('does not invent a pulse for a preset that never had one', () => {
     const result = parsePreset('under-test', JSON.stringify({ ...BLANK, version: 1 }), BLANK);
     expect(result.doc.layers.some((l) => l.treatment === 'pulse')).toBe(false);
+  });
+
+  it('carries the text hold and the preset floor across as fields', () => {
+    // Both were engine-side, keyed by preset name, so neither was ever in the file.
+    const source: PresetDoc = {
+      ...BLANK,
+      text: { ...BLANK.text, hold: { min: 3, max: 5 } },
+      minPhrases: 4,
+    };
+
+    // A copy deep enough to delete from. `{ ...BLANK }` shares `text`, so deleting through it
+    // empties the fixture for every test that runs afterwards.
+    const old = JSON.parse(JSON.stringify({ ...BLANK, version: 2 })) as Record<string, unknown>;
+    delete (old['text'] as Record<string, unknown>)['hold'];
+    delete old['minPhrases'];
+
+    const result = parsePreset('under-test', JSON.stringify(old), source);
+    expect(result.doc.text.hold).toEqual({ min: 3, max: 5 });
+    expect(result.doc.minPhrases).toBe(4);
+    expect(result.migrated).toBe(true);
   });
 
   it('does not run migrations backwards for a document from a newer build', () => {

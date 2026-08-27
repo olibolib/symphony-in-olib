@@ -1,7 +1,7 @@
 import { decayProbability } from './Channels';
 import { resolve, type Target } from './targets';
 import { CHANNELS, isMotion, write, type Treatment } from './treatments';
-import type { EffectContext } from '../effects/types';
+import type { EffectContext } from './context';
 import type { LayerTrigger } from './Conductor';
 
 export interface MotionSpec {

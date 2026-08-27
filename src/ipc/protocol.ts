@@ -74,6 +74,19 @@ export interface PresetDoc {
     /** Where `position` starts, counting from 1. */
     readonly position: number;
 
+    /**
+     * How many phrases a passage stays before it is replaced, rolled fresh each time (§11.2).
+     *
+     * A fixed hold is legible but predictable — you begin anticipating the change, which is
+     * exactly what a generative visual should not allow. `min === max` gives a fixed one anyway
+     * if that is what a preset wants.
+     *
+     * This was `retext({ hold: [1, 2] })`, a closure bound to the phrase trigger and identical
+     * in every preset — not because 1 to 2 suits all of them, but because it was written in
+     * TypeScript where nobody could change it. A sparse preset wants to hold text much longer.
+     */
+    readonly hold: { readonly min: number; readonly max: number };
+
     readonly splitChars: boolean;
     readonly blocks: 1 | 2 | 3;
     readonly size: { readonly min: number; readonly max: number };
@@ -92,6 +105,14 @@ export interface PresetDoc {
    * that out mid-set staring at a typo you know you fixed.
    */
   readonly texts: readonly string[];
+
+  /**
+   * Phrases this preset stays on stage before the timer may cycle away from it (§11.2).
+   *
+   * The sparse ones need room to breathe or they read as a glitch rather than as a change of
+   * pace. Was engine-side, which is why the editor could not reach it.
+   */
+  readonly minPhrases: number;
 
   readonly spawn: Mask;
   readonly blockShapes: readonly BlockShape[];
