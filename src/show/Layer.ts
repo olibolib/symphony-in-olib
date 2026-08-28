@@ -1,6 +1,6 @@
 import { decayProbability } from './Channels';
 import { resolve, type Target } from './targets';
-import { CHANNELS, isMotion, write, type Treatment } from './treatments';
+import { CHANNELS, drawsABox, isMotion, write, type Treatment } from './treatments';
 import type { EffectContext } from './context';
 import type { LayerTrigger } from './Conductor';
 
@@ -120,7 +120,9 @@ export class Layer {
     // Motion is established when the text is laid out; there are no elements to mark.
     if (isMotion(this.spec.treatment)) return;
 
-    const elements = resolve(this.spec.target, ctx.typesetter);
+    // `outline` draws a box, so a paragraph target means the paragraph's box — not a box round
+    // each of its words, which is what every other treatment's "every word in these" means.
+    const elements = resolve(this.spec.target, ctx.typesetter, drawsABox(this.spec.treatment));
     if (elements.length === 0) return;
 
     for (const el of elements) {

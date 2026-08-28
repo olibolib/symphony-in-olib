@@ -2314,14 +2314,24 @@ Two rules carried forward from the old block model:
 which a 7x7 grid gives up. `avoidOverlap` (§11.6) searches for a non-colliding arrangement
 instead, and is on by default.
 
-### 12.4.2 Size floor
-
-Nothing renders below about 76% of the base size, and the base is 28px.
+### 12.4.2 Size floor — **a principle, not a check**
 
 Small type fails twice over: it is unreadable on a projector at the back of a room, and a
-visualiser warping the output (§13.4) smears fine detail into mush within a frame or two.
-Fewer, larger words survive both. Selection counts were cut accordingly — passages are two
-or three sentences, not ninety words.
+visualiser warping the output (§13.4) smears fine detail into mush within a frame or two. Fewer,
+larger words survive both. Selection counts were cut accordingly — passages are two or three
+sentences, not ninety words.
+
+This used to say "nothing renders below about 76% of the base size, and the base is 28px", which
+was true in Acid and has not been true here for some time. **There is no such check anywhere in
+the code**, and the sentence had survived as an assertion about behaviour that nothing enforced
+— which is worse than saying nothing, because it is the kind of guarantee someone would build
+on.
+
+What exists now is better suited to the problem anyway: base size is a per-preset range with its
+own bounds (§11.5), the editor holds a typed value to those bounds, and a block **grows to fit
+its longest word** rather than shrinking type to fit a cell (§11.6). Sizes in use run to 50px,
+well clear of any floor. If one is ever wanted it belongs in `presetIo`'s clamp, where the rest
+of the bounds live.
 
 ### 12.5 Colour
 
@@ -2952,6 +2962,8 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Reasoning about overhang from `align` | **Dropped** | Four rules to keep in step. Measure the painted rectangle instead (§11.6) |
 | The `grid` flow | **Dropped** | Welded an arrangement to a decoration, sized its columns in `em`, and had been laying out the wrapper rather than the paragraphs (§12.4) |
 | `display: none` for a trimmed line | **Dropped** | It leaves the layout, so the passage shortens after the conveyor was measured against it (§11.5) |
+| `data-len` on every word | **Dropped** | Acid's long/short flag. The CSS that read it never came across, so it was an attribute per word that nothing has ever used |
+| One resolution rule for every treatment | **Dropped** | `outline` draws a box, so "every paragraph" has to mean the paragraph. The rest mark type, and for those it means every word in it (§11.5) |
 
 ---
 

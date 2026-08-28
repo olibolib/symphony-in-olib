@@ -1091,15 +1091,16 @@ export class Typesetter {
         parts.push('<p>');
 
         for (const word of line) {
-          // `data-len` lets CSS treat long and short words differently, as Acid does.
-          //
           // No colour slot any more. Acid gave every word one and coloured it whether anything
           // had targeted it or not; colour now reaches a word only through an `accent` layer,
           // so an untouched word is the stage foreground and nothing else. The scattered
           // colour that slot gave for free is still available — as a layer, on `enter`, with
           // no decay — and having to ask for it is the point.
-          const long = word.length >= 4 ? '1' : '0';
-          parts.push(`<w data-len="${long}">`);
+          // No `data-len`. Acid wrote a long/short flag on every word for its CSS to key on,
+          // and that CSS never came across — so it was a string built and an attribute set per
+          // word, thousands per typeset, that nothing has ever read. `data-ch` below is the
+          // opposite case and stays: `match` targets resolve through it.
+          parts.push('<w>');
 
           if (options.splitChars) {
             for (const char of word) {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { pulseAt, pulseOptions, type PulseSpec } from './wiring';
+import { drawsABox, isMotion, isStage, MOTION_TREATMENTS, STAGE_TREATMENTS } from './treatments';
 import type { LayerSpec } from './Layer';
 
 /**
@@ -104,6 +105,36 @@ describe('pulseAt', () => {
       const value = pulseAt(decay, phase);
       expect(value).toBeLessThanOrEqual(previous + 1e-9);
       previous = value;
+    }
+  });
+});
+
+/**
+ * Which treatments are which kind. DESIGN.md §11.5.
+ *
+ * Three kinds now, and the differences are load-bearing: a motion treatment has no target, a
+ * stage treatment has no target and runs every frame, and one treatment draws a box round what
+ * it is given rather than marking the type inside it.
+ */
+describe('treatment kinds', () => {
+  it('knows the two that move something', () => {
+    expect(MOTION_TREATMENTS).toEqual(['scroll', 'travel']);
+    expect(isMotion('scroll')).toBe(true);
+    expect(isMotion('invert')).toBe(false);
+  });
+
+  it('knows the one that moves the stage', () => {
+    expect(STAGE_TREATMENTS).toEqual(['pulse']);
+    expect(isStage('pulse')).toBe(true);
+    expect(isStage('travel')).toBe(false);
+  });
+
+  it('knows the one that draws a box', () => {
+    // Outlining "every paragraph" has to mean a box per paragraph. Every other treatment marks
+    // the type, and for those a paragraph target means every word in it.
+    expect(drawsABox('outline')).toBe(true);
+    for (const other of ['invert', 'accent', 'dingbat', 'underline', 'strike', 'swell', 'flicker', 'blank'] as const) {
+      expect(drawsABox(other)).toBe(false);
     }
   });
 });

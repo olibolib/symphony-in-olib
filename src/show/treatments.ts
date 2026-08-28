@@ -56,6 +56,17 @@ export const MOTION_TREATMENTS: readonly Treatment[] = ['scroll', 'travel'];
  */
 export const STAGE_TREATMENTS: readonly Treatment[] = ['pulse'];
 
+/**
+ * Treatments that draw a box round what they are given, rather than marking the type in it.
+ *
+ * The distinction only matters for a grouping slice. Outlining "every paragraph" should give a
+ * box per paragraph; outlining every *word* in those paragraphs is a different effect, and one
+ * that has to be asked for by targeting words.
+ */
+export function drawsABox(treatment: Treatment): boolean {
+  return treatment === 'outline';
+}
+
 export function isStage(treatment: Treatment): boolean {
   return STAGE_TREATMENTS.includes(treatment);
 }
