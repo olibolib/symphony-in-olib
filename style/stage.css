@@ -25,6 +25,22 @@ p {
   visibility: hidden;
 }
 
+/* A conveyor's repeats are the same words at the same width as the original, so laying them
+   out is work the browser cannot know is redundant. `content-visibility` lets it skip the parts
+   that are nowhere near the window, and skip painting them until they arrive.
+
+   **Only the copies.** Applied to the original as well it is four to five times faster —
+   measured at 44-58ms a typeset down to 10-12 — but the belt's travel distance is the height of
+   the original, and an element whose layout has been skipped reports its intrinsic guess
+   instead: 8554px of text measured as 3480, which is the `display: none` fault of this morning
+   in a new coat. The copies are measured by nothing, so they are safe to skip.
+
+   The intrinsic size only has to be a plausible line; nothing is measured from it. */
+.loop[data-copy] p {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 1.2em;
+}
+
 /* Words. `w` and `c` are custom tags — legal, and much lighter than spans at scale. */
 w {
   display: inline-block;
