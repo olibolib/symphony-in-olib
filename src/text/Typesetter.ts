@@ -38,9 +38,6 @@ export type TextLength = 'any' | 'short' | 'long';
  */
 export type TextPick = 'random' | 'order' | 'position';
 
-/** Words above this are "long". Acid's threshold, kept. */
-const LONG_WORDS = 12;
-
 export interface TypesetOptions {
   readonly slice: TextSlice;
 
@@ -285,6 +282,14 @@ const MAX_LOOP_ELEMENTS = DEFAULT_MAX_ELEMENTS / 2;
 /** The type size that budget was measured at. */
 const REFERENCE_SIZE_PX = 28;
 
+/**
+ * How many columns `flow: 'columns'` makes. Matches the stylesheet, which hardcodes it too.
+ *
+ * A flow takes no parameters (§11.6), so this is a constant in two places rather than a setting
+ * — and the block sizing has to know it, or the longest word does not fit a column.
+ */
+const COLUMN_COUNT = 2;
+
 /** However small the type gets, the belt may not cost more than this. */
 const LOOP_ELEMENT_CEILING = DEFAULT_MAX_ELEMENTS * 2;
 
@@ -518,7 +523,7 @@ export class Typesetter {
     // changes its height — and the conveyor's whole geometry is derived from that height. It
     // was running afterwards, which left every copy positioned for a taller passage than the
     // one actually there: the belt developed gaps and eventually ran out into black.
-    this.growToContent();
+    this.growToContent(options.flow === 'columns' ? COLUMN_COUNT : 1);
 
     const conveyor = options.contentMotion;
     if (conveyor && conveyor.speed > 0) this.measureConveyor(conveyor.continuous);
@@ -657,7 +662,7 @@ export class Typesetter {
    * fact, and it grows **away from the anchored edge** — a right-aligned block keeps its right
    * edge and extends left, which is also the direction that keeps it on the canvas.
    */
-  private growToContent(): void {
+  private growToContent(columns: number): void {
     for (const block of this.blocks) {
       const line = block.querySelector<HTMLElement>('.loop:not([data-copy]) p');
       const words = block.querySelectorAll<HTMLElement>('.loop:not([data-copy]) w');
@@ -672,9 +677,16 @@ export class Typesetter {
         if (width > widest) widest = width;
       }
 
+      // **Times the number of columns**, because a flow that subdivides the block subdivides
+      // the guarantee with it. Growing so the longest word fits the block is no use when the
+      // text is then laid out in two columns half that wide — the word ends up outside a
+      // column, crossing whatever is drawn round it. This is the fault that `grid` was deleted
+      // for; `columns` has it too, and can be given the room instead.
+      //
       // Never wider than the frame: past that, growing cannot help and only pushes the block
       // further out. What will not fit is handled by the nudge, which keeps the opening.
-      const grow = Math.min(widest, this.stage.width) - available;
+      const needed = widest * columns;
+      const grow = Math.min(needed, this.stage.width) - available;
       if (grow <= 1) {
         block.style.removeProperty('--grow');
         block.style.removeProperty('--anchor');
@@ -1016,7 +1028,13 @@ export class Typesetter {
       return preset.sentences;
     }
 
-    const pool = filterByLength(slicesOf(preset, options.slice), options.length ?? 'any');
+    // The threshold comes from the text, measured when it was parsed — so "long" means long
+    // *for this text* rather than long for Wittgenstein.
+    const pool = filterByLength(
+      slicesOf(preset, options.slice),
+      options.length ?? 'any',
+      preset.longWords,
+    );
     if (pool.length === 0) return [];
 
     const take = Math.max(1, options.take ?? 1);
@@ -1165,12 +1183,13 @@ function slicesOf(preset: TextPreset, slice: TextSlice): readonly Sentence[] {
 function filterByLength(
   pieces: readonly Sentence[],
   length: TextLength,
+  longWords: number,
 ): readonly Sentence[] {
   if (length === 'any') return pieces;
 
   const matches = pieces.filter((piece) => {
     const words = sentenceLength(piece);
-    return length === 'short' ? words <= LONG_WORDS : words > LONG_WORDS;
+    return length === 'short' ? words <= longWords : words > longWords;
   });
   return matches.length > 0 ? matches : pieces;
 }

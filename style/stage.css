@@ -422,8 +422,14 @@ sn {
   align-content: safe center;
   gap: 0 0.4em;
 }
+/* A quarter of the block as a *starting* size, not as a minimum.
+
+   `min-width` on a flex item replaces the automatic minimum, which is min-content — so setting
+   it to 25% is what let a paragraph shrink below its own text and the word spill out of it,
+   crossing the outline drawn round its box. As a flex-basis it is still a quarter to begin
+   with, and the automatic minimum stays in place to stop it going under its content. */
 #container[data-flow='wrapped'] .loop p {
-  min-width: 25%;
+  flex: 1 1 25%;
 }
 
 /* Two columns with a gap. Was layout 12, where the gap *was* the protected middle — it is

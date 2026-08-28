@@ -183,7 +183,12 @@ describe('blockedMessage', () => {
 });
 
 describe('textsForBlocks', () => {
-  const text = (name: string): TextPreset => ({ name, lines: [[name]], sentences: [[[name]]] });
+  const text = (name: string): TextPreset => ({
+    name,
+    lines: [[name]],
+    sentences: [[[name]]],
+    longWords: 1,
+  });
   const active = text('active');
   const bank = new Map([
     ['prologue', text('prologue')],
