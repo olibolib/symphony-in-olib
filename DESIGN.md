@@ -1997,6 +1997,16 @@ it off the bottom of the frame.
 inline-block word wider than that hangs out of it and the line's rectangle does not include the
 thing being measured.
 
+#### Flows take no parameters
+
+`columns` is two columns and `wrapped` breaks at a quarter of the block, both hardcoded and both
+inherited from the layout table. Neither became a setting, and neither should.
+
+A flow says *how paragraphs sit inside a block* and nothing else. Anything you would reach a
+column-count slider for, the block system already does better: two blocks are two columns you
+can also anchor, size, target and animate separately. A setting would be a second and weaker way
+to reach the same picture, which is how the layout table got to eighteen entries.
+
 #### `align: auto` sets a block toward the nearer edge
 
 A fifth option beside left, centre, right and justify, not a mode. Text throws inward: a block
@@ -2964,6 +2974,7 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | `display: none` for a trimmed line | **Dropped** | It leaves the layout, so the passage shortens after the conveyor was measured against it (§11.5) |
 | `data-len` on every word | **Dropped** | Acid's long/short flag. The CSS that read it never came across, so it was an attribute per word that nothing has ever used |
 | One resolution rule for every treatment | **Dropped** | `outline` draws a box, so "every paragraph" has to mean the paragraph. The rest mark type, and for those it means every word in it (§11.5) |
+| A column count setting on the `columns` flow | **Dropped** | No flow takes a parameter, and blocks already give you columns you can place, size and target independently. A setting would be a second, weaker way to do it (§12.4) |
 
 ---
 
@@ -2983,7 +2994,7 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | ~~Q16~~ | ~~A genuine hard cut of 30%+ takes ~12s to follow. Right trade, or should the top of the scale be softened?~~ **Answered: softened**, to 0.95 / 0.70 / 14 and 7.9s, after a real house-to-DnB change failed to take. A tap now also hands control back | §9.2.4 |
 | Q17 | Should the control window's position be remembered too? Same few lines, but it hides to the tray rather than closing | §7.3 |
 | Q18 | The conveyor budget fix is reasoned from the formula, not measured — the trigger is a rendered text height. Worth confirming on a 1080p stage with small type | §11.5 |
-| Q19 | `wrapped` packs paragraphs at uneven widths, so `grid`'s even columns are gone. Worth a flow that does only that, sized in cells rather than `em`? | §12.4 |
+| ~~Q19~~ | ~~`wrapped` packs paragraphs at uneven widths, so `grid`'s even columns are gone. Worth a flow that does only that?~~ **Answered: no.** Even columns are what `columns` is for, and more of them is more blocks | §12.4 |
 | Q20 | Growth happens after placement, so `avoidOverlap` cannot see it — two blocks in adjacent cells can grow into each other | §11.6 |
 | Q13 | Pulse amounts are guesses (0.012–0.022). Worth tuning against a projector rather than a monitor — apparent scale changes with viewing distance | §12.2.1 |
 | ~~Q14~~ | ~~Fork on editing a built-in?~~ **Answered: no fork.** Built-ins are editable directly; "Restore defaults" re-seeds them | §11.4 |
