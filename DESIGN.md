@@ -1610,6 +1610,50 @@ at the same velocity.
 
 A single pass needs no copy at all, so it costs nothing extra.
 
+#### What a typeset costs, and the cache that would fix it
+
+A re-typeset of a full-height scrolling column costs **34-50ms**, which lands in one frame and
+reads as a hitch every time the text changes. Nearly all of it is a single forced layout of the
+whole passage — around 8,000 elements across 8,500px, of which about an eighth is on screen.
+
+`content-visibility: auto` on every line takes that to **10-12ms**, so the cost really is
+laying out text nowhere near the window. It cannot simply be switched on: the belt's travel
+distance *is* the height of the passage, and an element whose layout has been skipped reports
+its `contain-intrinsic-size` guess instead — 8,554px of text measured as 3,480. That is the
+`display: none` fault above wearing a different coat.
+
+It is applied to the **copies**, which nothing measures, for about a quarter off.
+
+**The rest needs a cache, and the cache is the design.** Line heights are a pure function of
+four things: the text, the type size, the block width and the flow. Same inputs, same heights,
+every time. So:
+
+1. The first typeset of a combination renders unculled, pays the full layout once, and records
+   the passage height and each line's height under a key of those four.
+2. Every later typeset with that key turns culling on, sets each line's `contain-intrinsic-size`
+   from the cache, and takes the belt's travel from the cache rather than measuring it.
+
+The preset that shows the problem uses `slice: whole`, so it re-typesets identical content at a
+fixed size: it would pay once and hit the cache on every pass after. A preset rolling a random
+selection or a size range gets a new key each time and pays what it pays today, so nothing
+regresses.
+
+Two things to be careful of, both learned the hard way:
+
+- **The key must include everything that affects layout.** `varyBy` rolls a size *per word*, so
+  its layout is not reproducible at all — that combination cannot be cached and must fall
+  through to measuring. A webfont arriving late or the canvas being resized invalidates
+  everything.
+- **Verify before trusting.** After applying cached sizes, check the passage height against the
+  cached total; if they disagree, discard the cache and measure. Three separate belt failures in
+  one increment came from a confident wrong answer about a size, and each one was silent. A
+  self-check turns that into one wrong frame followed by a correct one.
+
+*Ruled out on the way.* Culling **layer** work rather than layout saves nothing — the whole
+per-frame budget is 0.1-0.5ms, and the cost is one frame at typeset. And `splitChars: false`
+would cut the element count fourfold, but a preset targeting characters needs them, so that is a
+change to the look rather than a saving.
+
 **A trimmed line keeps its box.** `wholeLines` hides a line rather than showing half of one, and
 it did that with the `hidden` attribute — which is `display: none`, so the line left the layout
 and the passage got shorter *after* the belt had been measured against it. The belt carried on
@@ -2996,6 +3040,8 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Q18 | The conveyor budget fix is reasoned from the formula, not measured — the trigger is a rendered text height. Worth confirming on a 1080p stage with small type | §11.5 |
 | ~~Q19~~ | ~~`wrapped` packs paragraphs at uneven widths, so `grid`'s even columns are gone. Worth a flow that does only that?~~ **Answered: no.** Even columns are what `columns` is for, and more of them is more blocks | §12.4 |
 | Q20 | Growth happens after placement, so `avoidOverlap` cannot see it — two blocks in adjacent cells can grow into each other | §11.6 |
+| Q21 | The typeset cache in §11.5 would take a scrolling re-typeset from 34-50ms to 10-12. Worth the invalidation it brings? | §11.5 |
+| Q22 | `line.split(' ')` does not collapse runs of spaces, so a double space makes an empty `<w>` that takes padding and can be picked by a `word` target | §12.3 |
 | Q13 | Pulse amounts are guesses (0.012–0.022). Worth tuning against a projector rather than a monitor — apparent scale changes with viewing distance | §12.2.1 |
 | ~~Q14~~ | ~~Fork on editing a built-in?~~ **Answered: no fork.** Built-ins are editable directly; "Restore defaults" re-seeds them | §11.4 |
 | ~~Q15~~ | ~~Do built-ins stay compiled?~~ **Answered: no.** Everything becomes data, for consistency. Type safety comes from `as const` definitions plus validation on load | §11.4 |
