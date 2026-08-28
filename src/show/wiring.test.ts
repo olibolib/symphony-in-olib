@@ -219,6 +219,43 @@ describe('textsForBlocks', () => {
     expect(textsForBlocks(['gone'], 1, active, bank)[0]).toBe(active);
   });
 
+  it('stands in a real text when the menu choice has not arrived', () => {
+    // `'default'` follows the text menu, which lives in the other window — so until its choice
+    // arrives the engine's active text is empty, and a preset pinned to `'default'` rendered
+    // nothing at all. Four of the seven presets are pinned that way.
+    const empty: TextPreset = { name: 'empty', lines: [], sentences: [], longWords: 0 };
+    const chosen = textsForBlocks(['default'], 1, empty, bank)[0];
+
+    expect(chosen?.sentences.length).toBeGreaterThan(0);
+    expect(chosen?.name).not.toBe('empty');
+  });
+
+  it('stands in with the fullest text available', () => {
+    const empty: TextPreset = { name: 'empty', lines: [], sentences: [], longWords: 0 };
+    const big: TextPreset = { name: 'big', lines: [['a']], sentences: [[['a']], [['b']], [['c']]], longWords: 1 };
+    const choices = new Map([['small', text('small')], ['big', big]]);
+
+    expect(textsForBlocks(['default'], 1, empty, choices)[0]?.name).toBe('big');
+  });
+
+  it('stands in for a pinned text that is empty too', () => {
+    const empty: TextPreset = { name: 'empty', lines: [], sentences: [], longWords: 0 };
+    const withEmpty = new Map([['blank', empty], ['prologue', text('prologue')]]);
+
+    expect(textsForBlocks(['blank'], 1, empty, withEmpty)[0]?.name).toBe('prologue');
+  });
+
+  it('has nothing to stand in with when everything is empty', () => {
+    // Then it hands back the empty one rather than inventing something, and the block is blank
+    // — which is the honest answer when there is genuinely no text anywhere.
+    const empty: TextPreset = { name: 'empty', lines: [], sentences: [], longWords: 0 };
+    expect(textsForBlocks(['default'], 1, empty, new Map())[0]?.name).toBe('empty');
+  });
+
+  it('prefers the menu choice once it has arrived', () => {
+    expect(textsForBlocks(['default'], 1, active, bank)[0]).toBe(active);
+  });
+
   it('draws from every pinned text across blocks', () => {
     const names = ['prologue', 'manifesto'];
     const picked = textsForBlocks(names, 2, active, bank, (n) => (n === 2 ? 1 : 0));

@@ -311,6 +311,15 @@ export class Engine {
 
       case 'applyText':
         this.texts.queue(command.name, command.content);
+
+        // Queued rather than applied, like every other change (§11.2) — except when there is
+        // nothing on the stage to disturb. Waiting for a phrase boundary is about not
+        // interrupting a passage mid-read; with no passage up, it is just a blank canvas for
+        // however long the next phrase takes, and at startup the clock may not have started at
+        // all, so "the next phrase" can be never.
+        if (this.texts.current.sentences.length === 0 && this.texts.takePending()) {
+          this.typesetNext();
+        }
         break;
 
       case 'selectText':

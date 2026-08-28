@@ -169,10 +169,33 @@ export function textsForBlocks(
 ): readonly TextPreset[] {
   const options = pinned.length > 0 ? pinned : ['default'];
 
+  // **Never hand back a text with nothing in it.**
+  //
+  // `'default'` follows the text menu, and the menu lives in the other window — so until its
+  // choice has arrived and been taken, the engine's idea of the active text is empty. A preset
+  // pinned to `'default'` then renders *nothing at all*, silently, which §14 rules out and which
+  // looks exactly like the app being broken. Four of the seven presets are pinned that way.
+  //
+  // Any real text is better than an empty one, so a pinned text stands in until the menu's
+  // choice arrives. The stage says something rather than nothing.
+  const usable = (text: TextPreset | undefined): TextPreset | null =>
+    text && text.sentences.length > 0 ? text : null;
+
+  // The fullest of them, not the first. Map order is however the presets happened to load, so
+  // first-found would stand in with a four-line scrap while a whole prologue sat beside it.
+  const standIn = (): TextPreset | null => {
+    let best: TextPreset | null = null;
+    for (const text of byName.values()) {
+      if (usable(text) && (!best || text.sentences.length > best.sentences.length)) best = text;
+    }
+    return best;
+  };
+
   const out: TextPreset[] = [];
   for (let i = 0; i < blocks; i++) {
     const name = options[choose(options.length)] ?? 'default';
-    out.push(name === 'default' ? active : (byName.get(name) ?? active));
+    const wanted = name === 'default' ? active : byName.get(name);
+    out.push(usable(wanted) ?? usable(active) ?? standIn() ?? active);
   }
   return out;
 }
