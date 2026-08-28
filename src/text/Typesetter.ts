@@ -1,5 +1,13 @@
 import type { Stage } from '../render/Stage';
-import { anchors, normalise, nudge, placeBlocks, type BlockShape, type Mask } from '../show/mask';
+import {
+  anchors,
+  normalise,
+  nudge,
+  placeBlocks,
+  type BlockShape,
+  type Box,
+  type Mask,
+} from '../show/mask';
 import { pick, randomInt, randomRange } from '../util/random';
 import { sentenceLength, type Sentence, type TextPreset } from './TextSource';
 
@@ -411,6 +419,9 @@ export class Typesetter {
     // overlap needs to see the boxes already placed.
     const boxes = placeBlocks(cells, shapes, blocks, options.avoidOverlap !== false);
 
+    /** Where each block actually went, so the nudge does not have to ask the DOM again. */
+    const placed: Box[] = [];
+
     for (let index = 0; index < blocks; index++) {
       const text = texts[index] ?? texts[0];
       if (!text) break;
@@ -448,6 +459,8 @@ export class Typesetter {
       // Not `translateY(100%)`, which resolves against the *content's* height — a block
       // holding three screens of text would scroll three times as far for the same setting.
       const boxH = (box.height / 100) * this.stage.height;
+
+      placed.push(box);
 
       const style =
         `left:calc(${box.left.toFixed(3)}% + var(--anchor, 0px) + var(--fit-x, 0px));` +
@@ -523,7 +536,7 @@ export class Typesetter {
     // changes its height — and the conveyor's whole geometry is derived from that height. It
     // was running afterwards, which left every copy positioned for a taller passage than the
     // one actually there: the belt developed gaps and eventually ran out into black.
-    this.growToContent(options.flow === 'columns' ? COLUMN_COUNT : 1);
+    const grown = this.growToContent(options.flow === 'columns' ? COLUMN_COUNT : 1);
 
     const conveyor = options.contentMotion;
     if (conveyor && conveyor.speed > 0) this.measureConveyor(conveyor.continuous);
@@ -535,7 +548,7 @@ export class Typesetter {
     this.applyPhases(phases);
 
     // After the copies exist, so a conveyor is recognised as one and left alone vertically.
-    this.fitToCanvas(options.blockMotion !== undefined);
+    this.fitToCanvas(placed, grown, options.blockMotion !== undefined);
 
     this.measureLines(options.wholeLines === true);
     this.trimLines();
@@ -662,19 +675,30 @@ export class Typesetter {
    * fact, and it grows **away from the anchored edge** — a right-aligned block keeps its right
    * edge and extends left, which is also the direction that keeps it on the canvas.
    */
-  private growToContent(columns: number): void {
-    for (const block of this.blocks) {
-      const line = block.querySelector<HTMLElement>('.loop:not([data-copy]) p');
-      const words = block.querySelectorAll<HTMLElement>('.loop:not([data-copy]) w');
-      if (!line || words.length === 0) continue;
+  private growToContent(columns: number): Grown[] {
+    const grown: Grown[] = [];
 
-      const available = line.getBoundingClientRect().width;
+    for (const block of this.blocks) {
+      // **`scrollWidth` per line, not a rectangle per word.** A `<p>` is a block box that
+      // takes the width of its container, so an inline-block word wider than that hangs out and
+      // the line's *rectangle* does not include it — but its `scrollWidth` does, which is what
+      // that property is for.
+      //
+      // Reading a rectangle for all 872 words cost 9-16ms a typeset here, and 27-45ms in the
+      // nudge below: a visible hitch in a scrolling block every time the text changed. One read
+      // per line is seven times fewer and the same answer.
+      //
+      // Only the first copy: a conveyor's repeats are the same words at the same width.
+      const lines = block.querySelectorAll<HTMLElement>('.loop:not([data-copy]) p');
+      const line = lines[0];
+      if (!line) continue;
+
+      const available = line.clientWidth;
       if (available <= 0) continue;
 
       let widest = 0;
-      for (const word of words) {
-        const width = word.getBoundingClientRect().width;
-        if (width > widest) widest = width;
+      for (const el of lines) {
+        if (el.scrollWidth > widest) widest = el.scrollWidth;
       }
 
       // **Times the number of columns**, because a flow that subdivides the block subdivides
@@ -687,9 +711,15 @@ export class Typesetter {
       // further out. What will not fit is handled by the nudge, which keeps the opening.
       const needed = widest * columns;
       const grow = Math.min(needed, this.stage.width) - available;
+
+      // What the block could not absorb because it would have exceeded the frame. Overflow runs
+      // to the inline end, so it extends the right edge and never the left.
+      const overflow = Math.max(0, needed - this.stage.width);
+
       if (grow <= 1) {
         block.style.removeProperty('--grow');
         block.style.removeProperty('--anchor');
+        grown.push({ grow: 0, anchor: 0, overflow });
         continue;
       }
 
@@ -702,7 +732,11 @@ export class Typesetter {
 
       if (anchor !== 0) block.style.setProperty('--anchor', `${anchor.toFixed(2)}px`);
       else block.style.removeProperty('--anchor');
+
+      grown.push({ grow, anchor, overflow });
     }
+
+    return grown;
   }
 
   /**
@@ -726,41 +760,35 @@ export class Typesetter {
    *
    * Skipped for a travelling block, which is *supposed* to leave the frame.
    */
-  private fitToCanvas(travelling: boolean): void {
+  private fitToCanvas(
+    placed: readonly Box[],
+    grown: readonly Grown[],
+    travelling: boolean,
+  ): void {
     if (travelling) return;
 
-    const frame = this.stage.container.getBoundingClientRect();
+    const stageW = this.stage.width;
+    const stageH = this.stage.height;
 
-    for (const block of this.blocks) {
-      // **Words, not lines.** A `<p>` is a block box: it takes the width of its container and
-      // an inline-block child wider than that simply hangs out of it, so the line's rectangle
-      // does not include the word sticking out — which is precisely the thing being measured.
+    for (const [index, block] of this.blocks.entries()) {
+      const box = placed[index];
+      const size = grown[index];
+      if (!box || !size) continue;
+
+      // **Arithmetic, not a measurement.** Every number here is one this class chose: the box
+      // came from the grid, the growth and the anchor were computed a moment ago, and the
+      // overflow is what growth could not absorb.
       //
-      // Only the first copy. A conveyor's repeats are the same words at the same width, so
-      // measuring all of them is the same answer several times over.
-      const words = block.querySelectorAll<HTMLElement>('.loop:not([data-copy]) w');
-      if (words.length === 0) continue;
+      // Reading it back from the DOM instead cost 27-45ms a typeset — not because the reads
+      // were many, but because each one came *after* a style write and so forced a full layout
+      // of eight thousand elements. Two passes meant two layouts, and that was the hitch in a
+      // scrolling block every time the text changed.
+      const left = (box.left / 100) * stageW + size.anchor;
+      const right = left + (box.width / 100) * stageW + size.grow + size.overflow;
+      const top = (box.top / 100) * stageH;
+      const bottom = top + (box.height / 100) * stageH;
 
-      let left = Infinity;
-      let right = -Infinity;
-      let top = Infinity;
-      let bottom = -Infinity;
-
-      for (const word of words) {
-        const rect = word.getBoundingClientRect();
-        // Trimmed lines are included, and should be: they keep their box, and a line that is
-        // hidden now is visible a moment later as the belt moves. Sizing the block to only what
-        // happens to be showing would make it resize as the text scrolled.
-        if (rect.width === 0 && rect.height === 0) continue;
-        left = Math.min(left, rect.left);
-        right = Math.max(right, rect.right);
-        top = Math.min(top, rect.top);
-        bottom = Math.max(bottom, rect.bottom);
-      }
-
-      if (!Number.isFinite(left) || !Number.isFinite(top)) continue;
-
-      const x = shiftInto(left, right, frame.left, frame.right);
+      const x = shiftInto(left, right, 0, stageW);
 
       // **Never vertically for a conveyor.** Its content is deliberately several canvases tall
       // — that is what makes it a belt — and it is deliberately outside its box, which is what
@@ -770,7 +798,7 @@ export class Typesetter {
       // Nothing is lost by leaving it: the axis a conveyor travels is the one axis it does
       // still clip, so what leaves the box that way was never going to be visible.
       const scrolling = block.dataset['conveyor'] !== undefined;
-      const y = scrolling ? 0 : shiftInto(top, bottom, frame.top, frame.bottom);
+      const y = scrolling ? 0 : shiftInto(top, bottom, 0, stageH);
 
       if (x !== 0) block.style.setProperty('--fit-x', `${x.toFixed(2)}px`);
       else block.style.removeProperty('--fit-x');
@@ -1208,6 +1236,14 @@ function filterByLength(
  * container, bringing one edge in pushes the other out. In that case the start wins: the
  * beginning of a passage is the half you cannot do without.
  */
+export /** What {@link Typesetter.growToContent} did to one block, for the nudge to work from. */
+interface Grown {
+  readonly grow: number;
+  readonly anchor: number;
+  /** Width the block could not absorb because it would have exceeded the frame. */
+  readonly overflow: number;
+}
+
 export function shiftInto(start: number, end: number, low: number, high: number): number {
   if (end - start > high - low) return low - start;
   if (start < low) return low - start;
