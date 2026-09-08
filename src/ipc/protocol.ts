@@ -32,14 +32,14 @@ export interface BandSnapshot {
 /**
  * The editable half of a preset. DESIGN.md §11.4.
  *
- * A preset is two things: **data** — layers, placement, text settings — and **stage
- * effects**, which are closures (`retext`, `colourShift`, `pulse`) and cannot cross a window
- * boundary or be written to a file. Only the data half is a document.
+ * A preset used to be two things: **data** — layers, placement, text settings — and **stage
+ * effects**, closures that could not cross a window boundary or be written to a file, held
+ * engine-side and merged back by name. Every one of them has since become a field or a layer:
+ * `retext` is `text.hold`, `pulse` is a treatment with a rate, `colourShift` was deleted. The
+ * merge went with them.
  *
- * That split is not a workaround. Everything here is what §11.5 pulled apart into
- * independent choices, and it is exactly the part worth editing during a set; the stage
- * effects are the part that has no target to separate out and no slider to put on it. They
- * are held engine-side and merged back by name.
+ * So a preset *is* its document, and all of it is editable during a set — which is what §11.5
+ * was pulling apart into independent choices in the first place.
  *
  * Sent whole and replaced whole rather than diffed. A preset is a few kilobytes, the editor
  * always has the current version, and "replace this document" is idempotent in a way that a

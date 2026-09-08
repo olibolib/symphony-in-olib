@@ -992,15 +992,27 @@ the dispatch path is affected.
 ```ts
 interface PresetData {
   name: string;
+  /** The format this file was written in. Migrations run on load — see below. */
+  version: number;
   /** A free-form label the VJ applies. Drives nothing — see §11.5. */
   energy: EnergyTag;
 
   /** Names, not content — see §11.7. Empty means "follow the text menu". */
   texts: string[];
 
+  /** Phrases this preset stays before the cycle timer may move on (§11.2). */
+  minPhrases: number;
+
   text: {
     slice: Slice;
-    count: number;
+    /** How many pieces, across all blocks. */
+    take: number;
+    /** Filter the pool by length, against a threshold read off the text (§12.3). */
+    length: 'any' | 'short' | 'long';
+    pick: 'random' | 'continuous' | 'position';
+    position: number;
+    /** Phrases a passage holds before it is replaced, rolled fresh (§12.3). */
+    hold: { min: number; max: number };
     splitChars: boolean;
     blocks: 1 | 2 | 3;
     /** Base size in px, rolled once per typeset (§11.5). */
@@ -1019,14 +1031,16 @@ interface PresetData {
     cols: { min: number; max: number };
     rows: { min: number; max: number };
   }[];
-  align: 'left' | 'centre' | 'right' | 'justify';
-  flow: 'stack' | 'run-on' | 'grid' | 'wrapped' | 'columns';
+  align: 'left' | 'centre' | 'right' | 'justify' | 'auto';
+  flow: 'stack' | 'run-on' | 'wrapped' | 'columns';
+  avoidOverlap: boolean;
+  /** Nudge every block off its anchor, in px — the fine instrument (§11.6). */
+  offset: { x: number; y: number };
+  /** Hide lines that do not fit entirely inside the block (§11.6). */
+  wholeLines: boolean;
 
   /** The Lego. Order matters: later layers sit on top (§11.5). */
   layers: LayerData[];
-
-  /** Stage-wide: palette, background, pulse, colour movement. */
-  stage: EffectData[];
 }
 
 interface LayerData {
@@ -1037,16 +1051,25 @@ interface LayerData {
   decayBars: number;
   /** Only read by size treatments. Rolled within these bounds when it fires. */
   size?: { min: number; max: number };
-  /** Period in bars. Only read by periodic treatments — flicker. */
+  /** Period in bars. Read by flicker, and by pulse as its breath length. */
   rateBars?: number;
-}
-
-interface EffectData {
-  id: string;
-  values: Record<string, number | boolean | string>;
-  children?: EffectData[];   // for effects that wrap other effects
+  /** Only on `scroll` and `travel` — direction, speed, wrapping (§11.5). */
+  motion?: MotionSpec;
+  /** Only on `pulse` — how far the stage swells, and on what curve. */
+  pulse?: { amount: number; shape: 'decay' | 'sine' };
 }
 ```
+
+**There is no second half.** A preset used to be data plus a handful of closures — `retext`,
+`colourShift`, `pulse` — that could not cross a window boundary or be written to a file, and so
+were held engine-side and merged back by name. Every one of them has since become a field or a
+layer (§11.5), and the merge went with them. A preset *is* its document.
+
+**Files carry a version, and load through a chain of migrations.** A file with no version is
+version 0 — everything written before versions existed. Each migration rewrites the raw record
+before it is validated, so an old file is never rejected for missing a field that did not exist
+when it was saved. Detecting an old format by sniffing for a field it happens to have works
+exactly once, which is why the second migration is built on the stamp instead.
 
 Which makes a preset a JSON file, stored the same way texts are (§11.3) — a writable app-data
 folder, seeded with the built-ins on first run. `PresetBank` grows the shape `TextBank`
@@ -1195,12 +1218,13 @@ text and stage settings.
 | Target | everything matching a string · a proportion of a slice · exactly N of a slice · every Nth |
 | Slice | `char` · `word` · `sentence` · `paragraph` · `block` — a `<p>` is a *line*, so a sentence gets its own wrapper |
 | Text | any mode, plus `continuous` to read it in order rather than sample it |
-| Treatment | `invert` · `accent` · `dingbat` · `underline` · `strike` · `outline` · `swell` · `flicker` · `blank` · `scroll` · `travel` |
+| Treatment | `invert` · `accent` · `dingbat` · `underline` · `strike` · `outline` · `swell` · `flicker` · `blank` · `scroll` · `travel` · `pulse` |
 | Trigger | `typeset` · `kick` · `snare` · `hat` · `beat` · `bar` · `phrase` · `held` · `always` |
 
-Four targets by nine treatments is thirty-six combinations from thirteen primitives, and most
-of them cannot be expressed today. The point is not that all thirty-six are good — it is that
-you get to find out which ones are.
+Four targets by the nine treatments that mark type is thirty-six combinations, and most of them
+cannot be expressed today. (The last three — `scroll`, `travel`, `pulse` — move something rather
+than mark it, so they take no target and do not multiply.) The point is not that all thirty-six
+are good — it is that you get to find out which ones are.
 
 #### One call shape, for every treatment
 
@@ -2134,15 +2158,15 @@ same answer.
 |---|---|---|
 | 1, 2, 3, 4, 8 | Font size 82–320%, tracking, line-height, italic, alignment | Base size (§11.5) plus `align` |
 | 10, 11, 13, 14, 15, 16, 17 | Bands, rails, and the 3x3 block grids | The spawn grid — anchor plus size |
-| 5, 6, 7 | Flex-wrap, six-column outlined grid, paragraphs run together | `flow` — the one genuinely new piece |
+| 5, 6, 7 | Flex-wrap, six-column outlined grid, paragraphs run together | `flow` — the one genuinely new piece. The outlining is a layer, not part of the arrangement |
 | 12 | One text flowing through two rails | `flow: 'columns'` on a full-width block |
 
 ```ts
 block: {
   anchor: /* a cell from the mask */,
   size:   { cols: 3, rows: 2 },
-  align:  'left' | 'centre' | 'right' | 'justify',
-  flow:   'stack' | 'run-on' | 'grid' | 'wrapped' | 'columns',
+  align:  'left' | 'centre' | 'right' | 'justify' | 'auto',
+  flow:   'stack' | 'run-on' | 'wrapped' | 'columns',
 }
 ```
 
@@ -2220,6 +2244,23 @@ A saved preset can name a text that no longer exists — a preset imported from 
 file removed outside the app. So loading still has to cope: drop unresolvable names, use the
 rest, and say so in the status line. If nothing in the list resolves, fall back to the
 selection. Nothing should vanish because a file was renamed in October.
+
+#### And the selection can be empty, which is worse
+
+`'default'` follows the text menu, and the menu lives in the *other* window. Between the engine
+starting and the control window's choice arriving, the engine's idea of the selection is a
+placeholder with no sentences in it — so a preset pinned to `'default'` had a real text to point
+at, pointed at it, and rendered nothing. All four built-ins are pinned that way, and they were blank on launch
+until the first text was applied by hand.
+
+Two rules close it. A queued text is applied **immediately** rather than at the next phrase
+boundary when the stage is empty — there is nothing on stage to interrupt, so the reason for
+waiting does not apply. And a block is **never handed an empty text**: if neither the pinned name
+nor the selection has any sentences, the fullest text the bank holds stands in until the menu's
+choice arrives. The fullest rather than the first, because map order is however the files
+happened to load, and first-found would stand in with a four-line scrap while a whole prologue
+sat beside it. Only when there is genuinely no text anywhere does a block come out blank, which
+is then the honest answer.
 
 #### Three rules
 
@@ -2313,6 +2354,14 @@ worse failure than a busy one.
 **`word` is the one deliberate fragment.** Selecting by word count produced text ending
 mid-thought, which reads as a bug rather than an effect. A single isolated word reads as
 emphasis instead, because nothing is obviously missing.
+
+**"Long" is measured against the text, not against a constant.** Acid drew the line at twelve
+words for every text there would ever be, which meant `length: 'short'` matched nothing in a
+long-winded text and everything in a terse one — either way the filter stopped dividing
+anything. Each text now carries `longWords`, the **median** sentence length, computed once when
+it is parsed and stored on the `TextPreset`; `short` is at or below it and `long` is above. A
+median rather than a mean, so one enormous sentence among short ones cannot drag the threshold
+past all of them. Any text with variety in it therefore has something on both sides of the line.
 
 Alongside them, `splitChars` decides whether each glyph is its own element. It governs whether
 character-level effects are possible at all, and it has real performance cost (§14).
@@ -2636,7 +2685,7 @@ parameter should be a red squiggle rather than a visual that silently never happ
 
 #### Tests
 
-`vitest`, node environment, no DOM. 147 tests across eight suites, gating the build.
+`vitest`, node environment, no DOM. 164 tests across nine suites, gating the build.
 
 Everything worth testing here is already DOM-free, and that is not an accident — the clock, the
 kick evidence, the placement grid, the preset validator and the cycle policy are all pure. What
@@ -3039,26 +3088,25 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Q17 | Should the control window's position be remembered too? Same few lines, but it hides to the tray rather than closing | §7.3 |
 | Q18 | The conveyor budget fix is reasoned from the formula, not measured — the trigger is a rendered text height. Worth confirming on a 1080p stage with small type | §11.5 |
 | ~~Q19~~ | ~~`wrapped` packs paragraphs at uneven widths, so `grid`'s even columns are gone. Worth a flow that does only that?~~ **Answered: no.** Even columns are what `columns` is for, and more of them is more blocks | §12.4 |
-| Q20 | Growth happens after placement, so `avoidOverlap` cannot see it — two blocks in adjacent cells can grow into each other | §11.6 |
-| Q21 | The typeset cache in §11.5 would take a scrolling re-typeset from 34-50ms to 10-12. Worth the invalidation it brings? | §11.5 |
-| Q22 | `line.split(' ')` does not collapse runs of spaces, so a double space makes an empty `<w>` that takes padding and can be picked by a `word` target | §12.3 |
+| Q30 | Growth happens after placement, so `avoidOverlap` cannot see it — two blocks in adjacent cells can grow into each other | §11.6 |
+| Q31 | The typeset cache in §11.5 would take a scrolling re-typeset from 34-50ms to 10-12. Worth the invalidation it brings? | §11.5 |
+| Q32 | `line.split(' ')` does not collapse runs of spaces, so a double space makes an empty `<w>` that takes padding and can be picked by a `word` target | §12.3 |
 | Q13 | Pulse amounts are guesses (0.012–0.022). Worth tuning against a projector rather than a monitor — apparent scale changes with viewing distance | §12.2.1 |
 | ~~Q14~~ | ~~Fork on editing a built-in?~~ **Answered: no fork.** Built-ins are editable directly; "Restore defaults" re-seeds them | §11.4 |
 | ~~Q15~~ | ~~Do built-ins stay compiled?~~ **Answered: no.** Everything becomes data, for consistency. Type safety comes from `as const` definitions plus validation on load | §11.4 |
-| ~~Q16~~ | ~~How do two layers on one element resolve?~~ **Answered: fine-grained channels** named after CSS properties. Different properties compose; same property, later wins | §11.5 |
-| ~~Q17~~ | ~~Cap the number of layers?~~ **Answered: soft limit and a warning**, keyed to elements-touched-per-second rather than layer count. Never a hard cap | §11.5 |
-| ~~Q18~~ | ~~Does `flicker` belong with the treatments given it is continuous?~~ **Answered: yes** — same authoring, CSS runs the animation | §11.5 |
-| ~~Q19~~ | ~~Region targets?~~ **Answered: no** — replaced by the spawn grid, which was the actual intent | §11.6 |
+| ~~Q34~~ | ~~How do two layers on one element resolve?~~ **Answered: fine-grained channels** named after CSS properties. Different properties compose; same property, later wins | §11.5 |
+| ~~Q35~~ | ~~Cap the number of layers?~~ **Answered: soft limit and a warning**, keyed to elements-touched-per-second rather than layer count. Never a hard cap | §11.5 |
+| ~~Q36~~ | ~~Does `flicker` belong with the treatments given it is continuous?~~ **Answered: yes** — same authoring, CSS runs the animation | §11.5 |
+| ~~Q37~~ | ~~Region targets?~~ **Answered: no** — replaced by the spawn grid, which was the actual intent | §11.6 |
 | Q20 | Does `flow: 'columns'` need a tunable gap, or is one number enough to recover layout 12's look? | §11.6 |
 | Q24 | Structure detection has lost its intended output now that energy tags drive nothing. What should knowing "this is a breakdown" actually change? | §10.1 |
-| Q28 | Presets are saved but not versioned. A file written by a future build could lose fields on load — worth a version stamp before the format changes again? | §11.4 |
+| ~~Q28~~ | ~~Presets are saved but not versioned.~~ **Answered: a version stamp and a migration chain**, run against the raw record before validation, so an old file is never rejected for missing a field that did not exist when it was saved | §11.4 |
 | Q29 | Text lists roll per block, so a preset with two texts and two blocks shows one each only by chance. Is explicit one-each worth an option? | §11.7 |
 | Q26 | Variety now comes from anchors and shapes rolling per typeset, where `newLayout` changed the whole arrangement every bar. Is a per-typeset roll enough, or does something want to move on the bar again? | §11.6 |
-| Q27 | `flow: 'grid'` and `'columns'` are implemented but no built-in uses them. Worth building a preset around, or do they only make sense once presets are editable? | §11.6 |
+| Q27 | `flow: 'columns'` and `'wrapped'` are implemented but no built-in uses them. Worth building a preset around, or do they only make sense once presets are editable? | §11.6 |
 | Q25 | `whenHolding` fired on replacement phrases as well as held ones for the whole of Increment 1. Did the presets get tuned around that? If held layers now look thin, that is why | §11.5 |
 | ~~Q23~~ | ~~Independent width and height ranges cannot say "tall or wide, never square".~~ **Answered: a list of candidate shapes**, rolled per block, so the two axes are chosen together as an authored pair | §11.6 |
-| Q21 | With three blocks and three named texts, the list feeds variety (each block draws independently). Should one-each composition be an explicit option, or is random enough? | §11.7 |
-| Q22 | Layout 16 aligned alternate blocks outward. Dropped as a between-blocks relationship the model does not store — does it turn out to matter? | §11.6 |
+| Q33 | Layout 16 aligned alternate blocks outward. Dropped as a between-blocks relationship the model does not store — does it turn out to matter? | §11.6 |
 
 **Answered:** stage defaults to 1280×720 (Q5). Black on white (Q6). Preset cycling is a
 randomised 16–32 bars on phrase boundaries, with structure overrides deferred to Increment 4
