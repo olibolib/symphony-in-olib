@@ -233,6 +233,22 @@ become `its`.
 
 ---
 
+## Licence
+
+**This repository is public. It is not open source.**
+
+The source is here to be read, not reused. All rights are reserved — see
+[LICENSE](LICENSE). Making a repository public on GitHub grants every GitHub user the right
+to view and fork it, and nothing beyond that; it is not a grant to use, run, or redistribute
+the code.
+
+Dependencies keep their own licences, all permissive (MIT, ISC, BSD, Apache-2.0). Nothing
+here is under a copyleft licence, so none of them obliges this project to be open source.
+`application-loopback`, the one runtime dependency, is MIT and ships inside the built exe —
+distributing a build to anyone else means including its copyright notice.
+
+---
+
 ## Layout
 
 ```

@@ -16,6 +16,7 @@
     "check": "node scripts/check-ids.mjs"
   },
   "license": "UNLICENSED",
+  "private": true,
   "devDependencies": {
     "@types/node": "^26.2.0",
     "electron": "^43.4.1",
