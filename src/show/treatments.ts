@@ -19,7 +19,8 @@ export type Treatment =
   | 'flicker'
   | 'blank'
   | 'scroll'
-  | 'travel';
+  | 'travel'
+  | 'pulse';
 
 /**
  * The two that move something rather than mark it.
@@ -34,6 +35,41 @@ export type Treatment =
  * neither decays. The editor hides the controls that would be meaningless.
  */
 export const MOTION_TREATMENTS: readonly Treatment[] = ['scroll', 'travel'];
+
+/**
+ * Treatments that act on the stage rather than on anything in it.
+ *
+ * `pulse` scales the whole frame with the beat. Like the motion pair it has no target and
+ * writes no channel — but unlike them it is not a one-off applied at typeset: it is a curve
+ * read from the predicted beat grid every frame, which is what keeps it smooth through a
+ * passage with no transients and lands it *on* the beat rather than after it.
+ *
+ * It was the last stage effect, and it was a layer-shaped idea sitting outside the layer
+ * system for no better reason than history. Making it a treatment is what let stage effects
+ * be deleted rather than converted.
+ *
+ * **Not the same as `swell` on everything**, which is the obvious question. Swell scales each
+ * targeted element about its own origin, so glyphs fatten in place and the composition does not
+ * move; this scales the container, so the whole picture zooms and blocks travel outward from
+ * centre. Swell also rolls a fresh size per element and fires on a trigger with a decay, where
+ * this is one deterministic curve applied continuously.
+ */
+export const STAGE_TREATMENTS: readonly Treatment[] = ['pulse'];
+
+/**
+ * Treatments that draw a box round what they are given, rather than marking the type in it.
+ *
+ * The distinction only matters for a grouping slice. Outlining "every paragraph" should give a
+ * box per paragraph; outlining every *word* in those paragraphs is a different effect, and one
+ * that has to be asked for by targeting words.
+ */
+export function drawsABox(treatment: Treatment): boolean {
+  return treatment === 'outline';
+}
+
+export function isStage(treatment: Treatment): boolean {
+  return STAGE_TREATMENTS.includes(treatment);
+}
 
 export function isMotion(treatment: Treatment): boolean {
   return treatment === 'scroll' || treatment === 'travel';
@@ -60,10 +96,11 @@ export const CHANNELS: Readonly<Record<Treatment, readonly Channel[]>> = {
   flicker: ['anim'],
   blank: ['vis'],
 
-  // Nothing. They move a block rather than marking anything inside it, so there is no channel
-  // to contend for and nothing for decay to clear.
+  // Nothing. They move a block, or the whole stage, rather than marking anything inside it —
+  // so there is no channel to contend for and nothing for decay to clear.
   scroll: [],
   travel: [],
+  pulse: [],
 };
 
 /**
@@ -161,6 +198,10 @@ export function write(
     // Applied when the text is laid out, not by writing to elements — see `Typesetter`.
     case 'scroll':
     case 'travel':
+      return [];
+
+    // Read from the beat grid every frame and written to the stage — see `Engine`.
+    case 'pulse':
       return [];
   }
 }

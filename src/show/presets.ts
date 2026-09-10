@@ -1,5 +1,3 @@
-import { pulse, retext, scroll, stopScroll } from '../effects';
-import type { EffectRef } from '../effects/types';
 import type {
   Align,
   Flow,
@@ -7,9 +5,9 @@ import type {
   TextPick,
   TextSlice,
 } from '../text/Typesetter';
-import type { Bindings } from './Conductor';
 import type { LayerSpec } from './Layer';
 import type { PresetDoc } from '../ipc/protocol';
+import { PRESET_VERSION } from './presetIo';
 import { KEEP_CENTRE_CLEAR, type BlockShape, type Mask } from './mask';
 
 /**
@@ -57,101 +55,21 @@ import { KEEP_CENTRE_CLEAR, type BlockShape, type Mask } from './mask';
 
 export type EnergyTag = 'sparse' | 'mid' | 'peak' | 'any';
 
-export interface VisualPreset {
-  readonly name: string;
-
-  /**
-   * A label the VJ applies to organise their own presets. Drives nothing.
-   *
-   * `PresetBank.takeNext()` has never read it, and §11.5 settles that as the intended
-   * design rather than an omission: with per-layer control over targets, amounts and
-   * decays, an automatic energy rating has nothing left to decide.
-   */
-  readonly energy: EnergyTag;
-
-  readonly text: {
-    /** What a piece is: a word, a line, a sentence, or the whole text (§12.3). */
-    readonly slice: TextSlice;
-
-    /** How many pieces, in total across blocks. */
-    readonly take: number;
-
-    /** Filter the pool by length. Meaningless for single words. */
-    readonly length: TextLength;
-
-    /** Sampled, read in order, or taken from a fixed place. */
-    readonly pick: TextPick;
-
-    /** Where `position` starts, counting from 1. */
-    readonly position: number;
-
-    readonly splitChars: boolean;
-    readonly blocks: 1 | 2 | 3;
-
-    /**
-     * Base size in px, rolled once per typeset (§11.5).
-     *
-     * `min === max` is what `fontScale` used to be. A range makes it a look: the text is a
-     * different size each phrase without anything having to drive it.
-     */
-    readonly size: { readonly min: number; readonly max: number };
-
-    /** Give each word or character its own size within the range. */
-    readonly varyBy?: 'word' | 'char';
-  };
-
-  /** Texts this preset may draw from, by name. `['default']` follows the menu (§11.7). */
-  readonly texts: readonly string[];
-
-  /**
-   * Where blocks may anchor (§11.6). Intersected with the VJ's global mask before use, so a
-   * preset can only ever be more restricted than the global rule, never less.
-   */
-  readonly spawn: Mask;
-
-  /**
-   * Candidate shapes in cells. One is chosen per block, then rolled within its ranges.
-   *
-   * A list rather than a pair of ranges because width and height are *related*: rolling them
-   * independently keeps landing on the square blob between the column and the band that were
-   * actually wanted (§11.6).
-   */
-  readonly blockShapes: readonly BlockShape[];
-
-  readonly align: Align;
-  readonly flow: Flow;
-
-  /** Fine placement, in pixels, on top of the anchor cell (§11.6). */
-  readonly offset: { readonly x: number; readonly y: number };
-
-  /** Hide lines that do not fit entirely inside the block. */
-  readonly wholeLines: boolean;
-
-
-  /**
-   * Keep blocks off each other. Defaults to on for every built-in.
-   *
-   * Anchors allow overlap by design — the VJ chooses the anchor and the size. But the shapes
-   * in a preset are *authored*, so a non-overlapping arrangement nearly always exists, and
-   * preferring it is free. Turn it off for a preset where blocks colliding is the look.
-   */
-  readonly avoidOverlap: boolean;
-
-  /**
-   * The Lego. Order matters: a later layer contending for the same channel sits on top.
-   *
-   * **A layer's slice must match `text.splitChars`.** A `char` target against text that was
-   * typeset as whole words resolves to nothing and the layer silently does not happen —
-   * which §14 would rather it did not, and which the editor will warn about in 2c.
-   */
-  readonly layers: readonly LayerSpec[];
-
-  readonly bindings: Bindings;
-  readonly ambient?: readonly EffectRef[];
-
-  /** Minimum phrases before this one may be cycled away from. */
-  readonly minPhrases?: number;
-}
+/**
+ * A preset is one document, and that is the whole of it.
+ *
+ * It used to be two halves. The serialisable part lived in `PresetDoc`; the rest — bindings,
+ * ambient effects, `minPhrases` — was a `StageParts` record held in a map keyed by preset name
+ * and glued back on with a cast. Every awkward thing in this layer came from that seam: a
+ * duplicated preset lost its behaviour, a rename had to migrate the map by hand, and no preset
+ * you made yourself could ever have a pulse or a hold of its own, because the editor had
+ * nowhere to put one.
+ *
+ * There is nothing left on the other side of the line. `pulse` is a treatment, text hold and
+ * `minPhrases` are fields, and the rest of the stage effects were deleted rather than
+ * converted because nothing called them.
+ */
+export type VisualPreset = PresetDoc;
 
 /**
  * Decay rates, converted from the per-frame fractions they used to be.
@@ -191,6 +109,7 @@ const FADE = {
 export function toDoc(preset: VisualPreset): PresetDoc {
   return {
     name: preset.name,
+    version: PRESET_VERSION,
     energy: preset.energy,
     text: {
       slice: preset.text.slice,
@@ -198,12 +117,14 @@ export function toDoc(preset: VisualPreset): PresetDoc {
       length: preset.text.length,
       pick: preset.text.pick,
       position: preset.text.position,
+      hold: preset.text.hold,
       splitChars: preset.text.splitChars,
       blocks: preset.text.blocks,
       size: preset.text.size,
       ...(preset.text.varyBy ? { varyBy: preset.text.varyBy } : {}),
     },
     texts: preset.texts,
+    minPhrases: preset.minPhrases,
     spawn: preset.spawn,
     blockShapes: preset.blockShapes,
     align: preset.align,
@@ -224,9 +145,10 @@ export const PRESETS: readonly VisualPreset[] = [
    * something quiet came before them.
    */
   {
+    version: PRESET_VERSION,
     name: 'still',
     energy: 'sparse',
-    text: { slice: 'sentence', take: 1, length: 'any', pick: 'random', position: 1, splitChars: true, blocks: 1, size: { min: 36, max: 44 } },
+    text: { slice: 'sentence', take: 1, length: 'any', pick: 'random', position: 1, hold: { min: 1, max: 2 }, splitChars: true, blocks: 1, size: { min: 36, max: 44 } },
     texts: ['default'],
     spawn: KEEP_CENTRE_CLEAR,
     // One large statement. Wide rather than tall, because a single sentence set big wants
@@ -263,17 +185,15 @@ export const PRESETS: readonly VisualPreset[] = [
         decayBars: FADE.medium,
       },
     ],
-    bindings: {
-      phrase: [retext({ hold: [1, 2] }), stopScroll()],
-    },
     minPhrases: 4,
   },
 
   /** Two blocks of short sentences, moderate movement. The workhorse. */
   {
+    version: PRESET_VERSION,
     name: 'scatter',
     energy: 'mid',
-    text: { slice: 'sentence', take: 5, length: 'short', pick: 'random', position: 1, splitChars: true, blocks: 2, size: { min: 24, max: 32 } },
+    text: { slice: 'sentence', take: 5, length: 'short', pick: 'random', position: 1, hold: { min: 1, max: 2 }, splitChars: true, blocks: 2, size: { min: 24, max: 32 } },
     texts: ['default'],
     spawn: KEEP_CENTRE_CLEAR,
     // A column and a band, so two blocks on stage rarely look like the same thing twice.
@@ -305,11 +225,20 @@ export const PRESETS: readonly VisualPreset[] = [
       { treatment: 'invert', target: { slice: 'word', proportion: 0.2 }, triggers: { held: true }, decayBars: FADE.fast },
       { treatment: 'invert', target: { match: '' }, triggers: { held: true }, decayBars: FADE.fast },
       { treatment: 'underline', target: { slice: 'char', count: 4 }, triggers: { held: true }, decayBars: FADE.fast },
+
+      // The stage breathing with the beat. A treatment like anything else now — it has no
+      // target and writes no channel, the same as the motion pair (§11.5).
+      {
+        treatment: 'pulse',
+        target: { slice: 'block', count: 1 },
+        triggers: {},
+        decayBars: 0,
+        pulse: { amount: 0.012, shape: 'decay' },
+      },
     ],
-    bindings: {
-      phrase: [retext({ hold: [1, 2] })],
-    },
-    ambient: [pulse({ amount: 0.012 })],
+
+    // The workhorse: no floor, it can be cycled away from whenever the timer says.
+    minPhrases: 0,
   },
 
   /**
@@ -317,6 +246,7 @@ export const PRESETS: readonly VisualPreset[] = [
    * contrast with, so it deliberately does not run for long.
    */
   {
+    version: PRESET_VERSION,
     name: 'swarm',
     energy: 'peak',
     text: {
@@ -325,6 +255,7 @@ export const PRESETS: readonly VisualPreset[] = [
       length: 'any',
       pick: 'random',
       position: 1,
+      hold: { min: 1, max: 2 },
       splitChars: true,
       blocks: 2,
       size: { min: 20, max: 30 },
@@ -363,20 +294,27 @@ export const PRESETS: readonly VisualPreset[] = [
       { treatment: 'invert', target: { slice: 'paragraph', proportion: 0.4 }, triggers: { held: true }, decayBars: FADE.instant },
       { treatment: 'invert', target: { match: '' }, triggers: { held: true }, decayBars: FADE.instant },
       { treatment: 'invert', target: { slice: 'char', count: 8 }, triggers: { held: true }, decayBars: FADE.medium },
+
+      // The stage breathing with the beat. A treatment like anything else now — it has no
+      // target and writes no channel, the same as the motion pair (§11.5).
+      {
+        treatment: 'pulse',
+        target: { slice: 'block', count: 1 },
+        triggers: {},
+        decayBars: 0,
+        pulse: { amount: 0.022, shape: 'decay' },
+      },
     ],
-    bindings: {
-      phrase: [retext({ hold: [1, 2] })],
-    },
     // Hard on the beat, falling away fast. Reads as the kick.
-    ambient: [pulse({ amount: 0.022 })],
     minPhrases: 2,
   },
 
   /** Long sentences, drifting. Slow, readable, moves as a whole rather than in pieces. */
   {
+    version: PRESET_VERSION,
     name: 'drift',
     energy: 'mid',
-    text: { slice: 'sentence', take: 3, length: 'long', pick: 'random', position: 1, splitChars: false, blocks: 1, size: { min: 26, max: 34 } },
+    text: { slice: 'sentence', take: 3, length: 'long', pick: 'random', position: 1, hold: { min: 1, max: 2 }, splitChars: false, blocks: 1, size: { min: 26, max: 34 } },
     texts: ['default'],
     spawn: KEEP_CENTRE_CLEAR,
     // A tall column or a wide band, never the square in between — the reason shapes are a
@@ -410,15 +348,18 @@ export const PRESETS: readonly VisualPreset[] = [
       { treatment: 'underline', target: { slice: 'word', count: 2 }, triggers: { snare: true }, decayBars: FADE.fast },
       { treatment: 'invert', target: { slice: 'word', count: 1 }, triggers: { bar: true }, decayBars: FADE.fast },
       { treatment: 'invert', target: { slice: 'word', proportion: 0.08 }, triggers: { held: true }, decayBars: FADE.fast },
+
+      // The stage breathing with the beat. A treatment like anything else now — it has no
+      // target and writes no channel, the same as the motion pair (§11.5).
+      {
+        treatment: 'pulse',
+        target: { slice: 'block', count: 1 },
+        triggers: {},
+        decayBars: 0,
+        pulse: { amount: 0.016, shape: 'sine' },
+      },
     ],
-    bindings: {
-      phrase: [retext({ hold: [1, 2] })],
-      // Held text drifts instead of sitting still. `held` is a real trigger now, so this
-      // no longer needs a wrapper effect to detect the hold for itself.
-      held: [scroll({ power: 0.14 })],
-    },
     // Slow even breathing rather than a hit, to match the pace.
-    ambient: [pulse({ amount: 0.016, shape: 'sine' })],
     minPhrases: 4,
   },
 ];

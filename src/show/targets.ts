@@ -33,10 +33,14 @@ export type Target =
  * these paragraphs", which is what `glitchParagraphs` did and what reads correctly: a
  * paragraph with a background but uncoloured words looks like a bug rather than a look.
  */
-export function resolve(target: Target, typesetter: Typesetter): readonly HTMLElement[] {
+export function resolve(
+  target: Target,
+  typesetter: Typesetter,
+  boxed = false,
+): readonly HTMLElement[] {
   if ('match' in target) return matching(target.match, typesetter);
 
-  const groups = groupsOf(target.slice, typesetter);
+  const groups = groupsOf(target.slice, typesetter, boxed);
   if (groups.length === 0) return [];
 
   if ('every' in target) {
@@ -96,7 +100,13 @@ function matching(text: string, typesetter: Typesetter): readonly HTMLElement[] 
  * A `<p>` is a *line*, not a sentence: a sentence can run to several, and `sentence` selects
  * whole thoughts where `paragraph` selects however the text happened to break.
  */
-function groupsOf(slice: Slice, typesetter: Typesetter): readonly HTMLElement[][] {
+function groupsOf(
+  slice: Slice,
+  typesetter: Typesetter,
+  boxed: boolean,
+): readonly HTMLElement[][] {
+  const inside = boxed ? boxOf : treatable;
+
   switch (slice) {
     case 'char':
       return typesetter.chars.map((el) => [el]);
@@ -105,13 +115,13 @@ function groupsOf(slice: Slice, typesetter: Typesetter): readonly HTMLElement[][
       return typesetter.words.map((el) => [el]);
 
     case 'sentence':
-      return typesetter.sentences.map(treatable);
+      return typesetter.sentences.map(inside);
 
     case 'paragraph':
-      return typesetter.paragraphs.map(treatable);
+      return typesetter.paragraphs.map(inside);
 
     case 'block':
-      return typesetter.blocks.map(treatable);
+      return typesetter.blocks.map(inside);
   }
 }
 
@@ -122,10 +132,32 @@ function groupsOf(slice: Slice, typesetter: Typesetter): readonly HTMLElement[][
  * `Typesetter.targets` follows, so a preset with `splitChars: false` still works and simply
  * operates at word granularity.
  */
+/**
+ * The elements inside a grouping element that a treatment can be written to.
+ *
+ * Selecting by paragraph means "every word in these paragraphs", which is what reads correctly
+ * for a *mark*: a paragraph with a background but uncoloured words looks like a bug rather than
+ * a look.
+ */
 function treatable(root: HTMLElement): HTMLElement[] {
   const chars = root.querySelectorAll<HTMLElement>('c');
   if (chars.length > 0) return Array.from(chars);
   return Array.from(root.querySelectorAll<HTMLElement>('w'));
+}
+
+/**
+ * The grouping element itself, for a treatment that draws a **box** rather than marking text.
+ *
+ * `outline` is the whole of that list. Selecting a paragraph and outlining every word in it
+ * gives a box round each word, which is a different effect and not the one anyone asks for by
+ * outlining a paragraph. The rest of the vocabulary marks the type — an inversion, an accent, a
+ * dingbat — and those genuinely do want every word.
+ *
+ * A sentence is skipped even so: `<sn>` is `display: contents`, an element with no box of its
+ * own precisely so it does not disturb the flow layouts, so there is nothing to draw round.
+ */
+function boxOf(root: HTMLElement): HTMLElement[] {
+  return root.tagName === 'SN' ? treatable(root) : [root];
 }
 
 function flatten(groups: readonly HTMLElement[][]): readonly HTMLElement[] {

@@ -1,7 +1,7 @@
 import { decayProbability } from './Channels';
 import { resolve, type Target } from './targets';
-import { CHANNELS, isMotion, write, type Treatment } from './treatments';
-import type { EffectContext } from '../effects/types';
+import { CHANNELS, drawsABox, isMotion, write, type Treatment } from './treatments';
+import type { EffectContext } from './context';
 import type { LayerTrigger } from './Conductor';
 
 export interface MotionSpec {
@@ -64,6 +64,15 @@ export interface LayerSpec {
    * precisely so that it stays on the grid when the tempo changes (§11.5).
    */
   readonly rateBars?: number;
+
+  /**
+   * How hard the stage breathes, for `pulse`. A fraction of the frame, so 0.02 is a 2% zoom.
+   *
+   * Small: 0.02 is already clearly visible at 720p, and past about 0.05 it stops reading as a
+   * pulse and starts reading as a fault. `decay` hits hard and falls away, which reads as a
+   * kick; `sine` breathes evenly and suits slower presets.
+   */
+  readonly pulse?: { readonly amount: number; readonly shape: 'decay' | 'sine' };
 }
 
 /**
@@ -111,7 +120,9 @@ export class Layer {
     // Motion is established when the text is laid out; there are no elements to mark.
     if (isMotion(this.spec.treatment)) return;
 
-    const elements = resolve(this.spec.target, ctx.typesetter);
+    // `outline` draws a box, so a paragraph target means the paragraph's box — not a box round
+    // each of its words, which is what every other treatment's "every word in these" means.
+    const elements = resolve(this.spec.target, ctx.typesetter, drawsABox(this.spec.treatment));
     if (elements.length === 0) return;
 
     for (const el of elements) {

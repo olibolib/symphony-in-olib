@@ -1,4 +1,4 @@
-import type { EffectContext, EffectRef } from '../effects/types';
+import type { EffectContext } from './context';
 import type { Layer } from './Layer';
 
 /**
@@ -39,18 +39,13 @@ export type Lane = 'kick' | 'snare' | 'hat' | 'beat' | 'bar' | 'phrase';
  */
 export type LayerTrigger = Lane | 'held' | 'always' | 'typeset';
 
-export type Bindings = Partial<Record<LayerTrigger, readonly EffectRef[]>>;
-
 export interface Programme {
   /** Ordered: later layers sit on top when they contend for a channel. */
   readonly layers: readonly Layer[];
-  readonly bindings: Bindings;
-  /** Stage effects run every frame rather than on an event — drift, pulse, and so on. */
-  readonly ambient?: readonly EffectRef[];
 }
 
 export class Conductor {
-  private programme: Programme = { layers: [], bindings: {} };
+  private programme: Programme = { layers: [] };
 
   /** Effects that threw, so a broken one is reported once rather than every frame. */
   private readonly reported = new Set<string>();
@@ -63,29 +58,20 @@ export class Conductor {
     return this.programme.layers;
   }
 
-  /**
-   * Dispatch a lane event.
-   *
-   * Layers fire before stage effects. A stage effect on the same lane may re-typeset, and
-   * anything a layer wrote to elements that no longer exist is wasted work — cheap, but
-   * this way round the ordering is at least deliberate rather than accidental.
-   */
+  /** Dispatch a trigger to every layer listening for it. */
   fire(trigger: LayerTrigger, ctx: EffectContext): void {
     for (const layer of this.programme.layers) {
       if (!layer.respondsTo(trigger)) continue;
       this.guard(() => layer.fire(ctx), `layer:${layer.spec.treatment}`);
     }
-
-    const effects = this.programme.bindings[trigger];
-    if (!effects) return;
-    for (const effect of effects) this.guard(() => effect(ctx), trigger);
   }
 
   /**
-   * Per-frame work: every layer fades its own elements, then the stage effects run.
+   * Per-frame work: every layer fades its own elements.
    *
-   * Decay used to be a single ambient effect clearing everything at one rate, which meant
-   * an inversion could not fade slower than a glitch. It is now a property of the layer.
+   * Decay used to be a single ambient effect clearing everything at one rate, which meant an
+   * inversion could not fade slower than a glitch. It is a property of the layer now — which is
+   * what left `ambient` with nothing in it, and eventually left this class with only layers.
    */
   tick(ctx: EffectContext): void {
     this.fire('always', ctx);
@@ -93,10 +79,6 @@ export class Conductor {
     for (const layer of this.programme.layers) {
       this.guard(() => layer.decay(ctx), `decay:${layer.spec.treatment}`);
     }
-
-    const ambient = this.programme.ambient;
-    if (!ambient) return;
-    for (const effect of ambient) this.guard(() => effect(ctx), 'ambient');
   }
 
   /**

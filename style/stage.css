@@ -16,6 +16,31 @@ p {
   line-height: 0.95;
 }
 
+/* A line that does not fit its block entirely, hidden rather than shown in half.
+
+   `visibility`, not `display`. The line has to keep its box: a conveyor's travel distance is
+   the height of one copy of the passage, measured once, and taking lines out of the flow after
+   that leaves the belt moving further than there is text to move. */
+.trimmed {
+  visibility: hidden;
+}
+
+/* A conveyor's repeats are the same words at the same width as the original, so laying them
+   out is work the browser cannot know is redundant. `content-visibility` lets it skip the parts
+   that are nowhere near the window, and skip painting them until they arrive.
+
+   **Only the copies.** Applied to the original as well it is four to five times faster —
+   measured at 44-58ms a typeset down to 10-12 — but the belt's travel distance is the height of
+   the original, and an element whose layout has been skipped reports its intrinsic guess
+   instead: 8554px of text measured as 3480, which is the `display: none` fault of this morning
+   in a new coat. The copies are measured by nothing, so they are safe to skip.
+
+   The intrinsic size only has to be a plausible line; nothing is measured from it. */
+.loop[data-copy] p {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 1.2em;
+}
+
 /* Words. `w` and `c` are custom tags — legal, and much lighter than spans at scale. */
 w {
   display: inline-block;
@@ -95,6 +120,11 @@ c {
 
 [data-outline='1'] { outline: 0.06em solid currentColor; }
 
+/* Room between the rule and the type, so an outlined paragraph reads as a box rather than as a
+   line drawn on the words. Only on a paragraph: padding on a word or a character would push it
+   away from its neighbours and re-wrap the line. */
+p[data-outline='1'] { padding: 0.1em; }
+
 /* Scale rather than a min-width floor: sizing by width reflows the paragraph, and
    re-wrapping several times a bar reads as broken rather than as an effect (§11.5).
    Inline elements need a block display to accept a transform at all. */
@@ -138,7 +168,17 @@ c {
      against the *padding* box — they have to be inset by hand to match. */
   --pad: calc(var(--fs) * 0.28);
   padding: var(--pad);
-  overflow: hidden;
+
+  /* Text may leave its box rather than be cut off by it.
+
+     A block sizes to a grid cell, and the type size is chosen independently — so a long word
+     at a large size is simply wider than the box it landed in, and that is not a mistake to
+     punish. Clipping it meant a word, and sometimes a whole line, silently did not appear;
+     a `swell` on a word near an edge got its top or its side sliced off.
+
+     The grid decides where a block *starts*, which is the anchor semantics the whole of §11.6
+     rests on. It was never meant to decide what fits. */
+  overflow: visible;
 
   /* Vertically centred within its own box, which is what the table-cell used to do for the
      whole stage — now per block, so a short passage sits in the middle of its band.
@@ -163,6 +203,16 @@ sn {
 /* The conveyor's moving part. Fills the block, so a stationary preset is unaffected. */
 .block-content {
   width: 100%;
+}
+
+/* A conveyor is a window, so it does have to clip — but only on the axis the text travels.
+
+   `clip-path` rather than `overflow`, because CSS will not give one axis `hidden` and the
+   other `visible`: setting either turns the other into `auto`, which clips just the same. An
+   inset with negative sides clips top and bottom at the box edge and not at all sideways, so
+   a long word still leaves the box the way it does anywhere else. */
+.block[data-conveyor] {
+  clip-path: inset(0 -100vw);
 }
 
 /* Every keyframe that moves something is `olib-move-…`, and the engine matches on that
@@ -353,10 +403,12 @@ sn {
    Was bundled into layouts 1, 2 and 8 along with a font size and a line height. On its own
    it combines with any anchor, any shape and any flow. */
 
-#container[data-align='left'] { text-align: left; }
-#container[data-align='centre'] { text-align: center; }
-#container[data-align='right'] { text-align: right; }
-#container[data-align='justify'] { text-align: justify; }
+/* Per block rather than per stage, because `auto` gives each one its own answer. `text-align`
+   inherits, so this is the same one declaration it always was, one level down. */
+.block[data-align='left'] { text-align: left; }
+.block[data-align='centre'] { text-align: center; }
+.block[data-align='right'] { text-align: right; }
+.block[data-align='justify'] { text-align: justify; }
 
 /* --- flow (§11.6) ---------------------------------------------------------------------
    How paragraphs arrange inside a block — the part of the old layout table that was neither
@@ -373,33 +425,32 @@ sn {
   line-height: 1.15;
 }
 
-/* A grid of outlined cells. Was layout 6, at a size it was welded to. */
-#container[data-flow='grid'] .block {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(6em, 1fr));
-  align-content: safe center;
-  gap: 0.06em;
-}
-#container[data-flow='grid'] .block p {
-  outline: 0.08em solid currentColor;
-  padding: 0.1em;
-}
+/* Wrapped paragraphs of uneven width, shoving each other about. Was layout 5.
 
-/* Wrapped paragraphs of uneven width, shoving each other about. Was layout 5. */
-#container[data-flow='wrapped'] .block {
+   On `.loop`, not on `.block`. The paragraphs live two levels down — `.block` holds
+   `.block-content`, which holds `.loop`, which holds the text — so a flex container on the
+   block had exactly one child and nothing to wrap. This laid out the wrapper and left the
+   paragraphs stacked, which is why it looked like `stack` with wider gaps. */
+#container[data-flow='wrapped'] .loop {
+  display: flex;
   flex-direction: row;
   flex-wrap: wrap;
   align-content: safe center;
   gap: 0 0.4em;
 }
-#container[data-flow='wrapped'] .block p {
-  min-width: 25%;
+/* A quarter of the block as a *starting* size, not as a minimum.
+
+   `min-width` on a flex item replaces the automatic minimum, which is min-content — so setting
+   it to 25% is what let a paragraph shrink below its own text and the word spill out of it,
+   crossing the outline drawn round its box. As a flex-basis it is still a quarter to begin
+   with, and the automatic minimum stays in place to stop it going under its content. */
+#container[data-flow='wrapped'] .loop p {
+  flex: 1 1 25%;
 }
 
 /* Two columns with a gap. Was layout 12, where the gap *was* the protected middle — it is
    now just a number, on a block sized and placed like any other. */
-#container[data-flow='columns'] .block {
-  display: block;
+#container[data-flow='columns'] .loop {
   column-count: 2;
   column-gap: var(--column-gap, 12%);
 }

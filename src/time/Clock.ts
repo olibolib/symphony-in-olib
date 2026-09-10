@@ -48,10 +48,18 @@ const KICK_AGREEMENT = 0.45;
  */
 const LARGE_CHANGE_RATIO = 0.3;
 
-/** What a change at {@link LARGE_CHANGE_RATIO} has to show instead. */
-const LARGE_KICK_AUTHORITY = 1;
-const LARGE_KICK_AGREEMENT = 0.8;
-const LARGE_CHANGE_ESTIMATES = 28;
+/**
+ * What a change at {@link LARGE_CHANGE_RATIO} has to show instead.
+ *
+ * Softened from 1.0 / 0.80 / 28 after a real house-to-drum-and-bass change failed to take. The
+ * original numbers were set to survive a hats-and-snares intro, and they did — but they also
+ * held out through a genuine 128-to-174 cut for the better part of twelve seconds, which is a
+ * long time to be visibly on the wrong grid. The agreement test is what actually rejects an
+ * intro; the long hold was belt and braces, and it cost more than it bought.
+ */
+const LARGE_KICK_AUTHORITY = 0.95;
+const LARGE_KICK_AGREEMENT = 0.7;
+const LARGE_CHANGE_ESTIMATES = 14;
 
 /**
  * Kick strength below which fine correction stops entirely.
@@ -153,8 +161,21 @@ export class Clock {
    * stays smooth through a passage with no transients at all.
    */
   phase(now: number): number {
-    if (!this.started) return 0;
-    const p = ((now - this.originMs) / this.periodMs) % 1;
+    return this.phaseIn(1 / BEATS_PER_BAR, now);
+  }
+
+  /**
+   * Position within a cycle of any length, measured in bars. 0 at the start of the cycle.
+   *
+   * The same unit everything else the audience sees is expressed in (§11.5): 0.25 is a beat,
+   * 1 is a bar, 4 is a phrase. Predicted from the grid rather than counted from events, so a
+   * cycle several bars long stays exactly in step through a passage with no transients — which
+   * is the whole reason a slow pulse is worth having at all.
+   */
+  phaseIn(bars: number, now: number): number {
+    if (!this.started || bars <= 0) return 0;
+    const cycleMs = this.periodMs * BEATS_PER_BAR * bars;
+    const p = ((now - this.originMs) / cycleMs) % 1;
     return p < 0 ? p + 1 : p;
   }
 
@@ -231,8 +252,18 @@ export class Clock {
 
     this.disagreements = 0;
 
-    // A tap outranks detection until the track changes, so stop here.
-    if (this.manual) return;
+    // A tap outranks detection until the track changes — but detection *agreeing* with the
+    // tap is the track changing, seen from the other side.
+    //
+    // Reaching here means the estimate is within the track-change band of the tapped tempo, so
+    // the two agree. Holding manual at that point would keep refusing corrections from a
+    // tracker that has already caught up, and leave the phase locked to whenever the taps
+    // happened to land. Handing back is also the fast way out of a big jump the automatic rule
+    // is being cautious about: tap the new tempo once and detection resumes on it.
+    if (this.manual) {
+      this.manual = false;
+      this.source = 'detected';
+    }
 
     // Fine correction ramps to nothing rather than scaling straight down.
     //

@@ -1,4 +1,4 @@
-import { isScalar, type Channel } from './treatments';
+import { CHANNELS, isScalar, type Channel } from './treatments';
 
 /**
  * Who wrote what, so layers can decay independently. DESIGN.md §11.5.
@@ -191,15 +191,19 @@ export class Channels {
   }
 }
 
+/**
+ * Every channel, derived rather than listed.
+ *
+ * This was a hand-written array, which meant adding a ninth member to the `Channel` union
+ * compiled cleanly and left `clearAll` silently skipping it — a treatment surviving a preset
+ * change, which is the exact class of silent failure this class exists to prevent.
+ *
+ * Derived from `CHANNELS`, which is already a total `Record<Treatment, readonly Channel[]>`, so
+ * it cannot disagree with the treatment table either. A channel no treatment writes is not a
+ * channel; if one is ever needed the table is where to say so.
+ */
 const ALL_CHANNELS: readonly Channel[] = [
-  'bg',
-  'fg',
-  'font',
-  'deco',
-  'outline',
-  'size',
-  'anim',
-  'vis',
+  ...new Set(Object.values(CHANNELS).flat()),
 ];
 
 /**

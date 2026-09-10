@@ -1,5 +1,13 @@
 import type { Stage } from '../render/Stage';
-import { anchors, normalise, nudge, placeBlocks, type BlockShape, type Mask } from '../show/mask';
+import {
+  anchors,
+  normalise,
+  nudge,
+  placeBlocks,
+  type BlockShape,
+  type Box,
+  type Mask,
+} from '../show/mask';
 import { pick, randomInt, randomRange } from '../util/random';
 import { sentenceLength, type Sentence, type TextPreset } from './TextSource';
 
@@ -37,9 +45,6 @@ export type TextLength = 'any' | 'short' | 'long';
  * which is the point of pulling them apart from the slice in the first place.
  */
 export type TextPick = 'random' | 'order' | 'position';
-
-/** Words above this are "long". Acid's threshold, kept. */
-const LONG_WORDS = 12;
 
 export interface TypesetOptions {
   readonly slice: TextSlice;
@@ -128,7 +133,31 @@ export interface TypesetOptions {
   readonly varyBy?: 'word' | 'char';
 }
 
-export type Align = 'left' | 'centre' | 'right' | 'justify';
+export type Align = 'left' | 'centre' | 'right' | 'justify' | 'auto';
+
+/** Blocks closer to the middle than this fraction of the canvas are centred. */
+const AUTO_DEAD_ZONE = 0.06;
+
+/**
+ * Which way a block should set its text, when the preset says to work it out.
+ *
+ * **Toward the nearer edge**, so the text throws inward. A block anchored at the left of the
+ * grid sets left, and a long word extends into the canvas rather than out of it; a block at the
+ * right sets right and spills the other way. It is the placement grid's own logic applied to
+ * typography — the anchor already says which side of the frame this block belongs to.
+ *
+ * A dead zone in the middle, or a block straddling the centre would flip between left and right
+ * on every re-typeset for a difference of a few pixels.
+ *
+ * Takes the block's centre rather than its edges, so a wide block and a narrow one anchored in
+ * the same place agree.
+ */
+export function alignFor(left: number, width: number): Align {
+  const centre = (left + width / 2) / 100;
+  if (centre < 0.5 - AUTO_DEAD_ZONE) return 'left';
+  if (centre > 0.5 + AUTO_DEAD_ZONE) return 'right';
+  return 'centre';
+}
 
 /**
  * Motion, in two kinds. DESIGN.md §11.5.
@@ -180,7 +209,22 @@ export interface BlockMotion {
  * `run-on` was layout 7, `grid` was 6, `wrapped` was 5, and `columns` was 12's two rails.
  * As a setting they combine with any anchor and any size, which none of them could before.
  */
-export type Flow = 'stack' | 'run-on' | 'grid' | 'wrapped' | 'columns';
+/**
+ * How paragraphs arrange inside a block.
+ *
+ * `grid` was here too — a grid of outlined cells, the last survivor of the layout table. It
+ * went for three reasons. It welded an arrangement to a *decoration*, which is the fault §11.5
+ * exists to undo, and the decoration half is `outline`, a treatment that already exists. Its
+ * column count came from `minmax(6em, 1fr)`, so scaling the type for readability silently
+ * changed the layout. And once a block grows to fit its longest word (§11.6), subdividing it
+ * into columns puts that word back outside a cell — measured at an 811px line in a 420px cell,
+ * crossing its own outline.
+ *
+ * `wrapped` gives the side-by-side arrangement, and one `outline` layer over paragraphs gives
+ * the boxes — with the option of outlining only some of them, or on a trigger, or with a fade,
+ * none of which `grid` could do.
+ */
+export type Flow = 'stack' | 'run-on' | 'wrapped' | 'columns';
 
 /**
  * Write a motion setting as attributes CSS can act on.
@@ -243,8 +287,43 @@ const DEFAULT_MAX_ELEMENTS = 6000;
  */
 const MAX_LOOP_ELEMENTS = DEFAULT_MAX_ELEMENTS / 2;
 
+/** The type size that budget was measured at. */
+const REFERENCE_SIZE_PX = 28;
+
+/**
+ * How many columns `flow: 'columns'` makes. Matches the stylesheet, which hardcodes it too.
+ *
+ * A flow takes no parameters (§11.6), so this is a constant in two places rather than a setting
+ * — and the block sizing has to know it, or the longest word does not fit a column.
+ */
+const COLUMN_COUNT = 2;
+
+/** However small the type gets, the belt may not cost more than this. */
+const LOOP_ELEMENT_CEILING = DEFAULT_MAX_ELEMENTS * 2;
+
+/**
+ * The loop budget for a given type size.
+ *
+ * **Small type raises the cap rather than shortening the belt.** A flat cap ran out of copies
+ * exactly when the text was small: a shorter passage needs more repeats to fill the same box
+ * while costing the same per repeat, so the belt stopped covering the box and a gap crossed
+ * the frame once a cycle. A visible gap is not an acceptable way to save elements.
+ *
+ * Inverse in the size, because the cost that matters is pixels painted, and that falls as the
+ * type shrinks — half-size type is a quarter of the ink per element, so more of them buy the
+ * same frame. Ceilinged all the same, since nothing stops a preset asking for 8px.
+ */
+function loopBudget(fontPx: number): number {
+  if (!Number.isFinite(fontPx) || fontPx <= 0) return MAX_LOOP_ELEMENTS;
+  const scale = Math.max(1, REFERENCE_SIZE_PX / fontPx);
+  return Math.min(LOOP_ELEMENT_CEILING, MAX_LOOP_ELEMENTS * scale);
+}
+
 export class Typesetter {
   private readonly stage: Stage;
+
+  /** The size this typeset was rolled at, so the loop budget can scale with it. */
+  private fontPx = REFERENCE_SIZE_PX;
 
   /**
    * How far `continuous` has read into each text, in sentences.
@@ -340,6 +419,9 @@ export class Typesetter {
     // overlap needs to see the boxes already placed.
     const boxes = placeBlocks(cells, shapes, blocks, options.avoidOverlap !== false);
 
+    /** Where each block actually went, so the nudge does not have to ask the DOM again. */
+    const placed: Box[] = [];
+
     for (let index = 0; index < blocks; index++) {
       const text = texts[index] ?? texts[0];
       if (!text) break;
@@ -378,9 +460,13 @@ export class Typesetter {
       // holding three screens of text would scroll three times as far for the same setting.
       const boxH = (box.height / 100) * this.stage.height;
 
+      placed.push(box);
+
       const style =
-        `left:${box.left.toFixed(3)}%;top:${box.top.toFixed(3)}%;` +
-        `width:${box.width.toFixed(3)}%;height:${box.height.toFixed(3)}%;` +
+        `left:calc(${box.left.toFixed(3)}% + var(--anchor, 0px) + var(--fit-x, 0px));` +
+        `top:calc(${box.top.toFixed(3)}% + var(--fit-y, 0px));` +
+        `width:calc(${box.width.toFixed(3)}% + var(--grow, 0px));` +
+        `height:${box.height.toFixed(3)}%;` +
         `--box-h:${boxH.toFixed(2)}px;--box-hr:${(box.height / 100).toFixed(5)};`;
 
       const built = this.build(lines, options, budgetPerBlock);
@@ -396,7 +482,12 @@ export class Typesetter {
       }
       this.pending = null;
 
-      parts.push(`<div class="block" data-block="${index}" style="${style}">`);
+      const align = options.align ?? 'centre';
+      const blockAlign = align === 'auto' ? alignFor(box.left, box.width) : align;
+
+      parts.push(
+        `<div class="block" data-block="${index}" data-align="${blockAlign}" style="${style}">`,
+      );
       // Two nested wrappers: `.block-content` is what moves, `.loop` is one copy of the
       // text. A stationary block has exactly one copy and the extra element costs nothing;
       // a conveyor gets a second, which is what makes the loop seamless (see `makeSeamless`).
@@ -411,9 +502,11 @@ export class Typesetter {
     // Base size is rolled once here, not per frame and not per trigger. Nothing decays it
     // and nothing follows the audio with it — it is simply how big the text is (§11.5).
     const size = options.size ?? { min: 28, max: 28 };
-    this.stage.setFontScale(randomRange(size.min, size.max));
+    this.fontPx = randomRange(size.min, size.max);
+    this.stage.setFontScale(this.fontPx);
 
     const container = this.stage.container;
+    // Kept for anything still reading it, but the per-block attribute is what styles the text.
     container.dataset['align'] = options.align ?? 'centre';
     container.dataset['flow'] = options.flow ?? 'stack';
 
@@ -439,6 +532,12 @@ export class Typesetter {
     // typeset's elements.
     this.twins = new WeakMap();
 
+    // **Before the conveyor is measured**, because widening a block re-wraps its text and so
+    // changes its height — and the conveyor's whole geometry is derived from that height. It
+    // was running afterwards, which left every copy positioned for a taller passage than the
+    // one actually there: the belt developed gaps and eventually ran out into black.
+    const grown = this.growToContent(options.flow === 'columns' ? COLUMN_COUNT : 1);
+
     const conveyor = options.contentMotion;
     if (conveyor && conveyor.speed > 0) this.measureConveyor(conveyor.continuous);
 
@@ -448,31 +547,30 @@ export class Typesetter {
     // After the travel is known, since that is what sets the duration.
     this.applyPhases(phases);
 
+    // After the copies exist, so a conveyor is recognised as one and left alone vertically.
+    this.fitToCanvas(placed, grown, options.blockMotion !== undefined);
+
     this.measureLines(options.wholeLines === true);
     this.trimLines();
-
-    this.measureClipping();
   }
 
   /**
-   * One layout read per block, once per re-typeset — a few times a minute, not per frame.
-   * That is well inside the §14 rule against reading layout in a loop.
+   * How many lines are on the stage but not visible. §14 — nothing is lost silently.
+   *
+   * It used to count blocks whose content overflowed, which was the same question while a
+   * block clipped its content. Blocks spill now, so overflowing costs nothing and reporting it
+   * would be a warning about something that is working — the fastest way to teach someone to
+   * ignore a readout.
+   *
+   * What can still take text off the stage is `wholeLines`, which hides a line rather than
+   * showing half of one. That is a real omission and it is what this counts.
    */
-  private measureClipping(): void {
-    let clipped = 0;
-    for (const block of this.blocks) {
-      // A conveyor overflows by design — that is what it is for — so counting it as clipped
-      // would report a fault on every phrase and train you to ignore the number.
-      if (block.dataset['conveyor'] !== undefined) continue;
-
-      if (
-        block.scrollHeight > block.clientHeight + 1 ||
-        block.scrollWidth > block.clientWidth + 1
-      ) {
-        clipped++;
-      }
+  private countHidden(): void {
+    let hidden = 0;
+    for (const line of this.lines) {
+      if (line.el.classList.contains('trimmed')) hidden++;
     }
-    this.clipped = clipped;
+    this.clipped = hidden;
   }
 
   /**
@@ -539,7 +637,8 @@ export class Typesetter {
       // Two is the floor — one repeat is what makes it a loop at all — even for a passage so
       // dense that the budget would rather it did not.
       const perCopy = Math.max(1, original.querySelectorAll('w, c').length);
-      const copies = Math.max(2, Math.min(wanted, Math.floor(MAX_LOOP_ELEMENTS / perCopy) + 1));
+      const budget = loopBudget(this.fontPx);
+      const copies = Math.max(2, Math.min(wanted, Math.floor(budget / perCopy) + 1));
 
       for (let i = 1; i < copies; i++) {
         const copy = original.cloneNode(true) as HTMLElement;
@@ -555,6 +654,157 @@ export class Typesetter {
 
       block.style.setProperty('--travel', `${textH.toFixed(2)}px`);
       block.style.setProperty('--travelr', (textH / this.stage.height).toFixed(5));
+    }
+  }
+
+  /**
+   * Widen a block until its longest word fits, keeping the edge its alignment is anchored to.
+   *
+   * A cell of the 7x7 grid is a seventh of the frame. At a size chosen to be readable on a
+   * projector, one word can easily be wider than that — so the box is not a container so much
+   * as a **minimum**, which is what anchor semantics always implied (§11.6).
+   *
+   * Without this, one block disagrees with itself line by line. `text-align` positions a line's
+   * content inside its line box, but a word wider than the line box always overflows toward the
+   * **inline end** — rightward — whatever the alignment says. So in a right-aligned block the
+   * lines that fit hug the right edge and the lines that do not start at the left edge and run
+   * off the other side. Measured on a one-cell column: a 274px box holding 400px words, text
+   * running from 1660 to 2058 on a 1920 frame.
+   *
+   * Growing the box removes the disagreement at its source rather than correcting it after the
+   * fact, and it grows **away from the anchored edge** — a right-aligned block keeps its right
+   * edge and extends left, which is also the direction that keeps it on the canvas.
+   */
+  private growToContent(columns: number): Grown[] {
+    const grown: Grown[] = [];
+
+    for (const block of this.blocks) {
+      // **`scrollWidth` per line, not a rectangle per word.** A `<p>` is a block box that
+      // takes the width of its container, so an inline-block word wider than that hangs out and
+      // the line's *rectangle* does not include it — but its `scrollWidth` does, which is what
+      // that property is for.
+      //
+      // Reading a rectangle for all 872 words cost 9-16ms a typeset here, and 27-45ms in the
+      // nudge below: a visible hitch in a scrolling block every time the text changed. One read
+      // per line is seven times fewer and the same answer.
+      //
+      // Only the first copy: a conveyor's repeats are the same words at the same width.
+      const lines = block.querySelectorAll<HTMLElement>('.loop:not([data-copy]) p');
+      const line = lines[0];
+      if (!line) continue;
+
+      const available = line.clientWidth;
+      if (available <= 0) continue;
+
+      let widest = 0;
+      for (const el of lines) {
+        if (el.scrollWidth > widest) widest = el.scrollWidth;
+      }
+
+      // **Times the number of columns**, because a flow that subdivides the block subdivides
+      // the guarantee with it. Growing so the longest word fits the block is no use when the
+      // text is then laid out in two columns half that wide — the word ends up outside a
+      // column, crossing whatever is drawn round it. This is the fault that `grid` was deleted
+      // for; `columns` has it too, and can be given the room instead.
+      //
+      // Never wider than the frame: past that, growing cannot help and only pushes the block
+      // further out. What will not fit is handled by the nudge, which keeps the opening.
+      const needed = widest * columns;
+      const grow = Math.min(needed, this.stage.width) - available;
+
+      // What the block could not absorb because it would have exceeded the frame. Overflow runs
+      // to the inline end, so it extends the right edge and never the left.
+      const overflow = Math.max(0, needed - this.stage.width);
+
+      if (grow <= 1) {
+        block.style.removeProperty('--grow');
+        block.style.removeProperty('--anchor');
+        grown.push({ grow: 0, anchor: 0, overflow });
+        continue;
+      }
+
+      block.style.setProperty('--grow', `${grow.toFixed(2)}px`);
+
+      // Which edge stays put. `justify` behaves like `left` for a line it cannot stretch, so it
+      // anchors the same way.
+      const align = block.dataset['align'];
+      const anchor = align === 'right' ? -grow : align === 'centre' ? -grow / 2 : 0;
+
+      if (anchor !== 0) block.style.setProperty('--anchor', `${anchor.toFixed(2)}px`);
+      else block.style.removeProperty('--anchor');
+
+      grown.push({ grow, anchor, overflow });
+    }
+
+    return grown;
+  }
+
+  /**
+   * Nudge each block so the text it spills stays on the canvas.
+   *
+   * Blocks spill by design — a long word at a large size is wider than the cell it landed in,
+   * and cutting it off is the app second-guessing a choice you made. But the canvas edge is a
+   * different thing from a block edge: past it there is nothing, and text that leaves is simply
+   * gone.
+   *
+   * **Measured rather than reasoned about.** The obvious approach is to work out which way the
+   * text overhangs from `align` — left spills right, right spills left, centre spills both —
+   * and that is four rules to keep in step with a fifth, `justify`, which behaves like `left`
+   * only for the lines it cannot stretch. Reading the painted rectangle instead is one rule for
+   * all of them, and it comes with `swell` and any other transform already accounted for,
+   * because that is what `getBoundingClientRect` reports.
+   *
+   * The move is the smallest one that works, and never more than bringing the content flush
+   * with the edge it was leaving. Text wider than the whole canvas cannot be helped by moving
+   * it, so it is aligned to the left edge — the beginning is the half you cannot do without.
+   *
+   * Skipped for a travelling block, which is *supposed* to leave the frame.
+   */
+  private fitToCanvas(
+    placed: readonly Box[],
+    grown: readonly Grown[],
+    travelling: boolean,
+  ): void {
+    if (travelling) return;
+
+    const stageW = this.stage.width;
+    const stageH = this.stage.height;
+
+    for (const [index, block] of this.blocks.entries()) {
+      const box = placed[index];
+      const size = grown[index];
+      if (!box || !size) continue;
+
+      // **Arithmetic, not a measurement.** Every number here is one this class chose: the box
+      // came from the grid, the growth and the anchor were computed a moment ago, and the
+      // overflow is what growth could not absorb.
+      //
+      // Reading it back from the DOM instead cost 27-45ms a typeset — not because the reads
+      // were many, but because each one came *after* a style write and so forced a full layout
+      // of eight thousand elements. Two passes meant two layouts, and that was the hitch in a
+      // scrolling block every time the text changed.
+      const left = (box.left / 100) * stageW + size.anchor;
+      const right = left + (box.width / 100) * stageW + size.grow + size.overflow;
+      const top = (box.top / 100) * stageH;
+      const bottom = top + (box.height / 100) * stageH;
+
+      const x = shiftInto(left, right, 0, stageW);
+
+      // **Never vertically for a conveyor.** Its content is deliberately several canvases tall
+      // — that is what makes it a belt — and it is deliberately outside its box, which is what
+      // makes the box a window. Measuring all of it and concluding the block is in the wrong
+      // place shoved it hundreds of pixels down the frame until nothing was on screen at all.
+      //
+      // Nothing is lost by leaving it: the axis a conveyor travels is the one axis it does
+      // still clip, so what leaves the box that way was never going to be visible.
+      const scrolling = block.dataset['conveyor'] !== undefined;
+      const y = scrolling ? 0 : shiftInto(top, bottom, 0, stageH);
+
+      if (x !== 0) block.style.setProperty('--fit-x', `${x.toFixed(2)}px`);
+      else block.style.removeProperty('--fit-x');
+
+      if (y !== 0) block.style.setProperty('--fit-y', `${y.toFixed(2)}px`);
+      else block.style.removeProperty('--fit-y');
     }
   }
 
@@ -619,17 +869,31 @@ export class Typesetter {
    * rather than from the DOM. Writing only on a change keeps it off the compositor's back.
    */
   trimLines(): void {
-    if (this.lines.length === 0) return;
+    if (this.lines.length === 0) {
+      this.clipped = 0;
+      return;
+    }
 
     for (const line of this.lines) {
       const top = line.top + translateY(line.content);
       const whole = top >= -0.5 && top + line.height <= line.boxHeight + 0.5;
 
-      // `hidden` rather than removal: the element stays in the registries, so a layer that
-      // targeted it keeps its ownership and the line comes back intact when it fits again.
-      // No mirroring: every line, in every copy, is measured and decided on its own.
-      if (line.el.hidden === whole) line.el.hidden = !whole;
+      // **`visibility`, not `display`.** The element has to keep its box: the `hidden`
+      // attribute is `display: none`, which takes the line out of layout and shortens the
+      // passage — and a conveyor's travel distance was measured from that passage's height a
+      // moment earlier. Trimming half the lines left the belt moving 8554px for 811px of text,
+      // so the text scrolled away and did not come back. Measured on `wrapped` and `columns`,
+      // where the trimming bites; `stack` trimmed nothing and so never showed it.
+      //
+      // Hidden rather than removed for the same reason it always was: the element stays in the
+      // registries, so a layer that targeted it keeps its ownership and the line comes back
+      // intact when it fits again.
+      if (line.el.classList.contains('trimmed') === whole) {
+        line.el.classList.toggle('trimmed', !whole);
+      }
     }
+
+    this.countHidden();
   }
 
   /**
@@ -792,7 +1056,13 @@ export class Typesetter {
       return preset.sentences;
     }
 
-    const pool = filterByLength(slicesOf(preset, options.slice), options.length ?? 'any');
+    // The threshold comes from the text, measured when it was parsed — so "long" means long
+    // *for this text* rather than long for Wittgenstein.
+    const pool = filterByLength(
+      slicesOf(preset, options.slice),
+      options.length ?? 'any',
+      preset.longWords,
+    );
     if (pool.length === 0) return [];
 
     const take = Math.max(1, options.take ?? 1);
@@ -867,15 +1137,16 @@ export class Typesetter {
         parts.push('<p>');
 
         for (const word of line) {
-          // `data-len` lets CSS treat long and short words differently, as Acid does.
-          //
           // No colour slot any more. Acid gave every word one and coloured it whether anything
           // had targeted it or not; colour now reaches a word only through an `accent` layer,
           // so an untouched word is the stage foreground and nothing else. The scattered
           // colour that slot gave for free is still available — as a layer, on `enter`, with
           // no decay — and having to ask for it is the point.
-          const long = word.length >= 4 ? '1' : '0';
-          parts.push(`<w data-len="${long}">`);
+          // No `data-len`. Acid wrote a long/short flag on every word for its CSS to key on,
+          // and that CSS never came across — so it was a string built and an attribute set per
+          // word, thousands per typeset, that nothing has ever read. `data-ch` below is the
+          // opposite case and stays: `match` targets resolve through it.
+          parts.push('<w>');
 
           if (options.splitChars) {
             for (const char of word) {
@@ -940,12 +1211,13 @@ function slicesOf(preset: TextPreset, slice: TextSlice): readonly Sentence[] {
 function filterByLength(
   pieces: readonly Sentence[],
   length: TextLength,
+  longWords: number,
 ): readonly Sentence[] {
   if (length === 'any') return pieces;
 
   const matches = pieces.filter((piece) => {
     const words = sentenceLength(piece);
-    return length === 'short' ? words <= LONG_WORDS : words > LONG_WORDS;
+    return length === 'short' ? words <= longWords : words > longWords;
   });
   return matches.length > 0 ? matches : pieces;
 }
@@ -957,6 +1229,28 @@ function filterByLength(
  * a parallel walk pairs them exactly. Cheaper and steadier than matching on an index
  * attribute, which would need writing during the build and querying afterwards.
  */
+/**
+ * How far to move a span so it sits inside a container, or 0 if it already does.
+ *
+ * Both ends are checked, and only one can ever need moving — if the span is longer than the
+ * container, bringing one edge in pushes the other out. In that case the start wins: the
+ * beginning of a passage is the half you cannot do without.
+ */
+export /** What {@link Typesetter.growToContent} did to one block, for the nudge to work from. */
+interface Grown {
+  readonly grow: number;
+  readonly anchor: number;
+  /** Width the block could not absorb because it would have exceeded the frame. */
+  readonly overflow: number;
+}
+
+export function shiftInto(start: number, end: number, low: number, high: number): number {
+  if (end - start > high - low) return low - start;
+  if (start < low) return low - start;
+  if (end > high) return high - end;
+  return 0;
+}
+
 function pairUp(
   original: HTMLElement,
   copy: HTMLElement,

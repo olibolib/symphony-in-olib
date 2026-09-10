@@ -1,5 +1,6 @@
 import { pick, randomRange } from '../util/random';
 import type { VisualPreset } from './presets';
+import { browserSettings, type Settings } from '../util/settings';
 
 /**
  * Preset selection and cycling. DESIGN.md §11.2.
@@ -61,10 +62,15 @@ export class PresetBank {
   private phrasesSinceChange = 0;
   private targetBars: number;
 
-  constructor(presets: readonly VisualPreset[]) {
+  /**
+   * @param settings Where the live preset and the exclusions are kept. Defaults to the browser,
+   * so the engine constructs this the way it always did; a test passes an in-memory one and the
+   * cycle policy becomes exercisable without a DOM (§7.3).
+   */
+  constructor(presets: readonly VisualPreset[], private readonly settings: Settings = browserSettings) {
     if (presets.length === 0) throw new Error('PresetBank needs at least one preset');
     this.presets = presets;
-    const saved = presets.findIndex((p) => p.name === localStorage.getItem(LIVE_KEY));
+    const saved = presets.findIndex((p) => p.name === settings.get(LIVE_KEY));
     this.index = saved >= 0 ? saved : 0;
     this.restored = saved >= 0;
 
@@ -98,7 +104,7 @@ export class PresetBank {
       // The bank is built from the compiled presets and only later replaced by what is on
       // disk, so a preset the user made themselves does not exist yet when the constructor
       // looks for it. This is the second chance, and the only one it needs.
-      const saved = presets.findIndex((p) => p.name === localStorage.getItem(LIVE_KEY));
+      const saved = presets.findIndex((p) => p.name === this.settings.get(LIVE_KEY));
       this.index = saved >= 0 ? saved : Math.min(this.index, presets.length - 1);
       this.restored = saved >= 0;
     }
@@ -245,18 +251,18 @@ export class PresetBank {
    */
   private loadDisabled(): Set<string> {
     try {
-      const raw = localStorage.getItem(DISABLED_KEY);
+      const raw = this.settings.get(DISABLED_KEY);
       if (raw !== null) return new Set(JSON.parse(raw) as string[]);
 
-      const legacy = localStorage.getItem(LEGACY_ENABLED_KEY);
+      const legacy = this.settings.get(LEGACY_ENABLED_KEY);
       if (legacy !== null) {
         const wasEnabled = new Set(JSON.parse(legacy) as string[]);
         const disabled = this.presets
           .map((p) => p.name)
           .filter((name) => !wasEnabled.has(name));
 
-        localStorage.setItem(DISABLED_KEY, JSON.stringify(disabled));
-        localStorage.removeItem(LEGACY_ENABLED_KEY);
+        this.settings.set(DISABLED_KEY, JSON.stringify(disabled));
+        this.settings.remove(LEGACY_ENABLED_KEY);
         return new Set(disabled);
       }
     } catch {
@@ -274,10 +280,10 @@ export class PresetBank {
    */
   private saveLive(): void {
     this.restored = true;
-    localStorage.setItem(LIVE_KEY, this.current.name);
+    this.settings.set(LIVE_KEY, this.current.name);
   }
 
   private saveDisabled(): void {
-    localStorage.setItem(DISABLED_KEY, JSON.stringify([...this.disabledNames]));
+    this.settings.set(DISABLED_KEY, JSON.stringify([...this.disabledNames]));
   }
 }

@@ -65,8 +65,8 @@ const OLD_MODES: Record<string, { slice: TextSlice; length: TextLength; take?: n
   shortSentences: { slice: 'sentence', length: 'short' },
   longSentences: { slice: 'sentence', length: 'long' },
 };
-const ALIGNS = new Set<string>(['left', 'centre', 'right', 'justify']);
-const FLOWS = new Set<string>(['stack', 'run-on', 'grid', 'wrapped', 'columns']);
+const ALIGNS = new Set<string>(['left', 'centre', 'right', 'justify', 'auto']);
+const FLOWS = new Set<string>(['stack', 'run-on', 'wrapped', 'columns']);
 const ENERGIES = new Set<string>(['sparse', 'mid', 'peak', 'any']);
 const TRIGGERS = new Set<string>([
   'typeset', 'kick', 'snare', 'hat', 'beat', 'bar', 'phrase', 'held', 'always',
@@ -78,6 +78,149 @@ const TRIGGERS = new Set<string>([
  * The fallback is what a field falls back *to*, so re-seeding a built-in that has picked up a
  * bad edit keeps whatever is still valid rather than resetting the whole preset.
  */
+/**
+ * A step from one document version to the next, applied in order.
+ *
+ * Each entry rewrites the **raw record**, before any validation runs, so a migrated field is
+ * then checked exactly like one that was written in the current format. That matters: the motion
+ * migration used to build `LayerSpec` objects and append them past the validator, which is one
+ * more thing that could put an unchecked value on the stage.
+ *
+ * Index `n` takes a version `n` document to version `n + 1`. A file with no `version` at all is
+ * version 0 — everything written before this existed.
+ */
+type Migration = (o: Record<string, unknown>, say: Say, fallback: PresetDoc) => void;
+
+const MIGRATIONS: readonly Migration[] = [toV1, toV2, toV3, toV4];
+
+/** What this build writes. Bump it and add a migration in the same commit, never one alone. */
+export const PRESET_VERSION = MIGRATIONS.length;
+
+/**
+ * Version 0 to 1: text selection became slice/take/pick, and motion became a layer.
+ *
+ * Both were previously detected by sniffing for a field — `text.mode` for one, `contentMotion`
+ * for the other. Sniffing works for one migration and stops working the moment two have to be
+ * applied in order, or one has to be told apart from a field simply being absent. Version 1
+ * exists so the second one does not have to invent a third sniff.
+ */
+function toV1(o: Record<string, unknown>, say: Say): void {
+  const text = isRecord(o['text']) ? o['text'] : null;
+
+  // `text.mode` bundled the slice, the quantity and a length filter into one dropdown.
+  if (text) {
+    const oldMode = text['mode'];
+    if (typeof oldMode === 'string' && text['slice'] === undefined) {
+      // `continuous` was itself a mode before it was a modifier, so an even older file can
+      // arrive with it here.
+      const reading = oldMode === 'continuous';
+      const mapped = OLD_MODES[reading ? 'sentences' : oldMode];
+
+      if (mapped) {
+        text['slice'] = mapped.slice;
+        text['length'] = mapped.length;
+        text['take'] = mapped.take ?? text['count'];
+        text['pick'] = reading || bool(text['continuous'], false) ? 'order' : 'random';
+        say(`text selection is now slice, take and pick — migrated from "${oldMode}"`);
+      }
+    }
+  }
+
+  // Motion was a pair of fields on the document and is now a layer like anything else (§11.5).
+  // A preset saved before that would otherwise stop moving with no explanation.
+  const migratedLayers = [
+    ...motionLayer(o['contentMotion'], 'scroll', CONTENT_DIRECTIONS, say),
+    ...motionLayer(o['blockMotion'], 'travel', BLOCK_DIRECTIONS, say),
+  ];
+
+  if (migratedLayers.length > 0) {
+    const existing = Array.isArray(o['layers']) ? o['layers'] : [];
+    o['layers'] = [...existing, ...migratedLayers];
+  }
+
+  delete o['contentMotion'];
+  delete o['blockMotion'];
+}
+
+/**
+ * Version 1 to 2: the stage pulse became a layer.
+ *
+ * It was the last stage effect — a closure held engine-side in a map keyed by preset name, so
+ * it never appeared in the file at all. That is why this migration needs the fallback: the
+ * value being carried across was never in the document to read.
+ *
+ * Only a preset whose compiled namesake had one gets it, which is the same rule the map
+ * followed. A preset you made yourself never had a pulse and does not acquire one here.
+ */
+function toV2(o: Record<string, unknown>, say: Say, fallback: PresetDoc): void {
+  const layers = Array.isArray(o['layers']) ? o['layers'] : [];
+  if (layers.some((l) => isRecord(l) && l['treatment'] === 'pulse')) return;
+
+  const inherited = fallback.layers.find((l) => l.treatment === 'pulse');
+  if (!inherited) return;
+
+  o['layers'] = [...layers, { ...inherited }];
+  say('the stage pulse is a layer now — carried across');
+}
+
+/**
+ * Version 2 to 3: text hold and `minPhrases` became fields.
+ *
+ * `retext({ hold: [1, 2] })` was a closure bound to the phrase trigger and identical in every
+ * preset — not because that suits all of them, but because it was written in TypeScript where
+ * nobody could reach it. `minPhrases` was in the same record for the same reason.
+ *
+ * Both come off the fallback, like the pulse did, because neither was ever in the document.
+ */
+function toV3(o: Record<string, unknown>, say: Say, fallback: PresetDoc): void {
+  const text = isRecord(o['text']) ? o['text'] : null;
+  let carried = false;
+
+  if (text && text['hold'] === undefined) {
+    text['hold'] = { ...fallback.text.hold };
+    carried = true;
+  }
+
+  if (o['minPhrases'] === undefined) {
+    o['minPhrases'] = fallback.minPhrases;
+    carried = true;
+  }
+
+  if (carried) say('how long text holds is a setting now — carried across');
+}
+
+/**
+ * Version 3 to 4: the `grid` flow became `wrapped` plus an outline layer.
+ *
+ * `grid` welded an arrangement to a decoration, and the decoration half is a treatment that
+ * already exists. Splitting it is what lets you outline only some paragraphs, or on a trigger,
+ * or with a fade — none of which the flow could do.
+ *
+ * The one thing genuinely lost is *even* columns: `wrapped` packs paragraphs at uneven widths.
+ * A flow that does only that, sized in grid cells rather than in `em`, is the way back if it is
+ * missed.
+ */
+function toV4(o: Record<string, unknown>, say: Say): void {
+  if (o['flow'] !== 'grid') return;
+
+  o['flow'] = 'wrapped';
+
+  const layers = Array.isArray(o['layers']) ? o['layers'] : [];
+  o['layers'] = [
+    ...layers,
+    {
+      treatment: 'outline',
+      // Every paragraph, which is what the flow drew a box around.
+      target: { slice: 'paragraph', proportion: 1 },
+      // At typeset and held, so it is the settled look rather than something that happens.
+      triggers: { typeset: true },
+      decayBars: 0,
+    },
+  ];
+
+  say('the grid flow is `wrapped` plus an outline layer now — migrated');
+}
+
 export function parsePreset(name: string, raw: string, fallback: PresetDoc): ParseResult {
   const problems: string[] = [];
   let migrated = false;
@@ -102,45 +245,37 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
     problems.push(`${name}: ${what}`);
   };
 
+  // Bring the document up to date before anything is read from it, so every field the
+  // validator sees is in the current shape whatever version it arrived in.
+  const from =
+    typeof o['version'] === 'number' && Number.isFinite(o['version'])
+      ? Math.max(0, Math.floor(o['version']))
+      : 0;
+
+  for (let v = Math.min(from, MIGRATIONS.length); v < MIGRATIONS.length; v++) {
+    MIGRATIONS[v]?.(o, say, fallback);
+  }
+
+  // Stamped rather than reported. A file from before versions existed is upgraded silently;
+  // only a step that actually rewrote something says so, above.
+  migrated = from !== PRESET_VERSION;
+
   const text = isRecord(o['text']) ? o['text'] : {};
   const size = isRecord(text['size']) ? text['size'] : {};
   const varyBy = text['varyBy'];
 
-  // A file written when text selection was a single `mode` dropdown. Carried across rather
-  // than dropped: failing the check would silently revert it to a random sentence, which is
-  // not the text anybody wrote the preset for.
-  let slice = text['slice'];
-  let length = text['length'];
-  let take = text['take'];
-  let pick = text['pick'];
-
-  const oldMode = text['mode'];
-  if (typeof oldMode === 'string' && slice === undefined) {
-    // `continuous` was itself a mode before it was a modifier, so an even older file can
-    // arrive with it here.
-    const reading = oldMode === 'continuous';
-    const mapped = OLD_MODES[reading ? 'sentences' : oldMode];
-
-    if (mapped) {
-      slice = mapped.slice;
-      length = mapped.length;
-      take = mapped.take ?? text['count'];
-      pick = reading || bool(text['continuous'], false) ? 'order' : 'random';
-      migrated = true;
-      say(`text selection is now slice, take and pick — migrated from "${oldMode}"`);
-    }
-  }
-
   const doc: PresetDoc = {
     name,
+    version: PRESET_VERSION,
     energy: pickFrom(o['energy'], ENERGIES, fallback.energy, 'energy', say) as PresetDoc['energy'],
 
     text: {
-      slice: pickFrom(slice, SLICES_TEXT, fallback.text.slice, 'text.slice', say) as TextSlice,
-      take: clampNumber(take, 1, 40, fallback.text.take, 'text.take', say),
-      length: pickFrom(length, LENGTHS, fallback.text.length, 'text.length', say) as TextLength,
-      pick: pickFrom(pick, PICKS, fallback.text.pick, 'text.pick', say) as TextPick,
+      slice: pickFrom(text['slice'], SLICES_TEXT, fallback.text.slice, 'text.slice', say) as TextSlice,
+      take: clampNumber(text['take'], 1, 40, fallback.text.take, 'text.take', say),
+      length: pickFrom(text['length'], LENGTHS, fallback.text.length, 'text.length', say) as TextLength,
+      pick: pickFrom(text['pick'], PICKS, fallback.text.pick, 'text.pick', say) as TextPick,
       position: clampNumber(text['position'], 1, 999, fallback.text.position, 'text.position', say),
+      hold: holdRange(text['hold'], fallback.text.hold, say),
       splitChars: bool(text['splitChars'], fallback.text.splitChars),
       blocks: clampNumber(text['blocks'], 1, 3, fallback.text.blocks, 'text.blocks', say) as 1 | 2 | 3,
       size: {
@@ -151,6 +286,7 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
     },
 
     texts: stringList(o['texts'], fallback.texts),
+    minPhrases: clampNumber(o['minPhrases'], 0, 64, fallback.minPhrases, 'minPhrases', say),
     spawn: mask(o['spawn'], fallback.spawn, say),
     blockShapes: shapes(o['blockShapes'], fallback.blockShapes, say),
     align: pickFrom(o['align'], ALIGNS, fallback.align, 'align', say) as Align,
@@ -158,18 +294,9 @@ export function parsePreset(name: string, raw: string, fallback: PresetDoc): Par
     avoidOverlap: bool(o['avoidOverlap'], fallback.avoidOverlap),
     wholeLines: bool(o['wholeLines'], fallback.wholeLines),
     offset: offset(o['offset'], fallback.offset),
-    layers: [
-      ...layers(o['layers'], say),
-      // Motion used to be a pair of fields on the document and is now a layer like anything
-      // else (§11.5). A preset saved before that would otherwise stop moving with no
-      // explanation, so it is carried across rather than dropped.
-      ...migrateMotion(o['contentMotion'], 'scroll', CONTENT_DIRECTIONS, say, () => {
-        migrated = true;
-      }),
-      ...migrateMotion(o['blockMotion'], 'travel', BLOCK_DIRECTIONS, say, () => {
-        migrated = true;
-      }),
-    ],
+    // Migrated layers are in here too, because a migration rewrites the raw record before
+    // this runs — so they are validated like any other layer rather than appended past it.
+    layers: layers(o['layers'], say),
   };
 
   // A size range with min above max would silently swap or misbehave downstream; fixing it
@@ -322,9 +449,15 @@ function layers(value: unknown, say: Say): readonly LayerSpec[] {
     );
     // Not `range` — that clamps to grid cells, and a swell bound is a scale factor.
     const size = scaleRange(item['size']);
+    const stagePulse = pulseSpec(item['pulse']);
 
     if ((treatment === 'scroll' || treatment === 'travel') && !motion) {
       say(`layer ${index + 1} is a ${treatment} with no direction or speed, dropped`);
+      return;
+    }
+
+    if (treatment === 'pulse' && !stagePulse) {
+      say(`layer ${index + 1} is a pulse with no amount, dropped`);
       return;
     }
 
@@ -336,6 +469,7 @@ function layers(value: unknown, say: Say): readonly LayerSpec[] {
       ...(typeof rate === 'number' && rate > 0 ? { rateBars: rate } : {}),
       ...(motion ? { motion } : {}),
       ...(size ? { size } : {}),
+      ...(stagePulse ? { pulse: stagePulse } : {}),
     });
   });
 
@@ -391,13 +525,18 @@ function readMotion(value: unknown, directions: Set<string>): LayerSpec['motion'
 }
 
 /** Turn a document-level motion setting into the layer it is now. */
-function migrateMotion(
+/**
+ * A document-level motion setting, as the layer it would be written as today.
+ *
+ * Returned as a plain record rather than a `LayerSpec`, because it is going back into the raw
+ * document to be validated with everything else.
+ */
+function motionLayer(
   value: unknown,
   treatment: 'scroll' | 'travel',
   directions: Set<string>,
   say: Say,
-  mark: () => void,
-): LayerSpec[] {
+): Record<string, unknown>[] {
   if (value === undefined) return [];
 
   const motion = readMotion(value, directions);
@@ -407,7 +546,6 @@ function migrateMotion(
   }
 
   say(`motion is a layer now — migrated to a "${treatment}" layer`);
-  mark();
   return [
     {
       treatment,
@@ -417,6 +555,38 @@ function migrateMotion(
       motion,
     },
   ];
+}
+
+/**
+ * How many phrases a passage holds, in whole phrases.
+ *
+ * A hold of zero would replace the text every phrase and then some, so the floor is one — and
+ * the ceiling is high enough for a preset that wants a passage to stay for a couple of minutes.
+ */
+function holdRange(
+  value: unknown,
+  fallbackHold: { readonly min: number; readonly max: number },
+  say: Say,
+): { min: number; max: number } {
+  if (!isRecord(value)) return { ...fallbackHold };
+
+  const lo = clampNumber(value['min'], 1, 64, fallbackHold.min, 'text.hold.min', say);
+  const hi = clampNumber(value['max'], 1, 64, fallbackHold.max, 'text.hold.max', say);
+  return { min: Math.min(lo, hi), max: Math.max(lo, hi) };
+}
+
+/** How hard the stage breathes, for a `pulse` layer. */
+function pulseSpec(value: unknown): { amount: number; shape: 'decay' | 'sine' } | null {
+  if (!isRecord(value)) return null;
+  const amount = value['amount'];
+  if (typeof amount !== 'number' || !Number.isFinite(amount)) return null;
+
+  // Capped well below the point where it stops reading as a pulse and starts reading as a
+  // fault, which is around 0.05 at 720p.
+  return {
+    amount: Math.min(0.2, Math.max(0, amount)),
+    shape: value['shape'] === 'sine' ? 'sine' : 'decay',
+  };
 }
 
 /** Scale bounds for `swell`, in multiples of the base size rather than in cells. */

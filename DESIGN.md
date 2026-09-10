@@ -188,21 +188,56 @@ Renderer ever reaches back into the Conductor, both become refactors.
 
 ### Class model
 
+Two roots, one per window. Neither knows about the other's objects.
+
 ```
-App
-├── AudioInput      device enumeration, capture, AudioContext
-├── Analyser        bands, levels, onsets
-├── BeatTracker     tempo/phase estimation, confidence, re-lock
-├── Clock           beat/bar/phrase position; tap override
-├── Conductor       lane dispatch, preset scheduling
-│   ├── PresetBank  visual presets
-│   └── TextBank    text presets
-├── Renderer
-│   ├── Stage       fixed-resolution root; attribute slots live here
-│   └── Typesetter  text → paragraphs → words → chars → DOM
-├── EffectRegistry  named, parameterized visual operations
-└── Hud             readouts, settings, tap, crop values
+main.ts                 the output window's composition root — 94 lines
+└── Engine              the show: one frame, one command switch
+    ├── Sources         two capture paths, the live Analyser, sensitivities
+    │   ├── AudioInput  device enumeration
+    │   ├── AppCapture  one application's output, as PCM over IPC
+    │   └── Analyser    bands, levels, onsets
+    ├── BeatTracker     tempo and phase estimation
+    ├── KickHistory     kick strength, and whether kicks agree with a tempo
+    ├── Clock           beat/bar/phrase position; tap override
+    ├── Conductor       trigger dispatch
+    │   └── Layer       one target, one treatment, its triggers and decay
+    ├── Channels        who owns which property on which element
+    ├── PresetStore     preset documents on disk
+    │   └── PresetBank  which is live, which is queued, when it may change
+    ├── TextPool        the active text, the queued one, the pinned ones
+    ├── Look            background, palette, global mask
+    ├── Stage           fixed-resolution root; the transform's single writer
+    ├── Typesetter      text → paragraphs → words → chars → DOM
+    └── EngineBridge    batches state for the control window
+
+control.ts              the control window's composition root
+├── Hud                 panels, readouts, controls
+├── PresetEditor        the Presets tab
+└── TextBank            drafts, undo, the file list
 ```
+
+#### The engine was a script, and that was a real cost
+
+Every collaborator was a module-level binding — 33 of them, 15 mutable — and every function a
+closure over the module. Module *initialisation order* was acting as an implicit constructor,
+with no way to enforce it and no way to build the thing twice.
+
+The symptom that gave it away: `frameDelta` was declared eight hundred lines from its use site,
+carrying a comment explaining that reading it any earlier threw. `applyPreset` ran during module
+evaluation and built an effect context from it. As a class that cannot happen — the constructor
+finishes, and only then does `start()` run the things that need a finished object.
+
+Four objects came out on the way, each one a cluster that was never the engine's business:
+
+| | |
+|---|---|
+| `Sources` | how an analyser came to exist, and which of a dozen sources it points at |
+| `TextPool` | §7.1's boundary made structural — reading a text is a function passed in, so the engine literally cannot reach a draft |
+| `Look` | the three settings that describe tonight's frame rather than any preset |
+| `show/wiring.ts` | four pure decisions the engine makes, now testable without a DOM |
+
+`main.ts` went from 1,050 lines to 94, and from 15 mutable module bindings to none.
 
 ### 7.1 Two windows
 
@@ -383,8 +418,14 @@ The last two are what makes a restart feel continuous — the show comes back on
 was live, and the editor reopens on the preset you were editing. Both store a *name*, so a
 preset deleted between sessions falls back to the first one instead of erroring.
 
+**Reached through a port, not a global.** `Settings` is two methods, and classes that remember
+something take one rather than calling `localStorage` directly. That is what it costs to make
+`PresetBank` testable: its job is cycle policy, which is pure decision logic, and it could not be
+exercised outside a browser purely because its constructor read a key.
+
 **Still open:** folding those keys into one `config.json` beside the presets. One inspectable,
-backup-able place is the goal; localStorage is what is there now.
+backup-able place is the goal; localStorage is what is there now, and when the file lands it
+implements `Settings` rather than being threaded through every caller again.
 
 ---
 
@@ -667,15 +708,33 @@ a pulse.
 |---|---|---|---|
 | under 12% | — | — | absorbed by fine correction, no re-lock |
 | 12% | 0.8× typical | 0.45 | 8 estimates (~2s) |
-| 30% or more | 1.0× typical | 0.80 | 28 estimates (~7s) |
+| 30% or more | 0.95× typical | 0.70 | 14 estimates (~3.5s) |
 
 Ramped between the two, and on top of all of it the proposed tempo must agree with the kicks
 *better than the one already playing does* — otherwise there is no reason to move.
 
 Not a flat refusal at the top end, because a hard cut between genres does happen and the grid
 should follow it. Measured: a genuine 128 → 174 cut with real kicks behind it is taken after
-**11.8 seconds**. That is the price of the top row, and it is the right way round — being eleven
-seconds late to a hard cut costs one transition, being wrong for a whole intro costs the set.
+**7.9 seconds**.
+
+The top row started at 1.0 / 0.80 / 28 and took 11.8 seconds, which a real house-to-drum-and-
+bass change showed to be too long — long enough to be visibly on the wrong grid through a
+transition. **The agreement test is what rejects an intro**; the long hold was belt and braces
+on top of it, and it cost more than it bought. Softening it did not cost any of the cases the
+rule exists for: the hats-and-snares intro still moves nothing, a breakdown still cannot walk
+the tempo, and a beatmatched mix is still absorbed by fine correction rather than re-locking.
+
+#### A tap is also a way out
+
+Detection *agreeing* with a tapped tempo is the track change seen from the other side. So
+manual hands back at that point rather than going on refusing corrections from a tracker that
+has already caught up — which also leaves the phase locked to wherever the taps happened to
+land rather than to the record.
+
+That makes tapping the fast path past a jump the automatic rule is being careful about: tap the
+new tempo once and detection resumes on it immediately. A tap that *disagrees* with what is
+playing still holds, and detection still wins eventually on the ordinary track-change rule
+(§9.4) — a few disagreeing estimates do not undo a tap.
 
 #### Fine correction
 
@@ -933,15 +992,27 @@ the dispatch path is affected.
 ```ts
 interface PresetData {
   name: string;
+  /** The format this file was written in. Migrations run on load — see below. */
+  version: number;
   /** A free-form label the VJ applies. Drives nothing — see §11.5. */
   energy: EnergyTag;
 
   /** Names, not content — see §11.7. Empty means "follow the text menu". */
   texts: string[];
 
+  /** Phrases this preset stays before the cycle timer may move on (§11.2). */
+  minPhrases: number;
+
   text: {
     slice: Slice;
-    count: number;
+    /** How many pieces, across all blocks. */
+    take: number;
+    /** Filter the pool by length, against a threshold read off the text (§12.3). */
+    length: 'any' | 'short' | 'long';
+    pick: 'random' | 'continuous' | 'position';
+    position: number;
+    /** Phrases a passage holds before it is replaced, rolled fresh (§12.3). */
+    hold: { min: number; max: number };
     splitChars: boolean;
     blocks: 1 | 2 | 3;
     /** Base size in px, rolled once per typeset (§11.5). */
@@ -960,14 +1031,16 @@ interface PresetData {
     cols: { min: number; max: number };
     rows: { min: number; max: number };
   }[];
-  align: 'left' | 'centre' | 'right' | 'justify';
-  flow: 'stack' | 'run-on' | 'grid' | 'wrapped' | 'columns';
+  align: 'left' | 'centre' | 'right' | 'justify' | 'auto';
+  flow: 'stack' | 'run-on' | 'wrapped' | 'columns';
+  avoidOverlap: boolean;
+  /** Nudge every block off its anchor, in px — the fine instrument (§11.6). */
+  offset: { x: number; y: number };
+  /** Hide lines that do not fit entirely inside the block (§11.6). */
+  wholeLines: boolean;
 
   /** The Lego. Order matters: later layers sit on top (§11.5). */
   layers: LayerData[];
-
-  /** Stage-wide: palette, background, pulse, colour movement. */
-  stage: EffectData[];
 }
 
 interface LayerData {
@@ -978,16 +1051,25 @@ interface LayerData {
   decayBars: number;
   /** Only read by size treatments. Rolled within these bounds when it fires. */
   size?: { min: number; max: number };
-  /** Period in bars. Only read by periodic treatments — flicker. */
+  /** Period in bars. Read by flicker, and by pulse as its breath length. */
   rateBars?: number;
-}
-
-interface EffectData {
-  id: string;
-  values: Record<string, number | boolean | string>;
-  children?: EffectData[];   // for effects that wrap other effects
+  /** Only on `scroll` and `travel` — direction, speed, wrapping (§11.5). */
+  motion?: MotionSpec;
+  /** Only on `pulse` — how far the stage swells, and on what curve. */
+  pulse?: { amount: number; shape: 'decay' | 'sine' };
 }
 ```
+
+**There is no second half.** A preset used to be data plus a handful of closures — `retext`,
+`colourShift`, `pulse` — that could not cross a window boundary or be written to a file, and so
+were held engine-side and merged back by name. Every one of them has since become a field or a
+layer (§11.5), and the merge went with them. A preset *is* its document.
+
+**Files carry a version, and load through a chain of migrations.** A file with no version is
+version 0 — everything written before versions existed. Each migration rewrites the raw record
+before it is validated, so an old file is never rejected for missing a field that did not exist
+when it was saved. Detecting an old format by sniffing for a field it happens to have works
+exactly once, which is why the second migration is built on the stamp instead.
 
 Which makes a preset a JSON file, stored the same way texts are (§11.3) — a writable app-data
 folder, seeded with the built-ins on first run. `PresetBank` grows the shape `TextBank`
@@ -1034,7 +1116,7 @@ scatter                                          [live]  [→]
 One row per layer, a dropdown per axis, a slider for amount, a checkbox per trigger, and a
 two-handle range where the treatment takes one. The grid is clickable and drag-selectable.
 
-#### Two rules the editor follows
+#### Three rules the editor follows
 
 **Ranges collapse to one number.** A min and a max, where you nearly always want a single
 value, is two fields to keep in step. Every range shows one value with a `±` toggle; open it and
@@ -1046,8 +1128,25 @@ controls that belong to it and leaves the triggers and decay alone. It used to r
 triggers to `kick` every time, because the row's handlers had closed over a stale copy of the
 layer.
 
+**A typed number is held to its own bounds.** `min` and `max` on a number input are advisory —
+the browser draws the spinner and marks the field invalid, but nothing stops you typing 500 into
+an 8–200 size box, and reading `.value` hands it straight back. Every field in the editor read
+it that way, so a size of 500px or a decay of −3 bars went into the preset unchallenged.
+
+Clearing a field is the same bug from the other side: `.value` is `''` and `Number('')` is
+**0**, so emptying the size box set the type to 0px rather than doing nothing. Empty means
+"still typing", so the last good value stands.
+
+The *ordering* guard was already right in both the editor and the loader, which is why this
+never showed up as a min above a max.
+
 **Space types a space.** Tap tempo is on the space bar and used to fire while you were typing
 into a text field. Key handling checks for a focused field first.
+
+**Units go after the number.** The decay field read `bars [n]`, which put the word between the
+target amount and the number it belonged to and left it looking like a label for the trigger
+checkboxes on its other side — reported as exactly that. It reads `fade [n] bars` now, like
+`every [n] bars` beside it.
 
 #### Open risks
 
@@ -1119,12 +1218,13 @@ text and stage settings.
 | Target | everything matching a string · a proportion of a slice · exactly N of a slice · every Nth |
 | Slice | `char` · `word` · `sentence` · `paragraph` · `block` — a `<p>` is a *line*, so a sentence gets its own wrapper |
 | Text | any mode, plus `continuous` to read it in order rather than sample it |
-| Treatment | `invert` · `accent` · `dingbat` · `underline` · `strike` · `outline` · `swell` · `flicker` · `blank` · `scroll` · `travel` |
+| Treatment | `invert` · `accent` · `dingbat` · `underline` · `strike` · `outline` · `swell` · `flicker` · `blank` · `scroll` · `travel` · `pulse` |
 | Trigger | `typeset` · `kick` · `snare` · `hat` · `beat` · `bar` · `phrase` · `held` · `always` |
 
-Four targets by nine treatments is thirty-six combinations from thirteen primitives, and most
-of them cannot be expressed today. The point is not that all thirty-six are good — it is that
-you get to find out which ones are.
+Four targets by the nine treatments that mark type is thirty-six combinations, and most of them
+cannot be expressed today. (The last three — `scroll`, `travel`, `pulse` — move something rather
+than mark it, so they take no target and do not multiply.) The point is not that all thirty-six
+are good — it is that you get to find out which ones are.
 
 #### One call shape, for every treatment
 
@@ -1282,6 +1382,56 @@ nothing — which is the fault this rework exists to remove.
 
 *Migration:* every old `mode` maps across, including the two that were hardcoded to one piece
 regardless of `count`, and both historical forms of `continuous`.
+
+#### There are no stage effects left
+
+Everything a preset does is a layer or a field. `EffectRef`, `Bindings`, `ambient`, the
+`effects/` directory and the name-keyed `StageParts` map are all deleted, and `VisualPreset` is
+now literally `PresetDoc` — a preset is one document, with nothing on the other side of the line.
+
+That was the last critical finding of the architecture review, and most of it closed by
+**deletion rather than conversion**. Nine stage effects existed; seven had no callers:
+
+| | |
+|---|---|
+| `scroll` / `stopScroll` | the `scroll` **treatment** replaced them when motion became layers — but the old binding was left wired up, so `drift` had been running a conveyor *and* a whole-stage translate at once on held phrases |
+| `columns` | `flow: 'columns'`, a preset setting rather than a random effect |
+| `borders` | already a no-op: it wrote `data-borders`, which nothing has styled since the layout table went |
+| `background` | a deliberate control (§13.3.1), which already said an effect must not overrule an explicit choice about output |
+| `stopPulse`, `resetStage` | `applyPreset` resets what it owns, by construction |
+
+Of the two that were called, `retext` became a text field (§12.3) and `pulse` became a
+treatment. Which also settles a finding about stage effects having no ownership model: its
+example was `resetStage` having to enumerate every property anyone might have set, and
+`resetStage` was a function nothing called, clearing properties written by effects nothing
+called.
+
+**`EffectContext` fell from ten fields to four** — the typesetter, the channels, `dt` and
+`barSeconds`, which is all a layer has ever read. The other six existed for the stage effects,
+and were the reason a closure was always the path of least resistance: when the context is a god
+object, nothing is ever forced into data.
+
+#### Pulse is a treatment, with a rate
+
+It scales the whole stage with the beat, and it was a layer-shaped idea sitting outside the
+layer system for no better reason than history. Like the motion pair it has no target and writes
+no channel; unlike them it is read from the grid every frame rather than applied once at
+typeset, which is what keeps it smooth through a passage with nothing hitting in it.
+
+**Not `swell` on everything**, which is the obvious question. Swell scales each targeted element
+about its own origin, so glyphs fatten in place and the composition does not move; this scales
+the container, so the whole picture zooms and blocks travel outward from centre. Swell also
+rolls a fresh size per element and fires on a trigger with a decay, where this is one
+deterministic curve applied continuously.
+
+It takes `rateBars` like `flicker` does — 0.25 is a beat, 1 a bar, 4 a phrase. It arrived from
+Acid welded to the beat and stayed that way while everything around it learned to be expressed
+in bars. `Clock.phaseIn(bars, now)` is what makes a four-bar breath worth having: predicted from
+the grid, so it stays in step through a passage where anything counted from transients would
+drift.
+
+*`decay` is deliberately discontinuous on the beat.* It arrives at full amount and falls away,
+so the step at the boundary is the thing that reads as a kick. `sine` is the smooth one.
 
 #### Motion, in two kinds — and both are treatments
 
@@ -1462,12 +1612,93 @@ The limit on repeats is **elements, not copies**, because that is where the cost
 line needs nineteen repeats and costs almost nothing; a dense paragraph needs three and costs a
 great deal. Capping the copies punished the cheap case and let the expensive one through. Half
 the element budget, so a conveyor can never cost more in repeats than the text itself, with a
-floor of two — one repeat is what makes it a loop at all. Using the text height alone would leave a gap whenever
+floor of two — one repeat is what makes it a loop at all.
+
+**The budget rises as the type gets smaller**, and it has to. A flat cap ran out of copies
+exactly when the text was small: shrinking the type shrinks the text height, so the number of
+copies needed to fill the same box grows, while the elements per copy — the same words — do
+not. The cap bound, the belt stopped covering the box, and a gap crossed the frame once a
+cycle. Reported as scroll losing its smoothness on small text at 1080p, which is where the box
+is tallest.
+
+Inverse in the size, because the cost that matters is pixels painted and that falls as the type
+shrinks, with a ceiling since nothing stops a preset asking for 8px. A dense split-chars passage
+at 360 elements per copy in a 1080px box wanted 19 copies and could afford 8; it can now afford
+29.
+
+Widening the gaps between copies instead would have been cheaper and was rejected outright: a
+conveyor with visible spacing in it is not the effect. Using the text height alone would leave a gap whenever
 a passage is shorter than its box — the seam by another name. Verified: text taller than its
 box and text shorter than it both land the copy at the original's start position, both moving
 at the same velocity.
 
 A single pass needs no copy at all, so it costs nothing extra.
+
+#### What a typeset costs, and the cache that would fix it
+
+A re-typeset of a full-height scrolling column costs **34-50ms**, which lands in one frame and
+reads as a hitch every time the text changes. Nearly all of it is a single forced layout of the
+whole passage — around 8,000 elements across 8,500px, of which about an eighth is on screen.
+
+`content-visibility: auto` on every line takes that to **10-12ms**, so the cost really is
+laying out text nowhere near the window. It cannot simply be switched on: the belt's travel
+distance *is* the height of the passage, and an element whose layout has been skipped reports
+its `contain-intrinsic-size` guess instead — 8,554px of text measured as 3,480. That is the
+`display: none` fault above wearing a different coat.
+
+It is applied to the **copies**, which nothing measures, for about a quarter off.
+
+**The rest needs a cache, and the cache is the design.** Line heights are a pure function of
+four things: the text, the type size, the block width and the flow. Same inputs, same heights,
+every time. So:
+
+1. The first typeset of a combination renders unculled, pays the full layout once, and records
+   the passage height and each line's height under a key of those four.
+2. Every later typeset with that key turns culling on, sets each line's `contain-intrinsic-size`
+   from the cache, and takes the belt's travel from the cache rather than measuring it.
+
+The preset that shows the problem uses `slice: whole`, so it re-typesets identical content at a
+fixed size: it would pay once and hit the cache on every pass after. A preset rolling a random
+selection or a size range gets a new key each time and pays what it pays today, so nothing
+regresses.
+
+Two things to be careful of, both learned the hard way:
+
+- **The key must include everything that affects layout.** `varyBy` rolls a size *per word*, so
+  its layout is not reproducible at all — that combination cannot be cached and must fall
+  through to measuring. A webfont arriving late or the canvas being resized invalidates
+  everything.
+- **Verify before trusting.** After applying cached sizes, check the passage height against the
+  cached total; if they disagree, discard the cache and measure. Three separate belt failures in
+  one increment came from a confident wrong answer about a size, and each one was silent. A
+  self-check turns that into one wrong frame followed by a correct one.
+
+*Ruled out on the way.* Culling **layer** work rather than layout saves nothing — the whole
+per-frame budget is 0.1-0.5ms, and the cost is one frame at typeset. And `splitChars: false`
+would cut the element count fourfold, but a preset targeting characters needs them, so that is a
+change to the look rather than a saving.
+
+**A trimmed line keeps its box.** `wholeLines` hides a line rather than showing half of one, and
+it did that with the `hidden` attribute — which is `display: none`, so the line left the layout
+and the passage got shorter *after* the belt had been measured against it. The belt carried on
+moving the distance it had been told:
+
+| flow | travel | content | paragraphs in view |
+|---|---|---|---|
+| `stack` | 8411 | 8411 | 8 |
+| `wrapped` | 8554 | **811** | **0** |
+| `columns` | 7319 | **764** | **0** |
+
+`stack` never showed it because nothing was being trimmed there; `wrapped` and `columns` pack
+paragraphs into rows, so far more of them straddle the box edge. `visibility: hidden` keeps the
+box, and all three then agree.
+
+**Order is load-bearing in `render`.** Growing a block re-wraps its text and changes its height,
+and the conveyor's entire geometry comes from that height — so growth has to happen before the
+belt is measured. It did not, at first, and the copies sat spaced for a passage three thousand
+pixels taller than the one actually there. That is the third time in one increment that a step
+inserted into this sequence broke a later one, which is what the architecture review's finding
+about `Typesetter` doing five jobs is actually about.
 
 *Block motion does not take the modifier.* A travelling block leaves the frame and re-enters
 from the other side either way, so there is nothing to choose.
@@ -1735,19 +1966,39 @@ things, and the shapes in a preset are **authored** rather than arbitrary — so
 non-overlapping arrangement nearly always exists, and finding it costs nothing at typeset
 time.
 
-So `avoidOverlap` is a preset setting, **on by default**. Placement walks every anchor
-against every shape in random order and takes the first arrangement that does not collide.
-Bounded at 49 × shapes and reached only on a re-typeset, so exhaustive is affordable — and
-exhaustive is what makes "no arrangement exists" mean it, rather than meaning the random
-attempts ran out.
-
-Measured over 4000 typesets with the built-in shapes, this is not a marginal fix:
+So `avoidOverlap` is a preset setting, **on by default**. Measured over 4000 typesets with the
+built-in shapes, it is not a marginal fix:
 
 | Preset | Overlapping typesets, off | On |
 |---|---|---|
 | `scatter`, 2 blocks | 46.0% | 0.0% |
 | `swarm`, 2 blocks | 69.3% | 0.7% |
 | `scatter`, 3 blocks | — | 0.1% |
+
+**Placing the blocks one at a time was a bug**, and it survived those numbers because the
+built-in shapes are small enough to hide it. The first block took a blind roll and only later
+blocks searched, so a first block that landed badly could make a clean arrangement impossible —
+and nothing ever went back to move it. Two full-height blocks can only sit side by side; roll
+the first into a middle column and the second has nowhere to go, however exhaustively it looks.
+Found by a preset with two full-height travelling blocks, which is exactly the shape that
+exposes it.
+
+Placement is now **one decision rather than a sequence of independent ones**: random whole
+arrangements first, so the ordinary case draws anchors and sizes exactly as it always did and
+is simply rejected if it collides, then a backtracking search over every distinct box the mask
+and shapes allow, then overlapping. Over 3000 typesets of the case that found it:
+
+| Shapes | One at a time | As an arrangement |
+|---|---|---|
+| two full-height | 13.9% | **0%** |
+| two full-width | 14.5% | **0%** |
+| three full-height | 8.2% | **0%** |
+| two blocks that cannot both fit | 100% | 100% |
+
+The last row is the point of the exercise: an arrangement that genuinely does not exist still
+overlaps. The search considers every size in a shape's range rather than one rolled size,
+because it only runs when the rolled sizes did not fit — and it is bounded by a node budget, so
+a pathological mask cannot stall a frame. Worst case measured at 0.03ms.
 
 **It changes which placement is chosen, never whether one happens.** If nothing fits — the
 mask is tight, the shapes are large, or there are simply too many blocks — the block is
@@ -1771,6 +2022,68 @@ a look you chose. Overflowing off the *edge* is different — text nobody can se
 fault rather than a decision. So a block that would run off the edge is shifted back until it
 fits, keeping every pixel of the size it was given.
 
+#### The box is a minimum, not a cage
+
+A cell is a seventh of the frame. At a size chosen to be readable on a projector one word is
+easily wider than that, and three rules follow, in this order:
+
+**Text may leave its box.** Clipping meant a long word — sometimes a whole line — silently did
+not appear, and a `swell` near an edge lost its side. The grid decides where a block *starts*,
+which is what anchor semantics rest on; it was never meant to decide what fits.
+
+A conveyor still clips, because it is a window and that is what makes it one — but only on the
+axis the text travels. `clip-path` rather than `overflow`, because CSS will not give one axis
+`hidden` and the other `visible`: setting either turns the other into `auto`, which clips just
+the same.
+
+**A block grows until its longest word fits**, away from the edge its alignment is anchored to,
+capped at the frame. Without this a block disagrees with itself line by line: `text-align`
+positions a line's content inside its line box, but a word wider than the line box always
+overflows toward the **inline end** — rightward — whatever the alignment says. So in a
+right-aligned block the lines that fit hug the right edge and the lines that do not start at the
+left edge and run off the other side.
+
+Measured on a one-cell column at 50px on a 1920 frame: box `1646..1920`, text `1660..2058`,
+off the canvas by 138. Grown, it is box `1493..1920`, text `1507..1906` — the right edge kept,
+the overhang inside the frame.
+
+**Whatever still leaves the canvas is nudged back.** Measured rather than reasoned about, which
+is what makes it universal: working out which way text overhangs from `align` is four rules to
+keep in step, five with `justify`, which behaves like `left` only for the lines it cannot
+stretch. Reading the painted rectangle is one rule for all of them, and it accounts for `swell`
+and any other transform for free.
+
+The move is the smallest one that works and never more than flush with the edge it was leaving.
+Text wider than the whole canvas keeps its opening — bringing one edge in pushes the other out,
+and the beginning is the half you cannot do without.
+
+*Never vertically for a conveyor.* Its content is deliberately several canvases tall and
+deliberately outside its box; measuring all of it and concluding the block is misplaced shoved
+it off the bottom of the frame.
+
+*Words, not lines.* A `<p>` is a block box that takes the width of its container, so an
+inline-block word wider than that hangs out of it and the line's rectangle does not include the
+thing being measured.
+
+#### Flows take no parameters
+
+`columns` is two columns and `wrapped` breaks at a quarter of the block, both hardcoded and both
+inherited from the layout table. Neither became a setting, and neither should.
+
+A flow says *how paragraphs sit inside a block* and nothing else. Anything you would reach a
+column-count slider for, the block system already does better: two blocks are two columns you
+can also anchor, size, target and animate separately. A setting would be a second and weaker way
+to reach the same picture, which is how the layout table got to eighteen entries.
+
+#### `align: auto` sets a block toward the nearer edge
+
+A fifth option beside left, centre, right and justify, not a mode. Text throws inward: a block
+anchored at the left sets left, so a long word extends into the frame rather than out of it.
+
+By the block's **centre** rather than its near edge, or every block would be left-aligned however
+far it reached. With a dead zone in the middle, or a block straddling the centre would swap
+alignment between typesets over a few pixels, which reads as a fault rather than as an effect.
+
 #### Whole characters only, and a nudge
 
 Two settings, both about the edges of a block.
@@ -1783,6 +2096,24 @@ owns the element keeps its ownership and the line returns intact when it fits ag
 **Nudge.** Anchors are grid cells, which is deliberately coarse. Four pixel offsets — up, down,
 left, right — move a block off its anchor without giving up the grid: fine control where you
 want it, nothing to think about where you don't.
+
+#### A mask may be empty, and says which one is empty
+
+Clicking the last allowed cell, or inverting a full grid, used to be refused. The reason given
+was that an empty mask skipped every preset and left the stage blank with nothing to explain
+it — which was true when the only message named the global mask whatever the cause.
+
+There are **three ways to have no cells**, and they are fixed in different tabs:
+
+| | |
+|---|---|
+| The global mask is empty | nothing at all can be placed — Canvas tab |
+| The preset's own grid is empty | only this preset — Presets tab |
+| Both have cells but they do not overlap | the global mask being absolute — Canvas tab |
+
+With those separated, empty is a reachable state, which it should be: clearing the grid is a
+reasonable thing to do on the way to choosing somewhere else, and a control that silently
+declines the last click is worse than one that lets you see what empty looks like.
 
 #### Two masks, intersected
 
@@ -1827,15 +2158,15 @@ same answer.
 |---|---|---|
 | 1, 2, 3, 4, 8 | Font size 82–320%, tracking, line-height, italic, alignment | Base size (§11.5) plus `align` |
 | 10, 11, 13, 14, 15, 16, 17 | Bands, rails, and the 3x3 block grids | The spawn grid — anchor plus size |
-| 5, 6, 7 | Flex-wrap, six-column outlined grid, paragraphs run together | `flow` — the one genuinely new piece |
+| 5, 6, 7 | Flex-wrap, six-column outlined grid, paragraphs run together | `flow` — the one genuinely new piece. The outlining is a layer, not part of the arrangement |
 | 12 | One text flowing through two rails | `flow: 'columns'` on a full-width block |
 
 ```ts
 block: {
   anchor: /* a cell from the mask */,
   size:   { cols: 3, rows: 2 },
-  align:  'left' | 'centre' | 'right' | 'justify',
-  flow:   'stack' | 'run-on' | 'grid' | 'wrapped' | 'columns',
+  align:  'left' | 'centre' | 'right' | 'justify' | 'auto',
+  flow:   'stack' | 'run-on' | 'wrapped' | 'columns',
 }
 ```
 
@@ -1913,6 +2244,23 @@ A saved preset can name a text that no longer exists — a preset imported from 
 file removed outside the app. So loading still has to cope: drop unresolvable names, use the
 rest, and say so in the status line. If nothing in the list resolves, fall back to the
 selection. Nothing should vanish because a file was renamed in October.
+
+#### And the selection can be empty, which is worse
+
+`'default'` follows the text menu, and the menu lives in the *other* window. Between the engine
+starting and the control window's choice arriving, the engine's idea of the selection is a
+placeholder with no sentences in it — so a preset pinned to `'default'` had a real text to point
+at, pointed at it, and rendered nothing. All four built-ins are pinned that way, and they were blank on launch
+until the first text was applied by hand.
+
+Two rules close it. A queued text is applied **immediately** rather than at the next phrase
+boundary when the stage is empty — there is nothing on stage to interrupt, so the reason for
+waiting does not apply. And a block is **never handed an empty text**: if neither the pinned name
+nor the selection has any sentences, the fullest text the bank holds stands in until the menu's
+choice arrives. The fullest rather than the first, because map order is however the files
+happened to load, and first-found would stand in with a four-line scrap while a whole prologue
+sat beside it. Only when there is genuinely no text anywhere does a block come out blank, which
+is then the honest answer.
 
 #### Three rules
 
@@ -2007,8 +2355,25 @@ worse failure than a busy one.
 mid-thought, which reads as a bug rather than an effect. A single isolated word reads as
 emphasis instead, because nothing is obviously missing.
 
+**"Long" is measured against the text, not against a constant.** Acid drew the line at twelve
+words for every text there would ever be, which meant `length: 'short'` matched nothing in a
+long-winded text and everything in a terse one — either way the filter stopped dividing
+anything. Each text now carries `longWords`, the **median** sentence length, computed once when
+it is parsed and stored on the `TextPreset`; `short` is at or below it and `long` is above. A
+median rather than a mean, so one enormous sentence among short ones cannot drag the threshold
+past all of them. Any text with variety in it therefore has something on both sides of the line.
+
 Alongside them, `splitChars` decides whether each glyph is its own element. It governs whether
 character-level effects are possible at all, and it has real performance cost (§14).
+
+**How long a passage holds is a field too.** `text.hold` is a range in phrases, rolled fresh
+each time — a fixed hold is legible but predictable, and you begin anticipating the change.
+
+It was `retext({ hold: [1, 2] })`, a closure bound to the phrase trigger and *identical in every
+preset* — not because one to two phrases suits all of them, but because it was written in
+TypeScript where nobody could reach it. `still` is the sparse, near-motionless preset and had
+been changing text as often as `swarm`. `minPhrases`, how long the preset itself stays, was
+stuck in the same place and is a field now as well.
 
 ### 12.4 Layout effects — replaced by §11.6
 
@@ -2016,8 +2381,25 @@ The `layout` slot and its numbers `0..17` are gone, along with `newLayout`, whic
 them, and `fontScale`, which is now a text setting with a min and max. Most of that table turned
 out to be typography wearing a placement name.
 
-Never coupled to placement, and unchanged: `columns`, `borders`, `background`, and the colour
-wave (§12.5).
+Never coupled to placement, and unchanged: the colour wave (§12.5). `columns` survives as a
+**flow** rather than an effect; `borders` and `background` are gone (see §11.5).
+
+**`grid` is gone too**, and it was the last survivor of the table. It welded an arrangement to a
+*decoration*, and the decoration half is `outline`, a treatment that already exists. Its column
+count came from `minmax(6em, 1fr)`, so scaling the type for readability silently changed the
+layout. And once a block grows to fit its longest word (§11.6), subdividing it into columns puts
+that word back outside a cell — measured at an 811px line in a 420px cell, crossing its own
+outline. `wrapped` gives the arrangement and one `outline` layer over paragraphs gives the
+boxes, with the option of outlining only some, or on a trigger, or with a fade.
+
+**The flows were being applied to the wrong element**, which is older than any of that. They set
+`display: flex` or `display: grid` on `.block` — and `.block` has exactly one child. The
+paragraphs live two levels down: `.block` holds `.block-content`, which holds `.loop`, which
+holds the text. So the flex container had nothing to wrap and the grid had nothing to lay out;
+both were arranging the conveyor's wrapper. That is why `grid` never looked like a grid. They are
+on `.loop` now: 58 paragraphs across 7 rows where before each had a row to itself. `stack` and
+`run-on` were never affected — they set `display` on the paragraph itself, which works wherever
+it sits.
 
 There are now two things called scroll and it is worth being clear which is which: the layer
 treatment (§11.5) moves text through one block, and the older stage effect scrolls the whole
@@ -2035,14 +2417,24 @@ Two rules carried forward from the old block model:
 which a 7x7 grid gives up. `avoidOverlap` (§11.6) searches for a non-colliding arrangement
 instead, and is on by default.
 
-### 12.4.2 Size floor
-
-Nothing renders below about 76% of the base size, and the base is 28px.
+### 12.4.2 Size floor — **a principle, not a check**
 
 Small type fails twice over: it is unreadable on a projector at the back of a room, and a
-visualiser warping the output (§13.4) smears fine detail into mush within a frame or two.
-Fewer, larger words survive both. Selection counts were cut accordingly — passages are two
-or three sentences, not ninety words.
+visualiser warping the output (§13.4) smears fine detail into mush within a frame or two. Fewer,
+larger words survive both. Selection counts were cut accordingly — passages are two or three
+sentences, not ninety words.
+
+This used to say "nothing renders below about 76% of the base size, and the base is 28px", which
+was true in Acid and has not been true here for some time. **There is no such check anywhere in
+the code**, and the sentence had survived as an assertion about behaviour that nothing enforced
+— which is worse than saying nothing, because it is the kind of guarantee someone would build
+on.
+
+What exists now is better suited to the problem anyway: base size is a per-preset range with its
+own bounds (§11.5), the editor holds a typed value to those bounds, and a block **grows to fit
+its longest word** rather than shrinking type to fit a cell (§11.6). Sizes in use run to 50px,
+well clear of any floor. If one is ever wanted it belongs in `presetIo`'s clamp, where the rest
+of the bounds live.
 
 ### 12.5 Colour
 
@@ -2291,10 +2683,45 @@ TypeScript earns its place twice: in the engine, where `Lane`, `EffectRef` and p
 are naturally typed, and in preset definitions, where a mistyped lane name or effect
 parameter should be a red squiggle rather than a visual that silently never happens.
 
+#### Tests
+
+`vitest`, node environment, no DOM. 164 tests across nine suites, gating the build.
+
+Everything worth testing here is already DOM-free, and that is not an accident — the clock, the
+kick evidence, the placement grid, the preset validator and the cycle policy are all pure. What
+the suite is *for* is the invariants the comments state, because those are what quietly stop
+being true:
+
+| Suite | What it holds down |
+|---|---|
+| `mask` | a block never runs off the canvas, an intersection can only narrow, blocks are placed as one arrangement |
+| `tempo` | a breakdown cannot move the grid, an intro of hats moves nothing, a pitch nudge drifts rather than snapping |
+| `presetIo` | a corrupt file loads as something usable, decay is frame-rate independent |
+| `wiring` | a layer edit does not re-typeset, the right mask gets blamed |
+| `PresetBank` | the last enabled preset cannot be switched off, a queued choice beats the timer |
+| `pulse` | the curve peaks on the beat and never exceeds its amount; `sine` is continuous where `decay` is not |
+| `fit` | the smallest move that works, and it is idempotent — a second pass must not walk the block across the frame |
+| `align` | symmetrical about the centre, and steady for a block straddling it |
+
+Two of those record **deliberate reversals** — a mask may now reach empty, and blocks are placed
+as an arrangement rather than one at a time. Until they were written down, the only record of
+which behaviour was current was the comment beside the code that had just changed.
+
+Cases are named after the behaviour, not the constant they exercise. The tempo numbers have been
+retuned twice and will be again; "a breakdown must not move the grid" is the thing that has to
+stay true.
+
+**What a unit test cannot see.** Three geometry bugs shipped in one session — a conveyor
+shoved off the bottom of the frame, a measurement pointed at the wrong element, a belt spaced
+for a passage that no longer existed — and none of them was a failure of the rule being tested.
+`shiftInto` was correct; what it was aimed at was not. Those were found by instrumenting the
+running app and reading the numbers, which is the tool for that class of bug, and the tests are
+what made changing the surrounding code safe enough to do it.
+
 #### Build guards
 
-`npm run typecheck` runs three things: the compiler, then two scripts that catch mistakes types
-cannot see.
+`npm run typecheck` runs four things: the compiler, two scripts that catch mistakes types cannot
+see, and the tests.
 
 - **`check-ids`** — every element id the renderer looks up exists in the HTML. A renamed id
   otherwise fails silently at runtime.
@@ -2472,9 +2899,48 @@ heuristics, behaviour through breakdowns and silence.
 
 **Done so far:** the kick decides whether a tempo change is believed (§9.2.4). Strength against
 its own recent typical, agreement between the kicks and the tempo being proposed, and a bar that
-rises with the size of the jump because DJs beatmatch. Two observed failures drove it — a
-breakdown re-locking the grid to a shaker, and a minute-long intro of hats and snares jumping
-130 to 170 on a track that was 130.
+rises with the size of the jump because DJs beatmatch. Three observed failures drove it — a
+breakdown re-locking the grid to a shaker, a minute-long intro of hats and snares jumping 130 to
+170 on a track that was 130, and then the rule being strict enough that a real house-to-DnB
+change did not take. A tap now hands control back to detection when the two agree, which is the
+manual way past the same problem.
+
+### Architecture review — **all criticals closed**
+
+An outside review of the branch, against §7 to §16. Twelve findings, three marked critical, and
+they were taken in the order that made the work cheapest rather than the order they were listed.
+
+**Tests first, not the refactor first.** The intuition was that restructuring the engine would
+make it testable — but all six modules worth testing import nothing from `main.ts`; they were
+leaves already. The one that genuinely could not be tested was blocked by `localStorage`, not by
+the engine. And the dependency runs the other way round: the tests are what make it safe to
+restructure a thousand-line file. Doing it in that order meant every step of the refactor was
+checked rather than trusted.
+
+| | Finding | |
+|---|---|---|
+| 01 | A preset is only half a document | **closed** (§11.5) — mostly by deletion |
+| 02 | `main.ts` is a module-scope singleton | **closed** (§7.1) |
+| 03 | No tests, on a codebase built to be tested | **closed** (§15) |
+| 05 | `ALL_CHANNELS` is a union maintained by hand | **closed** — derived from the treatment table |
+| 06 | The wire protocol imports the domain | **partly** — `PresetDoc` has a version and an ordered migration chain; the import direction is untouched |
+| 09 | Stage effects have no ownership model | **moot** — its example was a function nothing called |
+| 10 | Persistence is scattered `localStorage` | **partly** — three classes take a port; the keys are still scattered |
+| 11 | Unreferenced exports | **partly** — seven stage effects deleted |
+
+**01 was the interesting one, and it was smaller than it looked.** The review scoped it as
+converting nine stage effects to data. Seven had no callers at all, so they were deleted; of the
+two left, one became a field and one became a treatment. Reading the code before planning the
+work turned roughly a day into an afternoon, and closed 09 and part of 11 on the way.
+
+**The version field came first, deliberately.** Making stage effects data changes `PresetDoc`'s
+shape — that is a migration, and there were already two, both detected by sniffing for a field
+the old format happened to have. Sniffing works exactly once. Building the ordered chain
+immediately before the migration that needed it is the whole reason 01 went in the order it did.
+
+04, 07, 08 and 12 are open. **07 is the one that has cost something**: `Typesetter.render` is a
+sequence where each step reads a layout the one before it settled, enforced only by comments, and
+three separate bugs this increment came from inserting a step into the middle of it.
 
 ### Increment 4 — palettes
 
@@ -2583,6 +3049,25 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Believing any confident tempo estimate | **Dropped** | Hats through a breakdown genuinely are periodic. The kicks have to agree with the tempo, not merely be loud (§9.2.4) |
 | A one-minute kick history | **Dropped** | A section longer than the window becomes the window's idea of normal. Three minutes (§9.2.4) |
 | Canvas bounds reset on every launch | **Dropped** | OBS captures the window by its rectangle; losing it means re-cropping every time (§13.1) |
+| Placing blocks one at a time | **Dropped** | Greedy: a bad first placement made a clean arrangement impossible and nothing went back to move it. Placement is one decision (§11.6) |
+| Refusing to let a mask reach empty | **Dropped** | Held only while one message named the global mask for all three ways of having no cells. Separate the messages and empty is fine (§11.6) |
+| Widening the gaps between conveyor copies | **Dropped** | Cheaper than raising the budget, and not the effect. A conveyor with visible spacing in it is a different thing (§11.5) |
+| Trusting `min`/`max` on a number input | **Dropped** | Advisory only. Every editor field read straight past them, and an empty field read as 0 (§11.4) |
+| Manual holding after detection agrees with it | **Dropped** | Agreement *is* the track change, seen from the other side. Handing back makes a tap the fast way past a big jump (§9.2.4) |
+| The engine as a module-scope script | **Dropped** | Initialisation order was acting as a constructor. Nothing could be built twice, injected into, or tested (§7.1) |
+| Typecheck as the whole quality gate | **Dropped** | The invariants that matter here are stated in comments and are exactly what tests are for (§15) |
+| `localStorage` reached directly | **Dropped** | It made pure decision logic need a browser. A two-method port instead (§7.3) |
+| A hand-written list of every channel | **Dropped** | Adding a ninth compiled cleanly and left `clearAll` skipping it. Derived from the treatment table (§11.5) |
+| Two sets of error handlers | **Dropped** | Not duplicates — one logged, one reported — so every error surfaced twice. One guarded pair (§14) |
+| Stage effects as closures | **Dropped** | Seven had no callers, one is a field and one is a treatment. A preset is one document (§11.5) |
+| Detecting an old preset by sniffing for a field | **Dropped** | Works exactly once. `version` plus an ordered chain (§11.4) |
+| Blocks clipping their text | **Dropped** | The grid decides where a block starts, not what fits. It spills, and grows to its longest word (§11.6) |
+| Reasoning about overhang from `align` | **Dropped** | Four rules to keep in step. Measure the painted rectangle instead (§11.6) |
+| The `grid` flow | **Dropped** | Welded an arrangement to a decoration, sized its columns in `em`, and had been laying out the wrapper rather than the paragraphs (§12.4) |
+| `display: none` for a trimmed line | **Dropped** | It leaves the layout, so the passage shortens after the conveyor was measured against it (§11.5) |
+| `data-len` on every word | **Dropped** | Acid's long/short flag. The CSS that read it never came across, so it was an attribute per word that nothing has ever used |
+| One resolution rule for every treatment | **Dropped** | `outline` draws a box, so "every paragraph" has to mean the paragraph. The rest mark type, and for those it means every word in it (§11.5) |
+| A column count setting on the `columns` flow | **Dropped** | No flow takes a parameter, and blocks already give you columns you can place, size and target independently. A setting would be a second, weaker way to do it (§12.4) |
 
 ---
 
@@ -2599,25 +3084,29 @@ Recording what was rejected, and why, so it doesn't get relitigated.
 | Q10 | Tempo reads a few percent low and the cause is not yet found. Deferred as good enough for visuals — revisit with a correlation-curve plot before changing the algorithm again | §9.2.3 |
 | Q11 | Block count is currently random 1–2 per re-typeset. Should it correlate with something — energy, for instance — rather than being arbitrary? | §11.6 |
 | Q12 | Are long sentences (up to 27 words) too dense at the new size floor, especially two blocks at once? | §12.4.2 |
-| Q14 | A genuine hard cut of 30%+ now takes ~12s to follow. Right trade, or should the top of the scale be softened? | §9.2.4 |
-| Q15 | Should the control window's position be remembered too? Same few lines, but it hides to the tray rather than closing | §7.3 |
+| ~~Q16~~ | ~~A genuine hard cut of 30%+ takes ~12s to follow. Right trade, or should the top of the scale be softened?~~ **Answered: softened**, to 0.95 / 0.70 / 14 and 7.9s, after a real house-to-DnB change failed to take. A tap now also hands control back | §9.2.4 |
+| Q17 | Should the control window's position be remembered too? Same few lines, but it hides to the tray rather than closing | §7.3 |
+| Q18 | The conveyor budget fix is reasoned from the formula, not measured — the trigger is a rendered text height. Worth confirming on a 1080p stage with small type | §11.5 |
+| ~~Q19~~ | ~~`wrapped` packs paragraphs at uneven widths, so `grid`'s even columns are gone. Worth a flow that does only that?~~ **Answered: no.** Even columns are what `columns` is for, and more of them is more blocks | §12.4 |
+| Q30 | Growth happens after placement, so `avoidOverlap` cannot see it — two blocks in adjacent cells can grow into each other | §11.6 |
+| Q31 | The typeset cache in §11.5 would take a scrolling re-typeset from 34-50ms to 10-12. Worth the invalidation it brings? | §11.5 |
+| Q32 | `line.split(' ')` does not collapse runs of spaces, so a double space makes an empty `<w>` that takes padding and can be picked by a `word` target | §12.3 |
 | Q13 | Pulse amounts are guesses (0.012–0.022). Worth tuning against a projector rather than a monitor — apparent scale changes with viewing distance | §12.2.1 |
 | ~~Q14~~ | ~~Fork on editing a built-in?~~ **Answered: no fork.** Built-ins are editable directly; "Restore defaults" re-seeds them | §11.4 |
 | ~~Q15~~ | ~~Do built-ins stay compiled?~~ **Answered: no.** Everything becomes data, for consistency. Type safety comes from `as const` definitions plus validation on load | §11.4 |
-| ~~Q16~~ | ~~How do two layers on one element resolve?~~ **Answered: fine-grained channels** named after CSS properties. Different properties compose; same property, later wins | §11.5 |
-| ~~Q17~~ | ~~Cap the number of layers?~~ **Answered: soft limit and a warning**, keyed to elements-touched-per-second rather than layer count. Never a hard cap | §11.5 |
-| ~~Q18~~ | ~~Does `flicker` belong with the treatments given it is continuous?~~ **Answered: yes** — same authoring, CSS runs the animation | §11.5 |
-| ~~Q19~~ | ~~Region targets?~~ **Answered: no** — replaced by the spawn grid, which was the actual intent | §11.6 |
+| ~~Q34~~ | ~~How do two layers on one element resolve?~~ **Answered: fine-grained channels** named after CSS properties. Different properties compose; same property, later wins | §11.5 |
+| ~~Q35~~ | ~~Cap the number of layers?~~ **Answered: soft limit and a warning**, keyed to elements-touched-per-second rather than layer count. Never a hard cap | §11.5 |
+| ~~Q36~~ | ~~Does `flicker` belong with the treatments given it is continuous?~~ **Answered: yes** — same authoring, CSS runs the animation | §11.5 |
+| ~~Q37~~ | ~~Region targets?~~ **Answered: no** — replaced by the spawn grid, which was the actual intent | §11.6 |
 | Q20 | Does `flow: 'columns'` need a tunable gap, or is one number enough to recover layout 12's look? | §11.6 |
 | Q24 | Structure detection has lost its intended output now that energy tags drive nothing. What should knowing "this is a breakdown" actually change? | §10.1 |
-| Q28 | Presets are saved but not versioned. A file written by a future build could lose fields on load — worth a version stamp before the format changes again? | §11.4 |
+| ~~Q28~~ | ~~Presets are saved but not versioned.~~ **Answered: a version stamp and a migration chain**, run against the raw record before validation, so an old file is never rejected for missing a field that did not exist when it was saved | §11.4 |
 | Q29 | Text lists roll per block, so a preset with two texts and two blocks shows one each only by chance. Is explicit one-each worth an option? | §11.7 |
 | Q26 | Variety now comes from anchors and shapes rolling per typeset, where `newLayout` changed the whole arrangement every bar. Is a per-typeset roll enough, or does something want to move on the bar again? | §11.6 |
-| Q27 | `flow: 'grid'` and `'columns'` are implemented but no built-in uses them. Worth building a preset around, or do they only make sense once presets are editable? | §11.6 |
+| Q27 | `flow: 'columns'` and `'wrapped'` are implemented but no built-in uses them. Worth building a preset around, or do they only make sense once presets are editable? | §11.6 |
 | Q25 | `whenHolding` fired on replacement phrases as well as held ones for the whole of Increment 1. Did the presets get tuned around that? If held layers now look thin, that is why | §11.5 |
 | ~~Q23~~ | ~~Independent width and height ranges cannot say "tall or wide, never square".~~ **Answered: a list of candidate shapes**, rolled per block, so the two axes are chosen together as an authored pair | §11.6 |
-| Q21 | With three blocks and three named texts, the list feeds variety (each block draws independently). Should one-each composition be an explicit option, or is random enough? | §11.7 |
-| Q22 | Layout 16 aligned alternate blocks outward. Dropped as a between-blocks relationship the model does not store — does it turn out to matter? | §11.6 |
+| Q33 | Layout 16 aligned alternate blocks outward. Dropped as a between-blocks relationship the model does not store — does it turn out to matter? | §11.6 |
 
 **Answered:** stage defaults to 1280×720 (Q5). Black on white (Q6). Preset cycling is a
 randomised 16–32 bars on phrase boundaries, with structure overrides deferred to Increment 4
